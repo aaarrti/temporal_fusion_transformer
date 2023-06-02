@@ -29,12 +29,14 @@ from __future__ import annotations
 import abc
 from enum import auto, IntEnum
 from abc import abstractmethod, ABC
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 
 import pandas as pd
 
 from temporal_fusion_transformer.utils import classproperty
-from temporal_fusion_transformer.modeling import TFTInputs
+
+if TYPE_CHECKING:
+    from temporal_fusion_transformer.modeling import TFTInputs
 
 
 class DataType(IntEnum):

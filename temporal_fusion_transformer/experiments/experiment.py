@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, Type, NamedTuple
+from typing import Dict, Type, NamedTuple, List
 
 from temporal_fusion_transformer.data_formatters.data_formatter import DataFormatter
 from temporal_fusion_transformer.utils import classproperty
 
 
-class TimeStepsConfig(NamedTuple):
-    total_time_steps: int
+class ExperimentConfig(NamedTuple):
+    static_categories_sizes: List[int]
+    known_categories_sizes: List[int]
     num_encoder_steps: int
 
 
