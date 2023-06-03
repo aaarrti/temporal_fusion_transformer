@@ -1,0 +1,9 @@
+-r requirements.txt
+tensorflow_metal; sys_platform == 'darwin'
+polars
+pyunpack
+wget
+black
+pytest
+pytest_sugar
+pyarrow
