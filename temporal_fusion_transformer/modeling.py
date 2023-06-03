@@ -179,14 +179,14 @@ class TemporalFusionTransformer(tf.keras.Model):
     def __init__(
         self,
         *,
-        static_categories_sizes: List[int],  # dataset depended
-        known_categories_sizes: List[int],  # dataset depended
-        num_encoder_steps: int,  # user depended
+        static_categories_sizes: Sequence[int],  # dataset depended
+        known_categories_sizes: Sequence[int],  # dataset depended
+        num_encoder_steps: int,
         dropout_rate: float,
         hidden_layer_size: int,
         num_attention_heads: int,
-        quantiles: List[int],
         output_size: int,
+        quantiles: Sequence[int] | None = None,
         prng_seed: int = 42,
         name: str = "temporal_fusion_transformer",
         **kwargs,
@@ -215,6 +215,8 @@ class TemporalFusionTransformer(tf.keras.Model):
 
         """
         super().__init__(name=name, **kwargs)
+        if quantiles is None:
+            quantiles = [0.1, 0.5, 0.9]
         self.quantiles = quantiles
         self.output_size = output_size
         self.num_encoder_steps = num_encoder_steps
