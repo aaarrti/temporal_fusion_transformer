@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import logging
+import gc
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from enum import auto, IntEnum
 from typing import (
     NamedTuple,
@@ -14,21 +15,24 @@ from typing import (
     TypeVar,
     Hashable,
     Callable,
+    DefaultDict,
 )
-from collections import defaultdict
-
 import numpy as np
-import tensorflow as tf
 import pandas as pd
+import tensorflow as tf
+from absl import logging
+from keras_pbar import keras_pbar
+
+# from keras.utils.tf_utils import can_jit_compile
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from temporal_fusion_transformer.modeling import TFTInputs
 
-
-class DataEntry(tf.experimental.BatchableExtensionType):
-    inputs: TFTInputs
-    outputs: tf.Tensor
-    time: tf.Tensor
-    identifiers: tf.Tensor
+# from jax.tree_util import tree_map, tree_map_with_path
+# from temporal_fusion_transformer.modeling import TFTInputs
+# class DataEntry(tf.experimental.BatchableExtensionType):
+#     inputs: TFTInputs
+#     outputs: tf.Tensor
+#     time: tf.Tensor
+#     id: tf.Tensor
 
 
 class DataTypes(IntEnum):
@@ -54,17 +58,6 @@ class SchemaEntry(NamedTuple):
 
 
 class DataParams(NamedTuple):
-    """
-    Attributes
-    ----------
-
-    static_categories_sizes:
-    known_categories_sizes:
-    num_encoder_steps:
-    num_outputs:
-
-    """
-
     static_categories_sizes: List[int]
     known_categories_sizes: List[int]
     num_encoder_steps: int
@@ -72,55 +65,103 @@ class DataParams(NamedTuple):
 
 
 class ModelParams(NamedTuple):
-    """
-    Attributes
-    ----------
-
-    dropout_rate:
-    hidden_layer_size:
-    num_attention_heads:
-    num_heads:
-    max_graqient_norm":
-
-
-    """
-
-    learning_rate: float = 1e-3
-    dropout_rate: float = 0.1
-    hidden_layer_size: int = 5
-    num_attention_heads: int = 4
-    max_gradient_norm: float = 0.01
-    num_heads = 4
+    dropout_rate: float
+    hidden_layer_size: int
+    num_attention_heads: int
+    max_gradient_norm: float
+    num_attention_heads: int
 
 
 class Experiment(ABC):
-    @property
-    @abstractmethod
-    def fixed_params(self) -> DataParams:
-        raise NotImplementedError
 
-    @property
-    @abstractmethod
-    def default_hyperparams(self) -> ModelParams:
-        pass
+    """
+    Attributes:
 
-    @property
-    @abstractmethod
-    def train_test_split(self) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
+    name:
+        Name of the experiment, obviously.
+    data_params:
+        Data parameters are the one defined by dataset properties, they are static.
+    model_params:
+        Model parameters are subject to hyperparameter optimization.
+    column_schema:
+
+    """
+
+    name: ClassVar[str]
+    column_schema: ClassVar[Dict[str, SchemaEntry | List[SchemaEntry]]]
+    model_params: ClassVar[ModelParams]
+    data_params: ClassVar[DataParams]
+
+    # @abstractmethod
+    # def train_test_split(self) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
+    #    raise NotImplementedError
+
+    @classmethod
+    def get_single_col_by_input_type(cls, input_type: InputTypes) -> str:
         """
+        Returns name of single column.
+
+        Parameters
+        ----------
+        input_type:
+            Input type of column to extract
+
+        Returns
+        -------
+        """
+        col = cls.get_cols_by_input_type(input_type)
+
+        if len(col) != 1:
+            raise ValueError("Invalid number of columns for {}".format(input_type))
+
+        return col[0]
+
+    @classmethod
+    def get_cols_by_input_type(
+        cls,
+        input_type: InputTypes,
+        excluded_data_types: Sequence[DataTypes] | None = None,
+    ) -> List[str]:
+        if excluded_data_types is None:
+            excluded_data_types = []
+
+        def filter_func(i: SchemaEntry | List[SchemaEntry]) -> bool:
+            if isinstance(i, List):
+                return any(map(filter_func, i))
+            return i.input_type == input_type and i.data_type not in excluded_data_types
+
+        return list(filter_dict(cls.column_schema, value_filter=filter_func).keys())
+
+    @classmethod
+    def get_cols_by_data_type(
+        cls,
+        data_type: DataTypes,
+        excluded_input_types: Sequence[InputTypes] | None = None,
+    ) -> List[str]:
+        """
+        Extracts the names of columns that correspond to a define data_type.
+
+
+        Parameters
+        ----------
+        data_type:
+            DataType of columns to extract.
+        excluded_input_types:
+            Set of input types to exclude
+
         Returns
         -------
 
-        train_dataset:
-            Dataset, which in each iteration yields instance of ExperimentDataBatch.
-        validation_dataset:
-            Dataset, which in each iteration yields instance of ExperimentDataBatch.
         """
-        raise NotImplementedError
+        if excluded_input_types is None:
+            excluded_input_types = []
 
-    @property
-    def name(self) -> str:
-        raise NotImplementedError
+        def filter_func(i: SchemaEntry | List[SchemaEntry]) -> bool:
+            if isinstance(i, List):
+                return any(map(filter_func, i))
+            return i.input_type not in excluded_input_types and i.data_type == data_type
+
+        return list(filter_dict(cls.column_schema, value_filter=filter_func).keys())
 
 
 class ElectricityExperiment(Experiment):
@@ -139,53 +180,94 @@ class ElectricityExperiment(Experiment):
 
     References:
     ----------
-    .. [1] M. Harries, Splice-2 comparative evaluation: Electricity pricing.
-        Technical report, The University of South Wales, 1999.
-    .. [2] J. Gama, P. Medas, G. Castillo, and P. Rodrigues. Learning with drift detection.
-        In SBIA Brazilian Symposium on Artificial Intelligence, pages 286–295, 2004.
-    .. [3] https://www.openml.org/d/151
+    .. [1] https://www.openml.org/d/151
 
     """
 
-    total_time_steps: ClassVar[int] = 8 * 24
-    num_encoder_steps: ClassVar[int] = 7 * 24
-    num_outputs: ClassVar[int] = 1
-    test_boundary = 1339
-    column_schema: ClassVar[Dict[str, SchemaEntry]] = {
+    name: ClassVar[str] = "electricity"
+    total_time_steps = 8 * 24
+    test_boundary: ClassVar[int] = 1339
+    data_params: ClassVar[DataParams] = DataParams(
+        num_encoder_steps=7 * 24,
+        num_outputs=1,
+        known_categories_sizes=[],
+        static_categories_sizes=[369],
+    )
+    model_params: ClassVar[ModelParams] = ModelParams(
+        dropout_rate=0.1,
+        hidden_layer_size=160,
+        max_gradient_norm=1e-2,
+        num_attention_heads=4,
+    )
+    column_schema: ClassVar[Dict[str, SchemaEntry | List[SchemaEntry]]] = {
         "id": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.ID),
-        "hours_from_start": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.TIME),
+        "hours_from_start": [
+            SchemaEntry(DataTypes.REAL_VALUED, InputTypes.TIME),
+            SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+        ],
         "power_usage": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.TARGET),
         "hour": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
         "day_of_week": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
         "categorical_id": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
     }
 
-    def __init__(
-        self,
-        train_ds: tf.data.Dataset,
-        val_ds: tf.data.Dataset,
-    ):
-        self.train_ds = train_ds
-        self.val_ds = val_ds
-
     @classmethod
-    def from_raw_csv(cls, csv_path: str) -> ElectricityExperiment:
+    def from_raw_csv(
+        cls, csv_path: str, validation_boundary: int = 1315
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+        """
+        Read raw CSV, pre-process it, create TF dataset. You probably will want to execute it only once,
+        and then write dataset to local filesystem (or mb even create squshFS image).
+
+        Parameters
+        ----------
+        csv_path:
+            Path to raw unprocessed CSV file.
+        validation_boundary:
+            Year at which validation data should start.
+
+        Returns
+        -------
+
+        experiments:
+            Instance of experiment, with train and validation splits loaded. Dataset yields elements of shape
+            {
+                "identifier": ???,
+                "time": ???,
+                "outputs": ???,
+                "inputs_static": ???,
+                "inputs_known_categorical": ???,
+                "inputs_known_real": ???,
+                "inputs_observed": ???
+            }
+            The dataset is not batched, and must not be further shuffled.
+
+
+        Examples
+        -------
+
+        >>> from temporal_fusion_transformer.experiments import ElectricityExperiment
+        >>> experiment = ElectricityExperiment.from_raw_csv("data.csv")
+        >>> train_ds, val_ds = experiment.train_test_split()
+        >>> train_ds.save("data/train")
+        >>> val_ds.save("data/validation")
+        """
         logging.info(f"Loading electricity dataset from {csv_path}")
         # This code was copy pasted from original implementation, and I have very little idea
-        # what is it doing.
+        # what is it doing. TODO: rewrite using polars (and figure out WTF is going on here).
         df = pd.read_csv(csv_path, index_col=0, sep=";", decimal=",")
         df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
 
         # Used to determine the start and end dates of a series
-        output = df.resample("1h").mean().replace(0.0, np.nan)
+        df = df.resample("1h").mean().replace(0.0, np.nan)
 
-        earliest_time = output.index.min()
+        earliest_time = df.index.min()
 
         df_list = []
-        for label in output:
-            logging.debug("Processing {}".format(label))
-            srs = output[label]
+
+        for label in keras_pbar(df):
+            srs = df[label]
 
             start_date = min(srs.fillna(method="ffill").dropna().index)
             end_date = max(srs.fillna(method="bfill").dropna().index)
@@ -209,271 +291,150 @@ class ElectricityExperiment(Experiment):
 
             df_list.append(tmp)
 
-        output = pd.concat(df_list, axis=0, join="outer").reset_index(drop=True)
+        df = pd.concat(df_list, axis=0, join="outer").reset_index(drop=True)
+        del df_list
 
-        output["categorical_id"] = output["id"].copy()
-        output["hours_from_start"] = output["t"]
-        output["categorical_day_of_week"] = output["day_of_week"].copy()
-        output["categorical_hour"] = output["hour"].copy()
+        df["categorical_id"] = df["id"].copy()
+        df["hours_from_start"] = df["t"]
+        df["categorical_day_of_week"] = df["day_of_week"].copy()
+        df["categorical_hour"] = df["hour"].copy()
 
         # Filter to match range used by other academic papers
-        output = output[
-            (output["days_from_start"] >= 1096) & (output["days_from_start"] < 1346)
-        ].copy()
+        df = df[(df["days_from_start"] >= 1096) & (df["days_from_start"] < 1346)].copy()
         logging.info("Done.")
 
-        return cls.from_dataframe(output)
+        # index: days_from_start, Length: 2198072, dtype: int64
+        # np.max(index)
+        # Out[43]: 1345
+        # np.min(index)
+        # Out[44]: 1096
 
-    @classmethod
-    def from_dataframe(cls, df: pd.DataFrame) -> ElectricityExperiment:
-        """
-        This method accepts raw un-process CSV file for Electricity dataset, and convert it into ready to use
-        TensorFlow dataset and save it in instance property. Pre-processing will do few things:
-            - Find real columns and apply sklearn.NormalScaler to them instance-wise (using ID column).
-            - Find target columns and apply sklearn.NormalScaler to them instance-wise (using ID column).
-            - Find categorical columns and apply sklearn.LabelEncoder category-wise.
-            - Sample data grouped by ID and sorted by TIME.
-            - Group Data into ExperimentDataBatch instances.
-            - Create train-test split.
-            - Convert to TF dataset.
+        index = df["days_from_start"]
+        train_df = df.loc[index < validation_boundary]
+        valid_df = df.loc[(index >= validation_boundary - 7)]
 
-        It expects data frame with following schema:
-            power_usage  ...  categorical_day_of_week  categorical_hour
-            0  17544     2.538071  ...                        2                 0
-            1  17545     2.855330  ...                        2                 1
-            2  17546     2.855330  ...                        2                 2
-            3  17547     2.855330  ...                        2                 3
-            4  17548     2.538071  ...                        2                 4
-
-        Parameters
-        ----------
-        df:
-            Raw CSV file loaded into pandas.Dataframe.
-
-        Returns
-        -------
-
-        retval:
-            Experiment Instance.
-
-        """
-        id_column = get_single_col_by_input_type(InputTypes.ID, cls.column_schema)
-        target_column = get_single_col_by_input_type(
-            InputTypes.TARGET, cls.column_schema
-        )
-
+        # Pre-processing will do few things:
+        # - Find real columns and apply sklearn.NormalScaler to them instance-wise (using ID column).
+        # - Find target columns and apply sklearn.NormalScaler to them instance-wise (using ID column).
+        # - Find categorical columns and apply sklearn.LabelEncoder category-wise.
+        # - Sample data grouped by ID and sorted by TIME.
+        # - Group Data into ExperimentDataBatch instances.
+        # - Create train-test split.
+        # - Convert to TF dataset.
+        # It expects data frame with following schema:
+        # power_usage  ...  categorical_day_of_week  categorical_hour
+        # 0  17544     2.538071  ...                        2                 0
+        # 1  17545     2.855330  ...                        2                 1
+        # 2  17546     2.855330  ...                        2                 2
+        # 3  17547     2.855330  ...                        2                 3
+        # 4  17548     2.538071  ...                        2                 4
+        # ----------- collect all column types ---------------------
+        id_column = cls.get_single_col_by_input_type(InputTypes.ID)
+        target_column = cls.get_single_col_by_input_type(InputTypes.TARGET)
         # Format real scales
-        real_inputs = extract_cols_from_data_type(
-            DataTypes.REAL_VALUED, cls.column_schema, {InputTypes.ID, InputTypes.TIME}
+        real_inputs = cls.get_cols_by_data_type(
+            DataTypes.REAL_VALUED, {InputTypes.ID, InputTypes.TIME}
+        )
+        categorical_inputs = cls.get_cols_by_data_type(
+            DataTypes.CATEGORICAL, {InputTypes.ID, InputTypes.TIME}
+        )
+        time_col = cls.get_single_col_by_input_type(InputTypes.TIME)
+        input_static_cols = cls.get_cols_by_input_type(InputTypes.STATIC_INPUT)
+        input_observed = cls.get_cols_by_input_type(InputTypes.OBSERVED_INPUT)
+        input_known_real = cls.get_cols_by_input_type(
+            InputTypes.KNOWN_INPUT, {DataTypes.CATEGORICAL, DataTypes.DATE}
+        )
+        input_known_categorical = cls.get_cols_by_input_type(
+            InputTypes.KNOWN_INPUT, {DataTypes.REAL_VALUED, DataTypes.DATE}
         )
 
-        categorical_inputs = extract_cols_from_data_type(
-            DataTypes.CATEGORICAL, cls.column_schema, {InputTypes.ID, InputTypes.TIME}
-        )
-
+        # Initialize scalers/label encoders.
         real_scalers: Dict[str, StandardScaler] = {}
-        # We need it for inverse transform for predictions?
         target_scaler: Dict[str, StandardScaler] = {}
-        identifiers = []
-        for identifier, sliced in df.groupby(id_column):
+        categorical_scalers: Dict[str, LabelEncoder] = {}
+        num_classes = {}
+        logging.debug("Fitting scalers.")
+
+        for identifier, sliced in keras_pbar(df.groupby(id_column)):
             if len(sliced) >= cls.total_time_steps:
+                # Fit scalers.
                 data = sliced[real_inputs].values
                 targets = sliced[[target_column]].values
                 real_scalers[identifier] = StandardScaler().fit(data)
                 target_scaler[identifier] = StandardScaler().fit(targets)
-            identifiers.append(identifier)
 
-        categorical_scalers: Dict[str, LabelEncoder] = {}
-        num_classes = []
-        for col in categorical_inputs:
+        for col in keras_pbar(categorical_inputs):
             # Set all to str so that we don't have mixed integer/string columns
             srs = df[col].apply(str)
+            num_classes[col] = srs.nunique()
             categorical_scalers[col] = LabelEncoder().fit(srs.values)
-            num_classes.append(srs.nunique())
 
-            # Transform real inputs per entity
-        df_list = []
-        for identifier, sliced in df.groupby(id_column):
-            # Filter out any trajectories that are too short
-            if len(sliced) >= cls.total_time_steps:
-                sliced_copy = sliced.copy()
-                sliced_copy[real_inputs] = real_scalers[identifier].transform(
-                    sliced_copy[real_inputs].values
-                )
-                df_list.append(sliced_copy)
+        logging.debug(f"{num_classes = }")
 
-        output = pd.concat(df_list, axis=0)
+        def apply_scalers(_df: pd.DataFrame) -> pd.DataFrame:
+            _df_list = []
+            for _identifier, _sliced in keras_pbar(_df.groupby(id_column)):
+                if len(_sliced) >= cls.total_time_steps:
+                    sliced_copy = _sliced.copy()
+                    sliced_copy[real_inputs] = real_scalers[_identifier].transform(
+                        sliced_copy[real_inputs].values
+                    )
+                    _df_list.append(sliced_copy)
 
-        # Format categorical inputs
-        for col in categorical_inputs:
-            string_df = df[col].apply(str)
-            output[col] = categorical_scalers[col].transform(string_df)
+            for _col in keras_pbar(categorical_inputs):
+                # Set all to str so that we don't have mixed integer/string columns
+                _srs = _df[_col].apply(str)
+                _df[_col] = categorical_scalers[_col].transform(_srs)
+                _df = pd.concat(_df_list, axis=0)
 
-        data = output
+            return _df
 
-        time_col = get_single_col_by_input_type(InputTypes.TIME, cls.column_schema)
+        train_df = apply_scalers(train_df)
+        valid_df = apply_scalers(valid_df)
 
-        data.sort_values(by=[id_column, time_col], inplace=True)
+        col_mappings = {
+            "identifier": [id_column],
+            "time": [time_col],
+            "outputs": [target_column],
+            "inputs_static": input_static_cols,
+            "inputs_known_categorical": input_known_categorical,
+            "inputs_known_real": input_known_real,
+            "inputs_observed": input_observed,
+        }
 
-        logging.debug("Getting valid sampling locations.")
-        valid_sampling_locations = []
-        split_data_map = {}
-        for identifier, df in data.groupby(id_column):
-            logging.debug("Getting locations for {}".format(identifier))
-            num_entries = len(df)
-            if num_entries >= cls.total_time_steps:
-                valid_sampling_locations += [
-                    (identifier, cls.total_time_steps + i)
-                    for i in range(num_entries - cls.total_time_steps + 1)
-                ]
-            split_data_map[identifier] = df
+        def make_np_araay_dict(_df: pd.DataFrame) -> Dict[str, np.ndarray]:
+            logging.debug("Grouping and batching data.")
+            _df.sort_values(by=[id_column, time_col], inplace=True)
+            data_map: DefaultDict[str, List[np.ndarray]] = defaultdict(lambda: [])
 
-        input_static_cols = list(
-            filter_dict(
-                cls.column_schema,
-                value_filter=lambda v: v.input_type == InputTypes.STATIC_INPUT,
-            ).keys()
-        )
+            for _, _sliced in keras_pbar(df.groupby(id_column)):
+                for k in col_mappings:
+                    cols = col_mappings[k]
+                    if len(cols) == 0:
+                        continue
+                    arr = batch_single_entity(
+                        _sliced[cols].copy(), cls.total_time_steps
+                    )
+                    data_map[k].append(arr)
 
-        input_observed = list(
-            filter_dict(
-                cls.column_schema,
-                value_filter=lambda v: v.input_type == InputTypes.OBSERVED_INPUT,
-            ).keys()
-        )
+            data_map = dict(**data_map)
+            for k in data_map:
+                data_map[k] = np.concatenate(data_map[k], axis=0)
+            data_map["outputs"] = data_map["outputs"][
+                :, cls.data_params.num_encoder_steps :, :
+            ]
+            return data_map
 
-        input_known_real = list(
-            filter_dict(
-                cls.column_schema,
-                value_filter=lambda v: (
-                    v.input_type == InputTypes.KNOWN_INPUT
-                    and v.data_type == DataTypes.REAL_VALUED
-                ),
-            ).keys()
-        )
+        train_ds = make_np_araay_dict(train_df)
+        val_ds = make_np_araay_dict(valid_df)
+        return train_ds, val_ds
 
-        input_known_categorical = list(
-            filter_dict(
-                cls.column_schema,
-                value_filter=lambda v: (
-                    v.input_type == InputTypes.KNOWN_INPUT
-                    and v.data_type == DataTypes.CATEGORICAL
-                ),
-            ).keys()
-        )
-
-        data_map = defaultdict(lambda: [])
-        for _, sliced in data.groupby(id_column):
-            col_mappings = {
-                "identifier": [id_column],
-                "time": [time_col],
-                "outputs": [target_column],
-                "inputs": {
-                    "static": input_static_cols,
-                    "known_categorical": input_known_categorical,
-                    "known_real": input_known_real,
-                    "observed": input_observed,
-                },
-            }
-
-            for k in col_mappings:
-                if k == "inputs":
-                    for kk in col_mappings[k]:
-                        cols = col_mappings[kk]
-                        arr = batch_single_entity(
-                            sliced[cols].copy(), cls.total_time_steps
-                        )
-                        data_map[k][kk].append(arr)
-
-                cols = col_mappings[k]
-                arr = batch_single_entity(sliced[cols].copy(), cls.total_time_steps)
-                data_map[k].append(arr)
-
-        # Combine all data
-        for k in data_map:
-            data_map[k] = np.concatenate(data_map[k], axis=0)
-
-        # Shorten target so we only get decoder steps
-        data_map["outputs"] = data_map["outputs"][:, cls.num_encoder_steps :, :]
-
-        # FIXME plz
-        data_entry = DataEntry()
-
-        return data_map
-
-    @property
-    def fixed_params(self) -> DataParams:
-        return DataParams(
-            static_categories_sizes=[],
-            known_categories_sizes=[],
-            num_encoder_steps=self.num_encoder_steps,
-            num_outputs=self.num_outputs,
-        )
-
-    @property
-    def default_hyperparams(self) -> ModelParams:
-        pass
-
-    @property
-    def train_test_split(self) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
-        return ()
-
-
-def get_single_col_by_input_type(
-    input_type: InputTypes, column_definition: Dict[str, SchemaEntry]
-) -> str:
-    """
-    Returns name of single column.
-
-    Parameters
-    ----------
-    input_type:
-        Input type of column to extract
-    column_definition:
-        Column definition list for experiment
-
-    Returns
-    -------
-    """
-
-    def filter_func(i: SchemaEntry):
-        return i.input_type == input_type
-
-    col = list(filter_dict(column_definition, value_filter=filter_func).keys())
-
-    if len(col) != 1:
-        raise ValueError("Invalid number of columns for {}".format(input_type))
-
-    return col[0][0]
-
-
-def extract_cols_from_data_type(
-    data_type: DataTypes,
-    column_definition: Dict[str, SchemaEntry],
-    excluded_input_types: Sequence[InputTypes],
-) -> List[str]:
-    """
-    Extracts the names of columns that correspond to a define data_type.
-
-
-    Parameters
-    ----------
-    data_type:
-        DataType of columns to extract.
-    column_definition:
-        Column definition to use.
-    excluded_input_types:
-        Set of input types to exclude
-
-    Returns
-    -------
-
-    """
-
-    def filter_func(i: SchemaEntry):
-        return i.input_type not in excluded_input_types and i.data_type == data_type
-
-    return list(filter_dict(column_definition, value_filter=filter_func).keys())
+    def __init__(
+        self, train_dataset: tf.data.Dataset, validation_dataset: tf.data.Dataset
+    ):
+        """Do not use directly! Use from_raw_csv or from_dataframe instead."""
+        self._train_dataset = train_dataset
+        self._validation_dataset = validation_dataset
 
 
 T = TypeVar("T")
@@ -509,7 +470,7 @@ def filter_dict(
     key_filter: Callable[[K], bool] | None = None,
     value_filter: Callable[[V], bool] | None = None,
 ) -> Dict[K, V]:
-    def tautology(arg):
+    def tautology(arg) -> bool:
         # Tautology is an expression, which is always true.
         return True
 
@@ -528,13 +489,57 @@ def filter_dict(
     return result
 
 
-def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray | None:
+def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
     time_steps = len(input_data)
     x = input_data.values
     if time_steps >= lags:
         return np.stack(
             [x[i : time_steps - (lags - 1) + i, :] for i in range(lags)], axis=1
         )
+    logging.error("time_steps < lags, this is not expected.")
 
-    else:
-        return None
+
+# @tf.function(
+#     reduce_retracing=True,
+#     jit_compile=can_jit_compile(),
+#     experimental_autograph_options=tf.autograph.experimental.Feature.ALL
+# )
+# def tf_batch_single_entity(input_data: tf.Tensor, lags: int) -> tf.Tensor:
+#     time_steps = tf.shape(input_data)[0]
+#     arr = tf.TensorArray(
+#         size=lags,
+#         dtype=input_data.dtype,
+#         clear_after_read=True
+#     )
+#     for i in tf.range(lags):
+#         indexes = tf.range(i, time_steps - (lags - 1) + i, dtype=tf.int32)
+#         x = tf.gather(input_data, indexes, axis=0,)
+#         arr = arr.write(i, x)
+#
+#     arr = arr.stack()
+#     arr = tf.transpose(arr, [1, 0, 2])
+#     return arr
+
+# def make_data_entry(xy: Mapping[str, tf.Tensor]) -> DataEntry:
+#     def make_extension_type(x: Mapping[str, tf.Tensor]) -> TFTInputs:
+#         return TFTInputs(
+#             static=x["inputs_static"],
+#             known_real=x.get("inputs_known_real"),
+#             known_categorical=x.get("inputs_known_categorical"),
+#             observed=x.get("inputs_observed"),
+#         )
+#
+#     return DataEntry(
+#         inputs=make_extension_type(xy),
+#         outputs=xy["outputs"],
+#         time=xy["time"],
+#         id=xy["identifier"],
+#     )
+
+
+def concatenate_datasets(
+    ds1: tf.data.Dataset | None, ds2: tf.data.Dataset
+) -> tf.data.Dataset:
+    if ds1 is None:
+        return ds2
+    return ds1.concatenate(ds2)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple, List, Dict, Sequence
+from typing import Tuple, List, Dict, Sequence, TypeVar, Callable, Union
 
 import keras.layers as layers
 import tensorflow as tf
@@ -39,18 +39,39 @@ class TFTInputs(tf.experimental.BatchableExtensionType):
     """
 
     static: tf.Tensor
-    known_real: tf.Tensor
-    known_categorical: tf.Tensor
-    observed: tf.Tensor
+    known_real: Union[tf.Tensor, None]
+    known_categorical: Union[tf.Tensor, None]
+    observed: Union[tf.Tensor, None]
+
+    @property
+    def dtype(self):
+        return self.static.dtype
 
     @property
     def shape(self) -> "TFTInputShape":
+        def map_optional(optional: T | None, func: Callable[[T], R]) -> R | None:
+            if optional is not None:
+                return func(optional)
+            else:
+                return None
+
         return TFTInputShape(
             static=tf.shape(self.static),
-            known_real=tf.shape(self.known_real),
-            known_categorical=tf.shape(self.known_categorical),
-            observed=tf.shape(self.observed),
+            known_real=map_optional(self.known_real, tf.shape),
+            known_categorical=map_optional(self.known_categorical, tf.shape),
+            observed=map_optional(self.observed, tf.shape),
         )
+
+    class Spec:
+        def __init__(self, shape: TFTInputShape, dtype=tf.float32):
+            self.values = tf.TensorSpec(shape, dtype)
+            self.mask = tf.TensorSpec(shape, tf.bool)
+
+        def __repr__(self):
+            return f"TFTInputs.Spec(shape={self.shape}, dtype={self.dtype})"
+
+        shape = property(lambda self: self.values.shape)
+        dtype = property(lambda self: self.values.dtype)
 
 
 class TFTInputShape(tf.experimental.ExtensionType):
@@ -71,9 +92,9 @@ class TFTInputShape(tf.experimental.ExtensionType):
     """
 
     static: tf.TensorShape
-    known_real: tf.TensorShape
-    known_categorical: tf.TensorShape
-    observed: tf.TensorShape
+    known_real: Union[tf.TensorShape, None]
+    known_categorical: Union[tf.TensorShape, None]
+    observed: Union[tf.TensorShape, None]
 
 
 class TFTEmbeddings(tf.experimental.ExtensionType):
@@ -1116,3 +1137,7 @@ def make_causal_attention_mask(self_attn_inputs: tf.Tensor) -> tf.Tensor:
 def flatten_over_batch(arr: tf.Tensor) -> tf.Tensor:
     batch_size = tf.shape(arr)[0]
     return tf.reshape(arr, (batch_size, -1))
+
+
+T = TypeVar("T")
+R = TypeVar("R")
