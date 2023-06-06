@@ -18,7 +18,7 @@ def train_with_fixed_hyper_parameters(
     optimizer_factory: Callable[[], tf.keras.optimizers.Optimizer],
     train_ds: tf.data.Dataset,
     val_ds: tf.data.Dataset,
-    epochs: int = 1,
+    **kwargs,
 ) -> Tuple[tf.keras.Model, Dict[str, np.ndarray]]:
     if can_jit_compile():
         tf.config.optimizer.set_jit("autoclustering")
@@ -34,12 +34,12 @@ def train_with_fixed_hyper_parameters(
     history = model.fit(
         train_ds,
         validation_data=val_ds,
-        epochs=epochs,
         callbacks=[
             TensorBoard("tensorboard_logs", write_graph=False),
             TerminateOnNaN(),
             BackupAndRestore("checkpoints"),
         ],
+        **kwargs,
     ).history
     return model, history
 

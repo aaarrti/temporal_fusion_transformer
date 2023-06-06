@@ -162,4 +162,7 @@ cython_debug/
 
 thridparty/google-research
 data
+data.sqfs
+checkpoints
+tensorboard_logs
 

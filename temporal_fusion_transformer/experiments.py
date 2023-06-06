@@ -22,6 +22,8 @@ import pandas as pd
 from absl import logging
 from keras_pbar import keras_pbar
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.utils import gen_batches
+import tensorflow as tf
 
 
 class classproperty:
@@ -509,7 +511,7 @@ def filter_dict(
     key_filter: Callable[[K], bool] | None = None,
     value_filter: Callable[[V], bool] | None = None,
 ) -> Dict[K, V]:
-    def tautology(arg) -> bool:
+    def tautology(arg: K) -> bool:
         # Tautology is an expression, which is always true.
         return True
 
@@ -581,3 +583,20 @@ def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
 #    if ds1 is None:
 #        return ds2
 #    return ds1.concatenate(ds2)
+
+
+def export_data_as_tensorflow_dataset(
+        data: Mapping[str, np.ndarray],
+        export_path: str,
+        shard_size: int = 100_000
+):
+    n = len(data["identifier"])
+    batches = gen_batches(n, shard_size)
+    
+    n_batches = n // shard_size
+    if n % shard_size != 0:
+        n_batches += 1
+    
+    for index, shard_slice in keras_pbar(enumerate(batches), n):
+        shard = map_dict(data, lambda v: v[shard_slice.start:shard_slice.stop])
+        tf.data.Dataset.from_tensors(shard).save(f"{export_path}/{index}")

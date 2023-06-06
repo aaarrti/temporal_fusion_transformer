@@ -4,7 +4,7 @@
 
 ### TODO references
 
-!mksquashfs data data.sqfs -all-root -action 'chmod(o+rX)@!perm(o+rX)
+mksquashfs data data.sqfs -all-root -action 'chmod(o+rX)@!perm(o+rX)
 
 
 Run `./scripts/clone_original_implementation`, if you need to compare it with this repository.
