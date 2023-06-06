@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from enum import auto, IntEnum
@@ -17,22 +16,20 @@ from typing import (
     Callable,
     DefaultDict,
 )
+
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 from absl import logging
 from keras_pbar import keras_pbar
-
-# from keras.utils.tf_utils import can_jit_compile
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 
-# from jax.tree_util import tree_map, tree_map_with_path
-# from temporal_fusion_transformer.modeling import TFTInputs
-# class DataEntry(tf.experimental.BatchableExtensionType):
-#     inputs: TFTInputs
-#     outputs: tf.Tensor
-#     time: tf.Tensor
-#     id: tf.Tensor
+
+class classproperty:
+    def __init__(self, getter):
+        self.getter = getter
+
+    def __get__(self, instance, owner):
+        return self.getter(owner)
 
 
 class DataTypes(IntEnum):
@@ -65,15 +62,17 @@ class DataParams(NamedTuple):
 
 
 class ModelParams(NamedTuple):
-    dropout_rate: float
     hidden_layer_size: int
     num_attention_heads: int
+    dropout_rate: float = 0.1
+
+
+class OptimizerParams(NamedTuple):
+    learning_rate: float
     max_gradient_norm: float
-    num_attention_heads: int
 
 
 class Experiment(ABC):
-
     """
     Attributes:
 
@@ -87,14 +86,45 @@ class Experiment(ABC):
 
     """
 
-    name: ClassVar[str]
-    column_schema: ClassVar[Dict[str, SchemaEntry | List[SchemaEntry]]]
-    model_params: ClassVar[ModelParams]
-    data_params: ClassVar[DataParams]
+    @classproperty
+    @abstractmethod
+    def column_schema(self) -> Dict[str, SchemaEntry | List[SchemaEntry]]:
+        raise NotImplementedError
 
-    # @abstractmethod
-    # def train_test_split(self) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
-    #    raise NotImplementedError
+    @classproperty
+    @abstractmethod
+    def default_params(self) -> Tuple[ModelParams, OptimizerParams]:
+        """
+        Model parameters, are the ones, which are model architecture parameters, which are subject to hyperparameter
+        fine-tuning, e.g, number of attention heads. Same goes for OptimizerParams.
+        Refer to  Deep Learning Tuning Playbook for step-by-step guide. For solved experiments,
+        this property will already contain the best ones.
+
+        References
+        -------
+        .. [1] https://github.com/google-research/tuning_playbook
+
+        Returns
+        -------
+
+        """
+        raise NotImplementedError
+
+    @classproperty
+    @abstractmethod
+    def fixed_params(self) -> DataParams:
+        """
+        Fixed parameters, are the ones, caused by underlying datasets structure.
+        E.g., number of static inputs.
+
+        Returns
+        -------
+
+        retval:
+            DataParams instance.
+
+        """
+        raise NotImplementedError
 
     @classmethod
     def get_single_col_by_input_type(cls, input_type: InputTypes) -> str:
@@ -184,32 +214,40 @@ class ElectricityExperiment(Experiment):
 
     """
 
-    name: ClassVar[str] = "electricity"
-    total_time_steps = 8 * 24
+    total_time_steps: ClassVar[int] = 8 * 24
     test_boundary: ClassVar[int] = 1339
-    data_params: ClassVar[DataParams] = DataParams(
-        num_encoder_steps=7 * 24,
-        num_outputs=1,
-        known_categories_sizes=[],
-        static_categories_sizes=[369],
-    )
-    model_params: ClassVar[ModelParams] = ModelParams(
-        dropout_rate=0.1,
-        hidden_layer_size=160,
-        max_gradient_norm=1e-2,
-        num_attention_heads=4,
-    )
-    column_schema: ClassVar[Dict[str, SchemaEntry | List[SchemaEntry]]] = {
-        "id": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.ID),
-        "hours_from_start": [
-            SchemaEntry(DataTypes.REAL_VALUED, InputTypes.TIME),
-            SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-        ],
-        "power_usage": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.TARGET),
-        "hour": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-        "day_of_week": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
-        "categorical_id": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
-    }
+
+    @classproperty
+    def column_schema(self) -> Dict[str, SchemaEntry | List[SchemaEntry]]:
+        return {
+            "id": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.ID),
+            "hours_from_start": [
+                SchemaEntry(DataTypes.REAL_VALUED, InputTypes.TIME),
+                SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            ],
+            "power_usage": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.TARGET),
+            "hour": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            "day_of_week": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            "categorical_id": SchemaEntry(
+                DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT
+            ),
+        }
+
+    @classproperty
+    def default_params(self) -> Tuple[ModelParams, OptimizerParams]:
+        return (
+            ModelParams(hidden_layer_size=160, num_attention_heads=4),
+            OptimizerParams(learning_rate=1e-3, max_gradient_norm=1e-2),
+        )
+
+    @classproperty
+    def fixed_params(self) -> DataParams:
+        return DataParams(
+            num_encoder_steps=7 * 24,
+            num_outputs=1,
+            known_categories_sizes=[],
+            static_categories_sizes=[369],
+        )
 
     @classmethod
     def from_raw_csv(
@@ -232,13 +270,11 @@ class ElectricityExperiment(Experiment):
         experiments:
             Instance of experiment, with train and validation splits loaded. Dataset yields elements of shape
             {
-                "identifier": ???,
-                "time": ???,
-                "outputs": ???,
-                "inputs_static": ???,
-                "inputs_known_categorical": ???,
-                "inputs_known_real": ???,
-                "inputs_observed": ???
+                "identifier": (batch, total_time_steps, 1),
+                "time": (batch, total_time_steps, 1),
+                "outputs": (batch, total_time_steps, 1),
+                "inputs_static": (batch, total_time_steps, 1),
+                "inputs_known_real": (batch, total_time_steps, 3),
             }
             The dataset is not batched, and must not be further shuffled.
 
@@ -254,7 +290,7 @@ class ElectricityExperiment(Experiment):
         """
         logging.info(f"Loading electricity dataset from {csv_path}")
         # This code was copy pasted from original implementation, and I have very little idea
-        # what is it doing. TODO: rewrite using polars (and figure out WTF is going on here).
+        # what is it doing. TODO: rewrite using polars.
         df = pd.read_csv(csv_path, index_col=0, sep=";", decimal=",")
         df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
@@ -371,26 +407,33 @@ class ElectricityExperiment(Experiment):
 
         logging.debug(f"{num_classes = }")
 
-        def apply_scalers(_df: pd.DataFrame) -> pd.DataFrame:
-            _df_list = []
-            for _identifier, _sliced in keras_pbar(_df.groupby(id_column)):
-                if len(_sliced) >= cls.total_time_steps:
-                    sliced_copy = _sliced.copy()
-                    sliced_copy[real_inputs] = real_scalers[_identifier].transform(
-                        sliced_copy[real_inputs].values
-                    )
-                    _df_list.append(sliced_copy)
+        train_df_list = []
+        for identifier, sliced in keras_pbar(train_df.groupby(id_column)):
+            if len(sliced) >= cls.total_time_steps:
+                sliced_copy = sliced.copy()
+                sliced_copy[real_inputs] = real_scalers[identifier].transform(
+                    sliced_copy[real_inputs].values
+                )
+                train_df_list.append(sliced_copy)
 
-            for _col in keras_pbar(categorical_inputs):
-                # Set all to str so that we don't have mixed integer/string columns
-                _srs = _df[_col].apply(str)
-                _df[_col] = categorical_scalers[_col].transform(_srs)
-                _df = pd.concat(_df_list, axis=0)
+        train_df = pd.concat(train_df_list, axis=0)
+        for col in keras_pbar(categorical_inputs):
+            string_df = train_df[col].apply(str)
+            train_df[col] = categorical_scalers[col].transform(string_df)
 
-            return _df
+        valid_df_list = []
+        for identifier, sliced in keras_pbar(valid_df.groupby(id_column)):
+            if len(sliced) >= cls.total_time_steps:
+                sliced_copy = sliced.copy()
+                sliced_copy[real_inputs] = real_scalers[identifier].transform(
+                    sliced_copy[real_inputs].values
+                )
+                valid_df_list.append(sliced_copy)
 
-        train_df = apply_scalers(train_df)
-        valid_df = apply_scalers(valid_df)
+        valid_df = pd.concat(valid_df_list, axis=0)
+        for col in keras_pbar(categorical_inputs):
+            string_df = valid_df[col].apply(str)
+            valid_df[col] = categorical_scalers[col].transform(string_df)
 
         col_mappings = {
             "identifier": [id_column],
@@ -402,12 +445,12 @@ class ElectricityExperiment(Experiment):
             "inputs_observed": input_observed,
         }
 
-        def make_np_araay_dict(_df: pd.DataFrame) -> Dict[str, np.ndarray]:
+        def make_np_array_dict(preprocessed_df: pd.DataFrame) -> Dict[str, np.ndarray]:
             logging.debug("Grouping and batching data.")
-            _df.sort_values(by=[id_column, time_col], inplace=True)
+            preprocessed_df.sort_values(by=[id_column, time_col], inplace=True)
             data_map: DefaultDict[str, List[np.ndarray]] = defaultdict(lambda: [])
 
-            for _, _sliced in keras_pbar(df.groupby(id_column)):
+            for _, _sliced in keras_pbar(preprocessed_df.groupby(id_column)):
                 for k in col_mappings:
                     cols = col_mappings[k]
                     if len(cols) == 0:
@@ -420,21 +463,17 @@ class ElectricityExperiment(Experiment):
             data_map = dict(**data_map)
             for k in data_map:
                 data_map[k] = np.concatenate(data_map[k], axis=0)
+            # Save only future steps
             data_map["outputs"] = data_map["outputs"][
-                :, cls.data_params.num_encoder_steps :, :
+                :, cls.fixed_params.num_encoder_steps :
             ]
+            # Static are not time varying
+            data_map["inputs_static"] = data_map["inputs_static"][:, 0]
             return data_map
 
-        train_ds = make_np_araay_dict(train_df)
-        val_ds = make_np_araay_dict(valid_df)
+        train_ds = make_np_array_dict(train_df)
+        val_ds = make_np_array_dict(valid_df)
         return train_ds, val_ds
-
-    def __init__(
-        self, train_dataset: tf.data.Dataset, validation_dataset: tf.data.Dataset
-    ):
-        """Do not use directly! Use from_raw_csv or from_dataframe instead."""
-        self._train_dataset = train_dataset
-        self._validation_dataset = validation_dataset
 
 
 T = TypeVar("T")
@@ -536,10 +575,9 @@ def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
 #         id=xy["identifier"],
 #     )
 
-
-def concatenate_datasets(
-    ds1: tf.data.Dataset | None, ds2: tf.data.Dataset
-) -> tf.data.Dataset:
-    if ds1 is None:
-        return ds2
-    return ds1.concatenate(ds2)
+# def concatenate_datasets(
+#    ds1: tf.data.Dataset | None, ds2: tf.data.Dataset
+# ) -> tf.data.Dataset:
+#    if ds1 is None:
+#        return ds2
+#    return ds1.concatenate(ds2)

@@ -7,3 +7,4 @@ black
 pytest
 pytest_sugar
 pyarrow
+dvc

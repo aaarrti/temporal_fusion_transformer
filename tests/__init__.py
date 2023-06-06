@@ -10,4 +10,3 @@ logging.basicConfig(
 )
 tf.get_logger().setLevel("DEBUG")
 absl.logging.set_verbosity(absl.logging.converter.ABSL_DEBUG)
-tf.config.run_functions_eagerly(True)

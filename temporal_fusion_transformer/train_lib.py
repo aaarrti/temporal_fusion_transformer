@@ -1,56 +1,37 @@
 from __future__ import annotations
 
-from typing import List, NamedTuple, Type
+from typing import Callable, Sequence, Dict, Tuple
+import numpy as np
 
+import keras_tuner as kt
 import tensorflow as tf
 from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
 from keras.losses import Loss
 from keras.utils.tf_utils import can_jit_compile
+from keras import mixed_precision
 
-from temporal_fusion_transformer.experiments import Experiment
-from temporal_fusion_transformer.modeling import TemporalFusionTransformer
-
-"""
-- x_batch -> TFTInputs
-- y_batch -> (batch_size, time_steps - n_encoder_steps, n_outputs)
-    we must concatenate 3 of those, to use for 3 different quantiled losses
-- sample_weights -> (batch, n_outputs) (all ones ??)
-"""
+from temporal_fusion_transformer.modeling import TFTInputs
 
 
-class HyperParameters(NamedTuple):
-    max_gradient_norm: float
-    learning_rate: float
-
-
-def train_with_default_hyper_parameters(
-    experiment: Type[Experiment],
+def train_with_fixed_hyper_parameters(
+    model_factory: Callable[[], tf.keras.Model],
+    optimizer_factory: Callable[[], tf.keras.optimizers.Optimizer],
     train_ds: tf.data.Dataset,
     val_ds: tf.data.Dataset,
-    hp: HyperParameters,
     epochs: int = 1,
-) -> tf.keras.Model:
-    model = TemporalFusionTransformer(
-        static_categories_sizes=experiment.data_params.static_categories_sizes,
-        known_categories_sizes=experiment.data_params.known_categories_sizes,
-        num_encoder_steps=experiment.data_params.num_encoder_steps,
-        num_attention_heads=experiment.model_params.num_attention_heads,
-        dropout_rate=experiment.model_params.dropout_rate,
-        hidden_layer_size=experiment.model_params.hidden_layer_size,
-        output_size=experiment.data_params.num_outputs,
-    )
+) -> Tuple[tf.keras.Model, Dict[str, np.ndarray]]:
+    if can_jit_compile():
+        tf.config.optimizer.set_jit("autoclustering")
+        mixed_precision.set_global_policy("mixed_float16")
 
+    model = model_factory()
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(
-            # TODO: cosine schedule?
-            learning_rate=hp.learning_rate,
-            clipnorm=hp.max_gradient_norm,
-        ),
+        optimizer=optimizer_factory(),
         loss=QuantileLoss(model.quantiles),
         jit_compile=can_jit_compile(True),
     )
 
-    model.fit(
+    history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=epochs,
@@ -59,74 +40,44 @@ def train_with_default_hyper_parameters(
             TerminateOnNaN(),
             BackupAndRestore("checkpoints"),
         ],
+    ).history
+    return model, history
+
+
+def fine_tune_hyper_parameters(
+    model_factory: Callable[[kt.HyperParameters], tf.keras.Model],
+    train_ds: tf.data.Dataset,
+    val_ds: tf.data.Dataset,
+    epochs: int = 1,
+    max_trials: int = 20,
+    prng_seed: int = 42,
+    name: str = "experiment",
+) -> kt.HyperParameters:
+    if can_jit_compile():
+        tf.config.optimizer.set_jit("autoclustering")
+        mixed_precision.set_global_policy("mixed_float16")
+
+    tuner = kt.RandomSearch(
+        hypermodel=model_factory,
+        objective="val_loss",
+        seed=prng_seed,
+        max_trials=max_trials,
+        overwrite=True,
+        directory="tuner_logs",
+        project_name=name,
     )
-    return model
-
-
-# def fine_tune_hyper_parameters(
-#    experiment: Experiment,
-#    batch_size: int = 32,
-#    epochs: int = 1,
-#    prng_seed: int = 42,
-#    max_trials: int = 20,
-# ):
-#    import keras_tuner
-#
-#    train_ds, val_ds = experiment.train_test_split
-#    train_ds = make_dataset(train_ds, batch_size)
-#    val_ds = make_dataset(val_ds, batch_size)
-#
-#    def make_model(hp: keras_tuner.HyperParameters) -> keras_tuner.HyperModel:
-#        model = TemporalFusionTransformer(
-#            static_categories_sizes=experiment.fixed_params.static_categories_sizes,
-#            known_categories_sizes=experiment.fixed_params.known_categories_sizes,
-#            num_encoder_steps=experiment.default_hyperparams.num_encoder_steps,
-#            num_attention_heads=experiment.default_hyperparams.num_attention_heads,
-#            dropout_rate=experiment.default_hyperparams.dropout_rate,
-#            hidden_layer_size=experiment.default_hyperparams.hidden_layer_size,
-#            output_size=experiment.fixed_params.num_outputs,
-#            quantiles=experiment.default_hyperparams.quantiles,
-#        )
-#
-#        learning_rate = hp.Float(
-#            "learning_rate", max_value=1e-2, min_value=1e-3, sampling="log", step=0.2
-#        )
-#        max_gradient_norm = hp.Float(
-#            "max_grad_norm", max_value=0.1, min_value=1e-3, sampling="log", step=0.2
-#        )
-#
-#        model.compile(
-#            optimizer=tf.keras.optimizers.Adam(
-#                # TODO: cosine schedule?
-#                learning_rate=learning_rate,
-#                clipnorm=max_gradient_norm,
-#            ),
-#            loss=QuantileLoss(experiment.default_hyperparams.quantiles),
-#            jit_compile=can_jit_compile(True),
-#        )
-#
-#    tuner = keras_tuner.RandomSearch(
-#        hypermodel=make_model,
-#        objective="val_loss",
-#        seed=prng_seed,
-#        max_trials=max_trials,
-#        overwrite=True,
-#        directory="tuner_logs",
-#        project_name=experiment.name,
-#    )
-#    tuner.search_space_summary()
-#    tuner.search(
-#        train_ds,
-#        epochs=epochs,
-#        validation_data=val_ds,
-#        callbacks=[
-#            TensorBoard("tensorboard_logs", write_graph=False),
-#            TerminateOnNaN(),
-#        ],
-#        verbose=2,
-#    )
-#
-#
+    tuner.search_space_summary()
+    tuner.search(
+        train_ds,
+        epochs=epochs,
+        validation_data=val_ds,
+        callbacks=[
+            TensorBoard("tensorboard_logs", write_graph=False),
+            TerminateOnNaN(),
+        ],
+        verbose=2,
+    )
+    return tuner.get_best_hyperparameters(0)[0]
 
 
 class QuantileLoss(Loss):
@@ -138,7 +89,7 @@ class QuantileLoss(Loss):
 
     """
 
-    def __init__(self, quantiles: List[int], output_size: int = 1):
+    def __init__(self, quantiles: Sequence[int], output_size: int = 1):
         """
 
         Parameters
@@ -152,34 +103,41 @@ class QuantileLoss(Loss):
                 raise ValueError(
                     f"Illegal quantile value={quantile}! Values should be between 0 and 1."
                 )
-        self.quantiles = quantiles
-        self.output_size = output_size
+        self.quantiles = tf.constant(quantiles)
+        self.output_size = tf.constant(output_size)
 
-    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> float:
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
         """
 
         Parameters
         ----------
         y_true:
-            Targets
+            Targets of shape (batch, time_steps, 1).
         y_pred:
-            Predictions
+            Predictions of shape (batch, time_steps, quantiles).
 
         Returns
         -------
 
         """
-        quantiles_used = set(self.quantiles)
 
-        loss = 0.0
-        for i, quantile in enumerate(self.quantiles):
-            if quantile in quantiles_used:
-                loss += quantile_loss(
-                    y_true[..., self.output_size * i : self.output_size * (i + 1)],
-                    y_pred[Ellipsis, self.output_size * i : self.output_size * (i + 1)],
-                    tf.constant(quantile),
-                )
-        return loss
+        if tf.rank(y_true) == 2:
+            y_true = tf.expand_dims(y_true, axis=-1)
+
+        # @tf.function(
+        #    reduce_retracing=True,
+        #    jit_compile=can_jit_compile(True),
+        #    experimental_autograph_options=tf.autograph.experimental.Feature.ALL,
+        # )
+        def inner_fn(q: int):
+            return quantile_loss(
+                y_true,
+                y_pred[..., self.output_size * q : self.output_size * (q + 1)],
+                self.quantiles[q],
+            )
+
+        loss = tf.vectorized_map(inner_fn, tf.range(len(self.quantiles)))
+        return tf.reduce_sum(loss, axis=0)
 
 
 @tf.function(reduce_retracing=True, jit_compile=can_jit_compile(True))
@@ -209,3 +167,34 @@ def quantile_loss(
         + (1.0 - quantile) * negative_prediction_underflow
     )
     return tf.reduce_sum(q_loss, axis=-1)
+
+
+def load_data_from_archive(path: str) -> Dict[str, np.ndarray]:
+    archive = np.load(path, allow_pickle=True)
+    data = {}
+
+    for k in (
+        "identifier",
+        "time",
+        "outputs",
+        "inputs_static",
+        "inputs_known_real",
+        "inputs_known_categorical",
+        "inputs_observed",
+    ):
+        if k in archive:
+            data[k] = archive[k]
+
+    return data
+
+
+def make_input_tuple(data: Dict[str, tf.Tensor]) -> Tuple[TFTInputs, tf.Tensor]:
+    return (
+        TFTInputs(
+            static=data["inputs_static"],
+            known_real=data["inputs_known_real"],
+            known_categorical=data.get("inputs_known_categorical"),
+            observed=data.get("inputs_observed"),
+        ),
+        data["outputs"],
+    )

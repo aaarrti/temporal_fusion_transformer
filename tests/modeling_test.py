@@ -17,25 +17,18 @@ n_time_steps = 30
 batch_size = 8
 hidden_layer_size = 5
 PRNG_SEED = 42
+# tf.config.run_functions_eagerly(True)
 
 
 class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
-    def setUp(self):
-        super().setUp()
-        self.x_batch = TFTInputs(
-            static=tf.ones((8, 4), dtype=tf.int32),
-            known_real=tf.ones((8, 30, 3), dtype=tf.float32),
-            known_categorical=(tf.ones((8, 30, 2), dtype=tf.int32)),
-            observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
-        )
-
     def test_input_embedding(self):
+        x_batch = make_x_batch()
         layer = TFTInputEmbedding(
             static_categories_sizes,
             known_categories_sizes,
             hidden_layer_size,
         )
-        x_embeds = layer(self.x_batch)
+        x_embeds = layer(x_batch)
         # Same shapes as in the original implementation.
         self.assertEqual((batch_size, 2, hidden_layer_size), x_embeds.static.shape)
         self.assertEqual(
@@ -96,17 +89,9 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
         )
 
 
-class TFTModelTest(tf.test.TestCase):
-    def setUp(self):
-        super().setUp()
-        self.x_batch = TFTInputs(
-            static=tf.ones((8, 4), dtype=tf.int32),
-            known_real=tf.ones((8, 30, 3), dtype=tf.float32),
-            known_categorical=(tf.ones((8, 30, 2), dtype=tf.int32)),
-            observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
-        )
-
+class TFTModelTest(tf.test.TestCase, parameterized.TestCase):
     def test_tft_model(self):
+        x_batch = make_x_batch()
         model = TemporalFusionTransformer(
             num_encoder_steps=25,
             num_attention_heads=4,
@@ -117,8 +102,64 @@ class TFTModelTest(tf.test.TestCase):
             quantiles=[1, 2, 3],
             output_size=1,
         )
-
-        logits = model(self.x_batch)
+        logits = model(x_batch)
         tf.debugging.check_numerics(logits, "Test Failed.")
         # 3 is default number of quantiles.
         self.assertEqual((batch_size, 5, 3), logits.shape)
+
+    @parameterized.named_parameters(
+        (
+            "known_categorical==None",
+            TFTInputs(
+                static=tf.ones((8, 4), dtype=tf.int32),
+                known_real=tf.ones((8, 30, 3), dtype=tf.float32),
+                known_categorical=None,
+                observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
+            ),
+            [],
+        ),
+        (
+            "observed==None",
+            TFTInputs(
+                static=tf.ones((8, 4), dtype=tf.int32),
+                known_real=tf.ones((8, 30, 3), dtype=tf.float32),
+                known_categorical=(tf.ones((8, 30, 2), dtype=tf.int32)),
+                observed=None,
+            ),
+            known_categories_sizes,
+        ),
+        (
+            "known_categorical==None, observed==None",
+            TFTInputs(
+                static=tf.ones((8, 4), dtype=tf.int32),
+                known_real=tf.ones((8, 30, 3), dtype=tf.float32),
+                known_categorical=None,
+                observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
+            ),
+            [],
+        ),
+    )
+    def test_input_is_missing(self, x_batch, _known_categories_sizes):
+        model = TemporalFusionTransformer(
+            num_encoder_steps=25,
+            num_attention_heads=4,
+            hidden_layer_size=hidden_layer_size,
+            static_categories_sizes=static_categories_sizes,
+            known_categories_sizes=_known_categories_sizes,
+            dropout_rate=0,
+            output_size=1,
+        )
+
+        logits = model(x_batch)
+        tf.debugging.check_numerics(logits, "Test Failed.")
+        # 3 is default number of quantiles.
+        self.assertEqual((batch_size, 5, 3), logits.shape)
+
+
+def make_x_batch():
+    return TFTInputs(
+        static=tf.ones((8, 4), dtype=tf.int32),
+        known_real=tf.ones((8, 30, 3), dtype=tf.float32),
+        known_categorical=tf.ones((8, 30, 2), dtype=tf.int32),
+        observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
+    )

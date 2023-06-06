@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Tuple, List, Dict, Sequence, TypeVar, Callable, Union
+from typing import Tuple, Dict, Sequence, TypeVar, Callable, Union
+from operator import attrgetter
 
 import keras.layers as layers
 import tensorflow as tf
@@ -39,7 +40,7 @@ class TFTInputs(tf.experimental.BatchableExtensionType):
     """
 
     static: tf.Tensor
-    known_real: Union[tf.Tensor, None]
+    known_real: tf.Tensor
     known_categorical: Union[tf.Tensor, None]
     observed: Union[tf.Tensor, None]
 
@@ -48,56 +49,34 @@ class TFTInputs(tf.experimental.BatchableExtensionType):
         return self.static.dtype
 
     @property
-    def shape(self) -> "TFTInputShape":
-        def map_optional(optional: T | None, func: Callable[[T], R]) -> R | None:
-            if optional is not None:
-                return func(optional)
-            else:
-                return None
-
+    def shape(self) -> TFTInputShape:
         return TFTInputShape(
-            static=tf.shape(self.static),
-            known_real=map_optional(self.known_real, tf.shape),
-            known_categorical=map_optional(self.known_categorical, tf.shape),
-            observed=map_optional(self.observed, tf.shape),
+            static=self.static.shape,
+            known_real=self.known_real.shape,
+            known_categorical=map_optional(self.known_categorical, attrgetter("shape")),
+            observed=map_optional(self.observed, attrgetter("shape")),
         )
 
-    class Spec:
-        def __init__(self, shape: TFTInputShape, dtype=tf.float32):
-            self.values = tf.TensorSpec(shape, dtype)
-            self.mask = tf.TensorSpec(shape, tf.bool)
+    # class Spec:
+    #     def __init__(self, shape: TFTInputShape, dtype=tf.float32):
+    #         self.values = tf.TensorSpec(shape, dtype)
+    #         self.mask = tf.TensorSpec(shape, tf.bool)
+    #
+    #     def __repr__(self):
+    #         return f"TFTInputs.Spec(shape={self.shape}, dtype={self.dtype})"
+    #
+    #     shape = property(lambda self: self.values.shape)
+    #     dtype = property(lambda self: self.values.dtype)
 
-        def __repr__(self):
-            return f"TFTInputs.Spec(shape={self.shape}, dtype={self.dtype})"
 
-        shape = property(lambda self: self.values.shape)
-        dtype = property(lambda self: self.values.dtype)
-
-
-class TFTInputShape(tf.experimental.ExtensionType):
-    """
-    A convenience container to represent all shapes of TFTInputs during model tracing phase.
-
-    Attributes
-    ----------
-
-    static:
-        (batch, num_inputs)
-    known_real:
-        (batch, time steps, num_inputs)
-    known_categorical:
-        (batch, num_inputs)
-    observed:
-        (batch, time steps, num_inputs)
-    """
-
+class TFTInputShape(tf.experimental.BatchableExtensionType):
     static: tf.TensorShape
-    known_real: Union[tf.TensorShape, None]
+    known_real: tf.TensorShape
     known_categorical: Union[tf.TensorShape, None]
     observed: Union[tf.TensorShape, None]
 
 
-class TFTEmbeddings(tf.experimental.ExtensionType):
+class TFTEmbeddings(tf.experimental.BatchableExtensionType):
     """
 
     A convenience container to represent output of TFTInputEmbedding layer.
@@ -116,10 +95,28 @@ class TFTEmbeddings(tf.experimental.ExtensionType):
 
     static: tf.Tensor
     known: tf.Tensor
-    observed: tf.Tensor
+    observed: Union[tf.Tensor, None]
+
+    @property
+    def dtype(self):
+        return self.static.dtype
+
+    @property
+    def shape(self) -> TFTEmbeddingsShape:
+        return TFTEmbeddingsShape(
+            static=self.static.shape,
+            known=self.known.shape,
+            observed=map_optional(self.observed, attrgetter("shape")),
+        )
 
 
-class StaticContext(tf.experimental.ExtensionType):
+class TFTEmbeddingsShape(tf.experimental.BatchableExtensionType):
+    static: tf.TensorShape
+    known: tf.TensorShape
+    observed: Union[tf.TensorShape, None]
+
+
+class StaticContext(tf.experimental.BatchableExtensionType):
     """
     A convenience container to represent different outputs of StaticCovariatesEncoder layer.
 
@@ -145,7 +142,7 @@ class StaticContext(tf.experimental.ExtensionType):
     state_c: tf.Tensor
 
 
-class ContextAwareInputs(tf.experimental.ExtensionType):
+class ContextAwareInputs(tf.experimental.BatchableExtensionType):
     """
     A convenience container for providing static context to layer inputs.
 
@@ -163,10 +160,10 @@ class ContextAwareInputs(tf.experimental.ExtensionType):
 
     @property
     def shape(self) -> tf.TensorShape:
-        return tf.shape(self.inputs)
+        return self.inputs.shape
 
 
-class DecoderInputs(tf.experimental.ExtensionType):
+class DecoderInputs(tf.experimental.BatchableExtensionType):
     """
 
     Attributes
@@ -203,10 +200,10 @@ class TemporalFusionTransformer(tf.keras.Model):
         static_categories_sizes: Sequence[int],  # dataset depended
         known_categories_sizes: Sequence[int],  # dataset depended
         num_encoder_steps: int,
-        dropout_rate: float,
         hidden_layer_size: int,
         num_attention_heads: int,
-        output_size: int,
+        dropout_rate: float = 0.1,
+        output_size: int = 1,
         quantiles: Sequence[int] | None = None,
         prng_seed: int = 42,
         name: str = "temporal_fusion_transformer",
@@ -262,11 +259,13 @@ class TemporalFusionTransformer(tf.keras.Model):
             hidden_layer_size=hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
+            name="historical_variable_selection",
         )
         self.future_variable_selection = TemporalVariableSelectionNetwork(
             hidden_layer_size=hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
+            name="future_variable_selection",
         )
         self.lstm_encoder = tf.keras.layers.LSTM(
             hidden_layer_size, return_sequences=True, return_state=True
@@ -308,13 +307,17 @@ class TemporalFusionTransformer(tf.keras.Model):
         """
         embeddings: TFTEmbeddings = self.input_embeds(inputs)
         # Isolate known and observed historical inputs.
-        historical_inputs = tf.concat(
-            [
-                embeddings.known[:, : self.num_encoder_steps],
-                embeddings.observed[:, : self.num_encoder_steps],
-            ],
-            axis=-1,
-        )
+        if inputs.observed is not None:
+            historical_inputs = tf.concat(
+                [
+                    embeddings.known[:, : self.num_encoder_steps],
+                    embeddings.observed[:, : self.num_encoder_steps],
+                ],
+                axis=-1,
+            )
+        else:
+            historical_inputs = embeddings.known[:, : self.num_encoder_steps]
+
         static_context: StaticContext = self.static_encoder(embeddings.static)
 
         # Isolate only known future inputs.
@@ -346,6 +349,16 @@ class TemporalFusionTransformer(tf.keras.Model):
         outputs = self.output_projection(
             decoder_outputs[..., self.num_encoder_steps :, :]
         )
+        # attention_components = {
+        # # Temporal attention weights
+        # "decoder_self_attn": self_att,
+        # # Static variable selection weights
+        # "static_flags": static_weights[Ellipsis, 0],
+        # # Variable selection weights of past inputs
+        # "historical_flags": historical_flags[Ellipsis, 0, :],
+        # # Variable selection weights of future inputs
+        # "future_flags": future_flags[Ellipsis, 0, :],
+        # }
         return outputs
 
     def get_config(self) -> Dict[str, ...]:
@@ -410,22 +423,27 @@ class TFTInputEmbedding(layers.Layer):
             raise ValueError(
                 f"inputs.static must be a 2D tensor, but found shape {input_shape.static}"
             )
-        if len(input_shape.known_categorical) != 3:
-            raise ValueError(
-                f"inputs.known_categorical must be a 3D tensor, but found shape {input_shape.known_categorical}"
-            )
+        if not input_shape.known_categorical == tf.TensorShape(None):
+            if len(input_shape.known_categorical) != 3:
+                raise ValueError(
+                    f"inputs.known_categorical must be a 3D tensor, but found shape {input_shape.known_categorical}"
+                )
         if len(input_shape.known_real) != 3:
             raise ValueError(
                 f"inputs.known_real must be a 2D tensor, but found shape {input_shape.known_real}"
             )
-        if len(input_shape.observed) != 3:
-            raise ValueError(
-                f"inputs.observed must be a 2D tensor, but found shape {input_shape.observed}"
-            )
+        if not input_shape.observed == tf.TensorShape(None):
+            if len(input_shape.observed) != 3:
+                raise ValueError(
+                    f"inputs.observed must be a 2D tensor, but found shape {input_shape.observed}"
+                )
 
         self.num_known_real_inputs = input_shape.known_real[-1]
-        self.num_observed_inputs = input_shape.observed[-1]
-        num_time_steps = input_shape.observed[1]
+        if input_shape.observed == tf.TensorShape(None):
+            self.num_observed_inputs = 0
+        else:
+            self.num_observed_inputs = input_shape.observed[-1]
+        num_time_steps = input_shape.known_real[1]
 
         self.static_inputs_embedding = [
             layers.Embedding(
@@ -434,7 +452,7 @@ class TFTInputEmbedding(layers.Layer):
                 input_length=num_time_steps,
                 dtype=tf.float32,
             )
-            for category, size in enumerate(self.static_categories_size)
+            for size in self.static_categories_size
         ]
         self.known_categorical_embedding = [
             layers.Embedding(
@@ -443,7 +461,7 @@ class TFTInputEmbedding(layers.Layer):
                 input_length=num_time_steps,
                 dtype=tf.float32,
             )
-            for category, size in enumerate(self.known_categories_size)
+            for size in self.known_categories_size
         ]
         self.known_real_dense = [
             layers.TimeDistributed(layers.Dense(self.hidden_layer_size))
@@ -485,44 +503,63 @@ class TFTInputEmbedding(layers.Layer):
         static = tf.TensorArray(
             dtype=self.dtype, size=self.num_static_inputs, clear_after_read=True
         )
-        observed = tf.TensorArray(
-            dtype=self.dtype, size=self.num_observed_inputs, clear_after_read=True
-        )
         known_real = tf.TensorArray(
             dtype=self.dtype, size=self.num_known_real_inputs, clear_after_read=True
         )
-        known_categorical = tf.TensorArray(
-            dtype=self.dtype,
-            size=self.num_known_categorical_inputs,
-            clear_after_read=True,
-        )
-        for i in tf.range(self.num_static_inputs):
+        for i in range(self.num_static_inputs):
             static = static.write(
                 i, self.static_inputs_embedding[i](inputs.static[:, i])
             )
-        for i in tf.range(self.num_observed_inputs):
-            observed = observed.write(
-                i, self.observed_dense[i](tf.expand_dims(inputs.observed[..., i], -1))
+
+        # TensorArray supports stacking only along 0's axis,
+        # So this is same as tf.stack(..., axis=1).
+        static_t = tf.transpose(static.stack(), [1, 0, 2])
+
+        if self.num_observed_inputs != 0:
+            observed = tf.TensorArray(
+                dtype=self.dtype, size=self.num_observed_inputs, clear_after_read=True
             )
-        for i in tf.range(self.num_known_real_inputs):
+            for i in range(self.num_observed_inputs):
+                observed = observed.write(
+                    i,
+                    self.observed_dense[i](tf.expand_dims(inputs.observed[..., i], -1)),
+                )
+            # Same as tf.stack(..., axis=-1).
+            observed_t = tf.transpose(observed.stack(), [1, 2, 3, 0])
+        else:
+            observed_t = None
+
+        for i in range(self.num_known_real_inputs):
             known_real = known_real.write(
                 i,
                 self.known_real_dense[i](tf.expand_dims(inputs.known_real[..., i], -1)),
             )
-        for i in tf.range(self.num_known_categorical_inputs):
-            known_categorical = known_categorical.write(
-                i, self.known_categorical_embedding[i](inputs.known_categorical[..., i])
+
+        if self.num_known_categorical_inputs != 0:
+            known_categorical = tf.TensorArray(
+                dtype=self.dtype,
+                size=self.num_known_categorical_inputs,
+                clear_after_read=True,
             )
-        # TensorArray supports stacking only along 0's axis,
-        # So this is same as tf.stack(..., axis=1).
-        static_t = tf.transpose(static.stack(), [1, 0, 2])
-        # Same as tf.stack(..., axis=-1).
-        observed_t = tf.transpose(observed.stack(), [1, 2, 3, 0])
-        # Same as tf.stack(..., axis=-1).
-        known_t = tf.transpose(
-            tf.concat([known_real.stack(), known_categorical.stack()], axis=0),
-            [1, 2, 3, 0],
-        )
+
+            for i in range(self.num_known_categorical_inputs):
+                known_categorical = known_categorical.write(
+                    i,
+                    self.known_categorical_embedding[i](
+                        inputs.known_categorical[..., i]
+                    ),
+                )
+            # Same as tf.stack(..., axis=-1).
+            known_t = tf.transpose(
+                tf.concat([known_real.stack(), known_categorical.stack()], axis=0),
+                [1, 2, 3, 0],
+            )
+        else:
+            known_t = tf.transpose(
+                known_real.stack(),
+                [1, 2, 3, 0],
+            )
+
         return TFTEmbeddings(static=static_t, observed=observed_t, known=known_t)
 
     def get_config(self) -> Dict[str, ...]:
@@ -652,7 +689,7 @@ class StaticCovariatesEncoder(layers.Layer):
             dtype=self.dtype, size=self.num_static_inputs, clear_after_read=True
         )
 
-        for i in tf.range(self.num_static_inputs):
+        for i in range(self.num_static_inputs):
             embeds_i, _ = self.variable_selection_grn_blocks[i](inputs[:, i : i + 1, :])
             transformed_embedding = transformed_embedding.write(i, embeds_i)
         # TensorArray supports stacking only along 0's axis,
@@ -919,9 +956,9 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         self.prng_seed = prng_seed
 
     def build(self, input_shape: tf.TensorShape):
-        _, self.time_steps, self.embedding_dim, self.num_inputs = tf.unstack(
-            input_shape
-        )
+        self.time_steps = input_shape[1]
+        self.embedding_dim = input_shape[2]
+        self.num_inputs = input_shape[3]
 
         self.grn = GatedResidualNetwork(
             hidden_layer_size=self.hidden_layer_size,
@@ -930,6 +967,7 @@ class TemporalVariableSelectionNetwork(layers.Layer):
             prng_seed=self.prng_seed,
             use_time_distributed=True,
         )
+
         self.grn_blocks = [
             GatedResidualNetwork(
                 hidden_layer_size=self.hidden_layer_size,
@@ -947,7 +985,6 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         Parameters
         ----------
         inputs
-        args
         kwargs
 
         Returns
@@ -969,14 +1006,17 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         sparse_weights = tf.expand_dims(sparse_weights, axis=2)
 
         # Non-linear Processing & weight application
-        transformed_embedding = []
+        transformed_embedding = tf.TensorArray(
+            size=self.num_inputs, clear_after_read=True, dtype=self.dtype
+        )
         for i in range(self.num_inputs):
-            grn_output, _ = self.grn_blocks[i](
-                inputs[..., i],
+            transformed_embedding = transformed_embedding.write(
+                i, self.grn_blocks[i](inputs[..., i])[0]
             )
-            transformed_embedding.append(grn_output)
 
-        transformed_embedding = tf.stack(transformed_embedding, axis=-1)
+        transformed_embedding = tf.transpose(
+            transformed_embedding.stack(), [1, 2, 3, 0]
+        )
         temporal_ctx = tf.math.reduce_sum(
             sparse_weights * transformed_embedding, axis=-1
         )
@@ -1141,3 +1181,10 @@ def flatten_over_batch(arr: tf.Tensor) -> tf.Tensor:
 
 T = TypeVar("T")
 R = TypeVar("R")
+
+
+def map_optional(optional: T | None, func: Callable[[T], R]) -> R | None:
+    if optional is not None:
+        return func(optional)
+    else:
+        return None
