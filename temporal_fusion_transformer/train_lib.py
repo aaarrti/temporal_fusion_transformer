@@ -39,7 +39,7 @@ def train_with_fixed_hyper_parameters(
         train_ds,
         validation_data=val_ds,
         callbacks=[
-            TensorBoard("tensorboard_logs", write_graph=True),
+            TensorBoard("tensorboard_logs", write_graph=False),
             TerminateOnNaN(),
             BackupAndRestore("checkpoints"),
         ],
@@ -181,6 +181,7 @@ def load_sharded_dataset(
     ] = None,
     dtype: DType = tf.float32,
     cache_filename: str = "",
+    drop_remainder: bool = False,
 ) -> tf.data.Dataset:
     """
 
@@ -208,6 +209,7 @@ def load_sharded_dataset(
         Floating point data type, default=tf.float32.
     cache_filename:
         It is likely, that dataset, won't fit into memory, provide this argument to cache it in local file system.
+    drop_remainder:
 
     Returns
     -------
@@ -247,9 +249,11 @@ def load_sharded_dataset(
     return (
         tf.data.Dataset.from_tensor_slices(glob(f"{path}/*"))
         .flat_map(
-            lambda i: tf.data.Dataset.load(i, element_spec=element_spec).map(map_fn),
+            lambda i: tf.data.Dataset.load(i, element_spec=element_spec).map(
+                map_fn, num_parallel_calls=tf.data.AUTOTUNE
+            ),
         )
-        .rebatch(batch_size)
+        .rebatch(batch_size, drop_remainder=drop_remainder)
         .cache(cache_filename)
         .prefetch(tf.data.AUTOTUNE)
     )
