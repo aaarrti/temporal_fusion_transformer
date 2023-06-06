@@ -1,28 +1,32 @@
 from __future__ import annotations
 
-from typing import Callable, Sequence, Dict, Tuple
-import numpy as np
+from typing import Callable, Sequence, Dict, Tuple, TYPE_CHECKING, Mapping, Optional
 
-import keras_tuner as kt
+from glob import glob
+import numpy as np
 import tensorflow as tf
 from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
 from keras.losses import Loss
 from keras.utils.tf_utils import can_jit_compile
-from keras import mixed_precision
+import keras_tuner as kt
+from tensorflow.python.framework.dtypes import DType
 
-from temporal_fusion_transformer.modeling import TFTInputs
+if TYPE_CHECKING:
+    from temporal_fusion_transformer.modeling import (
+        TemporalFusionTransformer,
+        TFTInputs,
+    )
 
 
 def train_with_fixed_hyper_parameters(
-    model_factory: Callable[[], tf.keras.Model],
+    model_factory: Callable[[], TemporalFusionTransformer],
     optimizer_factory: Callable[[], tf.keras.optimizers.Optimizer],
     train_ds: tf.data.Dataset,
     val_ds: tf.data.Dataset,
     **kwargs,
-) -> Tuple[tf.keras.Model, Dict[str, np.ndarray]]:
+) -> Tuple[TemporalFusionTransformer, Dict[str, np.ndarray]]:
     if can_jit_compile():
         tf.config.optimizer.set_jit("autoclustering")
-        mixed_precision.set_global_policy("mixed_float16")
 
     model = model_factory()
     model.compile(
@@ -35,7 +39,7 @@ def train_with_fixed_hyper_parameters(
         train_ds,
         validation_data=val_ds,
         callbacks=[
-            TensorBoard("tensorboard_logs", write_graph=False),
+            TensorBoard("tensorboard_logs", write_graph=True),
             TerminateOnNaN(),
             BackupAndRestore("checkpoints"),
         ],
@@ -55,7 +59,6 @@ def fine_tune_hyper_parameters(
 ) -> kt.HyperParameters:
     if can_jit_compile():
         tf.config.optimizer.set_jit("autoclustering")
-        mixed_precision.set_global_policy("mixed_float16")
 
     tuner = kt.RandomSearch(
         hypermodel=model_factory,
@@ -169,32 +172,84 @@ def quantile_loss(
     return tf.reduce_sum(q_loss, axis=-1)
 
 
-def load_data_from_archive(path: str) -> Dict[str, np.ndarray]:
-    archive = np.load(path, allow_pickle=True)
-    data = {}
+def load_sharded_dataset(
+    path: str,
+    batch_size: int,
+    element_spec: Mapping[str, tf.TensorSpec] | Tuple[tf.TensorSpec, ...] | None = None,
+    map_fn: Optional[
+        Callable[[Mapping[str, tf.Tensor]], Tuple[TFTInputs, tf.Tensor]]
+    ] = None,
+    dtype: DType = tf.float32,
+    cache_filename: str = "",
+) -> tf.data.Dataset:
+    """
 
-    for k in (
-        "identifier",
-        "time",
-        "outputs",
-        "inputs_static",
-        "inputs_known_real",
-        "inputs_known_categorical",
-        "inputs_observed",
-    ):
-        if k in archive:
-            data[k] = archive[k]
+    Parameters
+    ----------
+    path:
+        Path to local filesystem location, where sharded datasets is saved.
+    batch_size:
+    element_spec:
+        While loading shards, it is required to provided element spec, default
+        ```
+        {
+            "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
+            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float64),
+            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float64),
+            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int64),
+            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float64),
+            "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int64),
+            "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float64),
+        }
+        ```
+    map_fn:
+        Function used to map raw dataset entries to (x, y) input tuples used for training.
+    dtype:
+        Floating point data type, default=tf.float32.
+    cache_filename:
+        It is likely, that dataset, won't fit into memory, provide this argument to cache it in local file system.
 
-    return data
+    Returns
+    -------
 
+    retval:
+        tf.data.Dataset ready to use for training.
 
-def make_input_tuple(data: Dict[str, tf.Tensor]) -> Tuple[TFTInputs, tf.Tensor]:
+    """
+    # Import actual type during runtime
+    from temporal_fusion_transformer.modeling import TFTInputs
+
+    if element_spec is None:
+        element_spec = {
+            "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
+            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float64),
+            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float64),
+            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int64),
+            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float64),
+            "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int64),
+            "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float64),
+        }
+
+    def default_map_fn(arg):
+        return (
+            TFTInputs(
+                static=tf.cast(arg["inputs_static"], tf.int32),
+                known_real=tf.cast(arg["inputs_known_real"], dtype),
+                known_categorical=tf.cast(arg["inputs_known_categorical"], tf.int32),
+                observed=tf.cast(arg["inputs_observed"], dtype),
+            ),
+            tf.cast(arg["outputs"], dtype),
+        )
+
+    if map_fn is None:
+        map_fn = default_map_fn
+
     return (
-        TFTInputs(
-            static=data["inputs_static"],
-            known_real=data["inputs_known_real"],
-            known_categorical=data.get("inputs_known_categorical"),
-            observed=data.get("inputs_observed"),
-        ),
-        data["outputs"],
+        tf.data.Dataset.from_tensor_slices(glob(f"{path}/*"))
+        .flat_map(
+            lambda i: tf.data.Dataset.load(i, element_spec=element_spec).map(map_fn),
+        )
+        .rebatch(batch_size)
+        .cache(cache_filename)
+        .prefetch(tf.data.AUTOTUNE)
     )

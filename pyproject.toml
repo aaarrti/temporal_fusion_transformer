@@ -1,0 +1,51 @@
+[project]
+name = "temporal_fusion_transformer"
+version = "0.0.1"
+description = "TF2 re-write of Temporal Fusion Transformer model."
+readme = "Readme.md"
+requires-python = ">=3.8"
+# In case I publish it in a public repository.
+authors = [
+    { name = "Artem Sereda", email = "a.sereda@sevensenders.com" }
+    # { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" },
+]
+maintainers = [
+    { name = "Artem Sereda", email = "a.sereda@sevensenders.com" },
+    # { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+]
+dependencies = [
+    "tensorflow; sys_platform == 'linux'",
+    "tensorflow_macos; sys_platform == 'darwin'",
+    "keras_tuner",
+    "keras_pbar",
+    "scikit_learn",
+    "pandas",
+]
+[project.optional-dependencies]
+dev = [
+    "tensorflow_metal; sys_platform == 'darwin'",
+    "black",
+    "pytest",
+    "pytest_sugar",
+    "tox",
+    "pre_commit"
+    # "dvc[s3]",
+    # "pyarrow",
+    # "polars",
+    # "iree-compiler",
+    # "iree-runtime",
+    # "iree-tools-tf"
+]
+mongo = ["pymongo"]
+ml_collections = ["ml_collections"]
+slack = ["slack_sdk"]
+[project.urls]
+"Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"
+
+
+[build-system]
+requires = ["flit-core >= 3.4,<4"]
+build-backend = "flit_core.buildapi"

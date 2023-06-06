@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from enum import auto, IntEnum
@@ -15,22 +16,30 @@ from typing import (
     Hashable,
     Callable,
     DefaultDict,
+    Optional,
+    TYPE_CHECKING,
 )
+from glob import glob
 
 import numpy as np
 import pandas as pd
 from absl import logging
-from keras_pbar import keras_pbar
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.utils import gen_batches
 import tensorflow as tf
+from tensorflow.python.framework.dtypes import DType
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.utils import gen_batches
+from keras_pbar import keras_pbar
+
+if TYPE_CHECKING:
+    from temporal_fusion_transformer.modeling import TFTInputs
 
 
-class classproperty:
+class classproperty(property):
     def __init__(self, getter):
+        super().__init__()
         self.getter = getter
 
-    def __get__(self, instance, owner):
+    def __get__(self, instance, owner):  # noqa
         return self.getter(owner)
 
 
@@ -251,10 +260,14 @@ class ElectricityExperiment(Experiment):
             static_categories_sizes=[369],
         )
 
+    @classproperty
+    def num_encoder_steps(self) -> int:
+        return self.fixed_params.num_encoder_steps
+
     @classmethod
     def from_raw_csv(
-        cls, csv_path: str, validation_boundary: int = 1315
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+        cls, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         """
         Read raw CSV, pre-process it, create TF dataset. You probably will want to execute it only once,
         and then write dataset to local filesystem (or mb even create squshFS image).
@@ -265,6 +278,8 @@ class ElectricityExperiment(Experiment):
             Path to raw unprocessed CSV file.
         validation_boundary:
             Year at which validation data should start.
+        test_boundary:
+            Year at which test data should start.
 
         Returns
         -------
@@ -349,7 +364,10 @@ class ElectricityExperiment(Experiment):
 
         index = df["days_from_start"]
         train_df = df.loc[index < validation_boundary]
-        valid_df = df.loc[(index >= validation_boundary - 7)]
+        validation_df = df.loc[
+            (index >= validation_boundary - 7) & (index < test_boundary)
+        ]
+        test_df = df.loc[index >= test_boundary - 7]
 
         # Pre-processing will do few things:
         # - Find real columns and apply sklearn.NormalScaler to them instance-wise (using ID column).
@@ -388,18 +406,16 @@ class ElectricityExperiment(Experiment):
 
         # Initialize scalers/label encoders.
         real_scalers: Dict[str, StandardScaler] = {}
-        target_scaler: Dict[str, StandardScaler] = {}
+        target_scalers: Dict[str, StandardScaler] = {}
         categorical_scalers: Dict[str, LabelEncoder] = {}
         num_classes = {}
         logging.debug("Fitting scalers.")
-
         for identifier, sliced in keras_pbar(df.groupby(id_column)):
             if len(sliced) >= cls.total_time_steps:
-                # Fit scalers.
                 data = sliced[real_inputs].values
                 targets = sliced[[target_column]].values
                 real_scalers[identifier] = StandardScaler().fit(data)
-                target_scaler[identifier] = StandardScaler().fit(targets)
+                target_scalers[identifier] = StandardScaler().fit(targets)
 
         for col in keras_pbar(categorical_inputs):
             # Set all to str so that we don't have mixed integer/string columns
@@ -408,36 +424,21 @@ class ElectricityExperiment(Experiment):
             categorical_scalers[col] = LabelEncoder().fit(srs.values)
 
         logging.debug(f"{num_classes = }")
+        apply_fn = functools.partial(
+            normalize_data,
+            id_column=id_column,
+            categorical_inputs=categorical_inputs,
+            categorical_scalers=categorical_scalers,
+            real_scalers=real_scalers,
+            real_inputs=real_inputs,
+            total_time_steps=cls.total_time_steps,
+        )
 
-        train_df_list = []
-        for identifier, sliced in keras_pbar(train_df.groupby(id_column)):
-            if len(sliced) >= cls.total_time_steps:
-                sliced_copy = sliced.copy()
-                sliced_copy[real_inputs] = real_scalers[identifier].transform(
-                    sliced_copy[real_inputs].values
-                )
-                train_df_list.append(sliced_copy)
+        train_df = apply_fn(train_df)
+        validation_df = apply_fn(validation_df)
+        test_df = apply_fn(test_df)
 
-        train_df = pd.concat(train_df_list, axis=0)
-        for col in keras_pbar(categorical_inputs):
-            string_df = train_df[col].apply(str)
-            train_df[col] = categorical_scalers[col].transform(string_df)
-
-        valid_df_list = []
-        for identifier, sliced in keras_pbar(valid_df.groupby(id_column)):
-            if len(sliced) >= cls.total_time_steps:
-                sliced_copy = sliced.copy()
-                sliced_copy[real_inputs] = real_scalers[identifier].transform(
-                    sliced_copy[real_inputs].values
-                )
-                valid_df_list.append(sliced_copy)
-
-        valid_df = pd.concat(valid_df_list, axis=0)
-        for col in keras_pbar(categorical_inputs):
-            string_df = valid_df[col].apply(str)
-            valid_df[col] = categorical_scalers[col].transform(string_df)
-
-        col_mappings = {
+        col_mapping = {
             "identifier": [id_column],
             "time": [time_col],
             "outputs": [target_column],
@@ -447,35 +448,19 @@ class ElectricityExperiment(Experiment):
             "inputs_observed": input_observed,
         }
 
-        def make_np_array_dict(preprocessed_df: pd.DataFrame) -> Dict[str, np.ndarray]:
-            logging.debug("Grouping and batching data.")
-            preprocessed_df.sort_values(by=[id_column, time_col], inplace=True)
-            data_map: DefaultDict[str, List[np.ndarray]] = defaultdict(lambda: [])
+        apply_fn = functools.partial(
+            make_np_array_dict,
+            id_column=id_column,
+            time_col=time_col,
+            col_mapping=col_mapping,
+            total_time_steps=cls.total_time_steps,
+            num_encoder_steps=cls.num_encoder_steps,
+        )
 
-            for _, _sliced in keras_pbar(preprocessed_df.groupby(id_column)):
-                for k in col_mappings:
-                    cols = col_mappings[k]
-                    if len(cols) == 0:
-                        continue
-                    arr = batch_single_entity(
-                        _sliced[cols].copy(), cls.total_time_steps
-                    )
-                    data_map[k].append(arr)
-
-            data_map = dict(**data_map)
-            for k in data_map:
-                data_map[k] = np.concatenate(data_map[k], axis=0)
-            # Save only future steps
-            data_map["outputs"] = data_map["outputs"][
-                :, cls.fixed_params.num_encoder_steps :
-            ]
-            # Static are not time varying
-            data_map["inputs_static"] = data_map["inputs_static"][:, 0]
-            return data_map
-
-        train_ds = make_np_array_dict(train_df)
-        val_ds = make_np_array_dict(valid_df)
-        return train_ds, val_ds
+        train_ds = apply_fn(train_df)
+        validation_ds = apply_fn(validation_df)
+        test_ds = apply_fn(test_df)
+        return train_ds, validation_ds, test_ds
 
 
 T = TypeVar("T")
@@ -511,7 +496,7 @@ def filter_dict(
     key_filter: Callable[[K], bool] | None = None,
     value_filter: Callable[[V], bool] | None = None,
 ) -> Dict[K, V]:
-    def tautology(arg: K) -> bool:
+    def tautology(_) -> bool:
         # Tautology is an expression, which is always true.
         return True
 
@@ -540,63 +525,87 @@ def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
     logging.error("time_steps < lags, this is not expected.")
 
 
-# @tf.function(
-#     reduce_retracing=True,
-#     jit_compile=can_jit_compile(),
-#     experimental_autograph_options=tf.autograph.experimental.Feature.ALL
-# )
-# def tf_batch_single_entity(input_data: tf.Tensor, lags: int) -> tf.Tensor:
-#     time_steps = tf.shape(input_data)[0]
-#     arr = tf.TensorArray(
-#         size=lags,
-#         dtype=input_data.dtype,
-#         clear_after_read=True
-#     )
-#     for i in tf.range(lags):
-#         indexes = tf.range(i, time_steps - (lags - 1) + i, dtype=tf.int32)
-#         x = tf.gather(input_data, indexes, axis=0,)
-#         arr = arr.write(i, x)
-#
-#     arr = arr.stack()
-#     arr = tf.transpose(arr, [1, 0, 2])
-#     return arr
-
-# def make_data_entry(xy: Mapping[str, tf.Tensor]) -> DataEntry:
-#     def make_extension_type(x: Mapping[str, tf.Tensor]) -> TFTInputs:
-#         return TFTInputs(
-#             static=x["inputs_static"],
-#             known_real=x.get("inputs_known_real"),
-#             known_categorical=x.get("inputs_known_categorical"),
-#             observed=x.get("inputs_observed"),
-#         )
-#
-#     return DataEntry(
-#         inputs=make_extension_type(xy),
-#         outputs=xy["outputs"],
-#         time=xy["time"],
-#         id=xy["identifier"],
-#     )
-
-# def concatenate_datasets(
-#    ds1: tf.data.Dataset | None, ds2: tf.data.Dataset
-# ) -> tf.data.Dataset:
-#    if ds1 is None:
-#        return ds2
-#    return ds1.concatenate(ds2)
-
-
-def export_data_as_tensorflow_dataset(
-        data: Mapping[str, np.ndarray],
-        export_path: str,
-        shard_size: int = 100_000
+def export_sharded_dataset(
+    data: Mapping[str, np.ndarray], export_path: str, shard_size: int = 100_000
 ):
+    """
+    Split dataset in shards of size `shard_size`, and write the as TF protobuf to local file system.
+
+    Parameters
+    ----------
+    data
+    export_path
+    shard_size
+
+    Returns
+    -------
+
+    """
     n = len(data["identifier"])
     batches = gen_batches(n, shard_size)
-    
+
     n_batches = n // shard_size
     if n % shard_size != 0:
         n_batches += 1
-    
+
     for index, shard_slice in keras_pbar(enumerate(batches), n):
-        shard = map_dict(data, lambda v: v[shard_slice.start:shard_slice.stop])
+        shard = map_dict(data, lambda v: v[shard_slice.start : shard_slice.stop])
         tf.data.Dataset.from_tensors(shard).save(f"{export_path}/{index}")
+
+
+def normalize_data(
+    df: pd.DataFrame,
+    *,
+    id_column: str,
+    total_time_steps: int,
+    real_inputs: Sequence[str],
+    real_scalers: Mapping[str, StandardScaler],
+    categorical_scalers: Mapping[str, LabelEncoder],
+    categorical_inputs: Sequence[str],
+) -> pd.DataFrame:
+    df_list = []
+    for identifier, sliced in keras_pbar(df.groupby(id_column)):
+        if len(sliced) >= total_time_steps:
+            sliced_copy = sliced.copy()
+            sliced_copy[real_inputs] = real_scalers[identifier].transform(
+                sliced_copy[real_inputs].values
+            )
+            df_list.append(sliced_copy)
+
+    df = pd.concat(df_list, axis=0)
+    for col in keras_pbar(categorical_inputs):
+        string_df = df[col].apply(str)
+        df[col] = categorical_scalers[col].transform(string_df)
+
+    return df
+
+
+def make_np_array_dict(
+    df: pd.DataFrame,
+    *,
+    id_column: str,
+    time_col: str,
+    col_mapping: Mapping[str, str | Sequence[str]],
+    total_time_steps: int,
+    num_encoder_steps: int,
+) -> Dict[str, np.ndarray]:
+    logging.debug("Grouping and batching data.")
+    df.sort_values(by=[id_column, time_col], inplace=True)
+    data_map: DefaultDict[str, List[np.ndarray]] = defaultdict(lambda: [])
+
+    for _, sliced in keras_pbar(df.groupby(id_column)):
+        for k in col_mapping:
+            cols = col_mapping[k]
+            if len(cols) == 0:
+                continue
+            arr = batch_single_entity(sliced[cols].copy(), total_time_steps)
+            data_map[k].append(arr)
+
+    data_map = dict(**data_map)
+    for k in data_map:
+        data_map[k] = np.concatenate(data_map[k], axis=0)
+    # Save only future steps
+    data_map["outputs"] = data_map["outputs"][:, num_encoder_steps:]
+    # Static are not time varying
+    data_map["inputs_static"] = data_map["inputs_static"][:, 0]
+    return data_map

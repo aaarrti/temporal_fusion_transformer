@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import tensorflow as tf
-
+import numpy as np
+from typing import Dict, Tuple
 from temporal_fusion_transformer.experiments import (
     ElectricityExperiment,
     ModelParams,
     DataParams,
 )
-from temporal_fusion_transformer.modeling import TemporalFusionTransformer
+from temporal_fusion_transformer.modeling import TemporalFusionTransformer, TFTInputs
 from temporal_fusion_transformer.train_lib import (
     QuantileLoss,
     train_with_fixed_hyper_parameters,
-    load_data_from_archive,
-    make_input_tuple,
 )
+
 
 # tf.config.run_functions_eagerly(True)
 
@@ -52,7 +52,7 @@ class TrainStepTest(tf.test.TestCase):
                 num_attention_heads=hp.num_attention_heads,
             )
 
-        _, history = train_with_fixed_hyper_parameters(
+        model, history = train_with_fixed_hyper_parameters(
             make_model,
             lambda: "adam",
             self.train_ds,
@@ -64,3 +64,34 @@ class TrainStepTest(tf.test.TestCase):
 
         assert "loss" in history
         tf.debugging.check_numerics(history["loss"], "Test Failed.")
+
+
+def load_data_from_archive(path: str) -> Dict[str, np.ndarray]:
+    archive = np.load(path, allow_pickle=True)
+    data = {}
+
+    for k in (
+        "identifier",
+        "time",
+        "outputs",
+        "inputs_static",
+        "inputs_known_real",
+        "inputs_known_categorical",
+        "inputs_observed",
+    ):
+        if k in archive:
+            data[k] = archive[k]
+
+    return data
+
+
+def make_input_tuple(data: Dict[str, tf.Tensor]) -> Tuple[TFTInputs, tf.Tensor]:
+    return (
+        TFTInputs(
+            static=data["inputs_static"],
+            known_real=data["inputs_known_real"],
+            known_categorical=data.get("inputs_known_categorical"),
+            observed=data.get("inputs_observed"),
+        ),
+        data["outputs"],
+    )
