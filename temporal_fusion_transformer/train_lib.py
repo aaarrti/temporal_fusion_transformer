@@ -89,7 +89,7 @@ class QuantileLoss(Loss):
 
     """
 
-    def __init__(self, quantiles: Sequence[int], output_size: int = 1):
+    def __init__(self, quantiles: Sequence[int], output_size: int = 1, **kwargs):
         """
 
         Parameters
@@ -97,7 +97,7 @@ class QuantileLoss(Loss):
         quantiles:
             Quantiles to compute losses
         """
-        super().__init__()
+        super().__init__(**kwargs)
         for quantile in quantiles:
             if quantile < 0 or quantile > 1:
                 raise ValueError(
@@ -105,6 +105,7 @@ class QuantileLoss(Loss):
                 )
         self.quantiles = tf.constant(quantiles)
         self.output_size = tf.constant(output_size)
+        self.n_quantiles = len(quantiles)
 
     def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
         """
@@ -123,24 +124,26 @@ class QuantileLoss(Loss):
 
         y_true = tf.cast(y_true, y_pred.dtype)
         quantiles = tf.cast(self.quantiles, y_pred.dtype)
+        tf.debugging.assert_rank(y_true, 3)
 
-        if tf.rank(y_true) == 2:
-            y_true = tf.expand_dims(y_true, axis=-1)
+        batch_size = y_pred.shape[0]
+        n_time_steps = y_pred.shape[1]
+        y_pred = tf.reshape(
+            y_pred, [self.n_quantiles, batch_size, n_time_steps, self.output_size]
+        )
 
-        # @tf.function(
-        #    reduce_retracing=True,
-        #    jit_compile=can_jit_compile(True),
-        #    experimental_autograph_options=tf.autograph.experimental.Feature.ALL,
-        # )
-        def inner_fn(q: int):
-            return quantile_loss(
-                y_true,
-                y_pred[..., self.output_size * q : self.output_size * (q + 1)],
-                quantiles[q],
-            )
-
-        loss = tf.vectorized_map(inner_fn, tf.range(len(quantiles)))
+        loss = tf.vectorized_map(
+            lambda i: quantile_loss(y_true, y_pred[i], quantiles[i]),
+            tf.range(self.n_quantiles),
+        )
         return tf.reduce_sum(loss, axis=0)
+
+    def get_config(self) -> Dict[str, ...]:
+        config = super().get_config()
+        config.update(
+            {"quantiles": list(self.quantiles), "output_size": int(self.output_size)}
+        )
+        return config
 
 
 @tf.function(reduce_retracing=True, jit_compile=can_jit_compile(True))
@@ -163,18 +166,13 @@ def quantile_loss(
         Loss value.
     """
     prediction_underflow = y_true - y_pred
-    positive_prediction_underflow = tf.maximum(
-        prediction_underflow, tf.constant(0, dtype=y_pred.dtype)
+    positive_prediction_underflow = tf.maximum(prediction_underflow, 0)
+    negative_prediction_underflow = tf.maximum(-prediction_underflow, 0)
+    q_loss = tf.add(
+        quantile * positive_prediction_underflow,
+        (1 - quantile) * negative_prediction_underflow,
     )
-    negative_prediction_underflow = tf.maximum(
-        -prediction_underflow, tf.constant(0, dtype=y_pred.dtype)
-    )
-    q_loss = (
-        quantile * positive_prediction_underflow
-        + (tf.constant(1.0, dtype=y_pred.dtype) - quantile)
-        * negative_prediction_underflow
-    )
-    return tf.reduce_sum(q_loss, axis=-1)
+    return tf.reduce_sum(q_loss, axis=-2)
 
 
 def load_sharded_dataset(
