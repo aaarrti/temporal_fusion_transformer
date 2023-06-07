@@ -15,7 +15,7 @@ from temporal_fusion_transformer.train_lib import (
 )
 
 
-tf.config.run_functions_eagerly(True)
+# tf.config.run_functions_eagerly(True)
 
 
 class QuantileLossTest(tf.test.TestCase):

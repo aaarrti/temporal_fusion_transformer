@@ -29,7 +29,8 @@ def train_with_fixed_hyper_parameters(
     model.compile(
         optimizer=optimizer_factory(),
         loss=QuantileLoss(model.quantiles),
-        jit_compile=can_jit_compile(True),
+        jit_compile=False,
+        # jit_compile=can_jit_compile(True),
     )
 
     history = model.fit(
