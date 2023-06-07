@@ -771,12 +771,12 @@ class GatedLinearUnit(layers.Layer):
         self.use_time_distributed = use_time_distributed
         # Build sub-layers.
         self.dropout = layers.Dropout(dropout_rate, seed=prng_seed)
-        self.activation = layers.Dense(hidden_layer_size)
-        self.gate = layers.Dense(hidden_layer_size, activation="sigmoid")
+        self.linear = layers.Dense(hidden_layer_size)
+        self.activation = layers.Dense(hidden_layer_size, activation="sigmoid")
         # Apply time steps, if needed.
         if use_time_distributed:
+            self.linear = layers.TimeDistributed(self.linear)
             self.activation = layers.TimeDistributed(self.activation)
-            self.gate = layers.TimeDistributed(self.gate)
 
     def call(self, inputs: tf.Tensor, **kwargs) -> Tuple[tf.Tensor, tf.Tensor]:
         """
@@ -797,8 +797,8 @@ class GatedLinearUnit(layers.Layer):
 
         """
         x = self.dropout(inputs)
-        x_pre_activation = self.activation(x)
-        x_gated = self.gate(x)
+        x_pre_activation = self.linear(x)
+        x_gated = self.activation(x)
         x = x_pre_activation * x_gated
         return x, x_gated
 
@@ -863,11 +863,11 @@ class GatedResidualNetwork(layers.Layer):
                 skip_connection = layers.TimeDistributed(skip_connection)
         self.skip_connection = skip_connection
         # Setup feedforward network.
-        self.ffn_1 = layers.Dense(hidden_layer_size)
-        self.ffn_context = layers.Dense(hidden_layer_size)
-        self.ffn_2 = layers.Dense(hidden_layer_size)
+        self.pre_elu_dense = layers.Dense(hidden_layer_size)
+        self.context_dense = layers.Dense(hidden_layer_size)
+        self.linear_dense = layers.Dense(hidden_layer_size)
         # Apply gating layer.
-        self.glu = GatedLinearUnit(
+        self.gated_linear_unit = GatedLinearUnit(
             output_size or hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
@@ -875,9 +875,9 @@ class GatedResidualNetwork(layers.Layer):
         )
         self.layer_norm = layers.LayerNormalization()
         if use_time_distributed:
-            self.ffn_1 = layers.TimeDistributed(self.ffn_1)
-            self.ffn_context = layers.TimeDistributed(self.ffn_context)
-            self.ffn_2 = layers.TimeDistributed(self.ffn_2)
+            self.pre_elu_dense = layers.TimeDistributed(self.pre_elu_dense)
+            self.context_dense = layers.TimeDistributed(self.context_dense)
+            self.linear_dense = layers.TimeDistributed(self.linear_dense)
 
     def call(
         self,
@@ -908,15 +908,15 @@ class GatedResidualNetwork(layers.Layer):
         """
         if isinstance(inputs, ContextAwareInputs):
             x_skip = self.skip_connection(inputs.inputs)
-            x = self.ffn_1(inputs.inputs)
-            x = x + self.ffn_context(inputs.context)
+            x = self.pre_elu_dense(inputs.inputs)
+            x = x + self.context_dense(inputs.context)
         else:
             x_skip = self.skip_connection(inputs)
-            x = self.ffn_1(inputs)
+            x = self.pre_elu_dense(inputs)
 
         x = tf.nn.elu(x)
-        x = self.ffn_2(x)
-        x, gate = self.glu(x)
+        x = self.linear_dense(x)
+        x, gate = self.gated_linear_unit(x)
         x = self.layer_norm(x + x_skip)
         return x, gate
 
@@ -970,7 +970,7 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         self.embedding_dim = input_shape[2]
         self.num_inputs = input_shape[3]
 
-        self.grn = GatedResidualNetwork(
+        self.context_grn = GatedResidualNetwork(
             hidden_layer_size=self.hidden_layer_size,
             dropout_rate=self.dropout_rate,
             output_size=self.num_inputs,
@@ -1004,7 +1004,7 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         context = inputs.context
         inputs = inputs.inputs
 
-        mlp_outputs, static_gate = self.grn(
+        mlp_outputs, static_gate = self.context_grn(
             ContextAwareInputs(
                 inputs=tf.reshape(
                     inputs, [-1, self.time_steps, self.embedding_dim * self.num_inputs]

@@ -29,8 +29,8 @@ def train_with_fixed_hyper_parameters(
     model.compile(
         optimizer=optimizer_factory(),
         loss=QuantileLoss(model.quantiles),
+        # LSTMs do not support XLA compilation.
         jit_compile=False,
-        # jit_compile=can_jit_compile(True),
     )
 
     history = model.fit(
@@ -55,9 +55,6 @@ def fine_tune_hyper_parameters(
     prng_seed: int = 42,
     name: str = "experiment",
 ) -> kt.HyperParameters:
-    if can_jit_compile():
-        tf.config.optimizer.set_jit("autoclustering")
-
     tuner = kt.RandomSearch(
         hypermodel=model_factory,
         objective="val_loss",
@@ -228,20 +225,20 @@ def load_sharded_dataset(
     if element_spec is None:
         element_spec = {
             "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
-            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float64),
-            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float64),
-            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int64),
-            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float64),
-            "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int64),
-            "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float64),
+            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float32),
+            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float32),
+            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int32),
+            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
+            "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int32),
+            "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
         }
 
-    def default_map_fn(arg):
+    def default_map_fn(arg: Mapping[str, tf.Tensor]) -> Tuple[TFTInputs, tf.Tensor]:
         return (
             TFTInputs(
-                static=tf.cast(arg["inputs_static"], tf.int32),
+                static=arg["inputs_static"],
                 known_real=tf.cast(arg["inputs_known_real"], dtype),
-                known_categorical=tf.cast(arg["inputs_known_categorical"], tf.int32),
+                known_categorical=arg["inputs_known_categorical"],
                 observed=tf.cast(arg["inputs_observed"], dtype),
             ),
             tf.cast(arg["outputs"], dtype),
