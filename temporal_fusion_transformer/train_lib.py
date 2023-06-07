@@ -25,9 +25,6 @@ def train_with_fixed_hyper_parameters(
     val_ds: tf.data.Dataset,
     **kwargs,
 ) -> Tuple[TemporalFusionTransformer, Dict[str, np.ndarray]]:
-    if can_jit_compile():
-        tf.config.optimizer.set_jit("autoclustering")
-
     model = model_factory()
     model.compile(
         optimizer=optimizer_factory(),
@@ -124,6 +121,9 @@ class QuantileLoss(Loss):
 
         """
 
+        y_true = tf.cast(y_true, y_pred.dtype)
+        quantiles = tf.cast(self.quantiles, y_pred.dtype)
+
         if tf.rank(y_true) == 2:
             y_true = tf.expand_dims(y_true, axis=-1)
 
@@ -136,10 +136,10 @@ class QuantileLoss(Loss):
             return quantile_loss(
                 y_true,
                 y_pred[..., self.output_size * q : self.output_size * (q + 1)],
-                self.quantiles[q],
+                quantiles[q],
             )
 
-        loss = tf.vectorized_map(inner_fn, tf.range(len(self.quantiles)))
+        loss = tf.vectorized_map(inner_fn, tf.range(len(quantiles)))
         return tf.reduce_sum(loss, axis=0)
 
 
@@ -163,11 +163,16 @@ def quantile_loss(
         Loss value.
     """
     prediction_underflow = y_true - y_pred
-    positive_prediction_underflow = tf.maximum(prediction_underflow, 0.0)
-    negative_prediction_underflow = tf.maximum(-prediction_underflow, 0.0)
+    positive_prediction_underflow = tf.maximum(
+        prediction_underflow, tf.constant(0, dtype=y_pred.dtype)
+    )
+    negative_prediction_underflow = tf.maximum(
+        -prediction_underflow, tf.constant(0, dtype=y_pred.dtype)
+    )
     q_loss = (
         quantile * positive_prediction_underflow
-        + (1.0 - quantile) * negative_prediction_underflow
+        + (tf.constant(1.0, dtype=y_pred.dtype) - quantile)
+        * negative_prediction_underflow
     )
     return tf.reduce_sum(q_loss, axis=-1)
 

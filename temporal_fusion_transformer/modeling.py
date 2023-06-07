@@ -267,12 +267,14 @@ class TemporalFusionTransformer(tf.keras.Model):
             prng_seed=prng_seed,
             name="future_variable_selection",
         )
-        self.lstm_encoder = tf.keras.layers.LSTM(
-            hidden_layer_size, return_sequences=True, return_state=True
-        )
-        self.lstm_decoder = tf.keras.layers.LSTM(
+        self.historical_features_lstm = tf.keras.layers.LSTM(
             hidden_layer_size,
             return_sequences=True,
+            return_state=True,
+            name="historical_features_lstm",
+        )
+        self.future_features_lstm = tf.keras.layers.LSTM(
+            hidden_layer_size, return_sequences=True, name="future_features_lstm"
         )
         self.temporal_decoder = TemporalFusionDecoder(
             num_attention_heads=num_attention_heads,
@@ -332,12 +334,12 @@ class TemporalFusionTransformer(tf.keras.Model):
             ContextAwareInputs(inputs=future_inputs, context=static_context.enrichment)
         )
 
-        history_lstm, state_h, state_c = self.lstm_encoder(
+        history_lstm, state_h, state_c = self.historical_features_lstm(
             historical_features,
             initial_state=[static_context.state_h, static_context.state_c],
         )
 
-        future_lstm = self.lstm_decoder(
+        future_lstm = self.future_features_lstm(
             future_features, initial_state=[state_h, state_c]
         )
         decoder_in = DecoderInputs(
@@ -450,7 +452,7 @@ class TFTInputEmbedding(layers.Layer):
                 size,
                 self.hidden_layer_size,
                 input_length=num_time_steps,
-                dtype=tf.float32,
+                # dtype=self.dtype_policy.compute_dtype,
             )
             for size in self.static_categories_size
         ]
@@ -459,7 +461,7 @@ class TFTInputEmbedding(layers.Layer):
                 size,
                 self.hidden_layer_size,
                 input_length=num_time_steps,
-                dtype=tf.float32,
+                # dtype=self.dtype_policy.compute_dtype,
             )
             for size in self.known_categories_size
         ]
@@ -501,10 +503,14 @@ class TFTInputEmbedding(layers.Layer):
 
         """
         static = tf.TensorArray(
-            dtype=self.dtype, size=self.num_static_inputs, clear_after_read=True
+            dtype=self.dtype_policy.compute_dtype,
+            size=self.num_static_inputs,
+            clear_after_read=True,
         )
         known_real = tf.TensorArray(
-            dtype=self.dtype, size=self.num_known_real_inputs, clear_after_read=True
+            dtype=self.dtype_policy.compute_dtype,
+            size=self.num_known_real_inputs,
+            clear_after_read=True,
         )
         for i in range(self.num_static_inputs):
             static = static.write(
@@ -517,7 +523,9 @@ class TFTInputEmbedding(layers.Layer):
 
         if self.num_observed_inputs != 0:
             observed = tf.TensorArray(
-                dtype=self.dtype, size=self.num_observed_inputs, clear_after_read=True
+                dtype=self.dtype_policy.compute_dtype,
+                size=self.num_observed_inputs,
+                clear_after_read=True,
             )
             for i in range(self.num_observed_inputs):
                 observed = observed.write(
@@ -537,7 +545,7 @@ class TFTInputEmbedding(layers.Layer):
 
         if self.num_known_categorical_inputs != 0:
             known_categorical = tf.TensorArray(
-                dtype=self.dtype,
+                dtype=self.dtype_policy.compute_dtype,
                 size=self.num_known_categorical_inputs,
                 clear_after_read=True,
             )
@@ -686,7 +694,9 @@ class StaticCovariatesEncoder(layers.Layer):
         sparse_weights = tf.expand_dims(sparse_weights, axis=-1)
 
         transformed_embedding = tf.TensorArray(
-            dtype=self.dtype, size=self.num_static_inputs, clear_after_read=True
+            dtype=self.dtype_policy.compute_dtype,
+            size=self.num_static_inputs,
+            clear_after_read=True,
         )
 
         for i in range(self.num_static_inputs):
@@ -1007,7 +1017,9 @@ class TemporalVariableSelectionNetwork(layers.Layer):
 
         # Non-linear Processing & weight application
         transformed_embedding = tf.TensorArray(
-            size=self.num_inputs, clear_after_read=True, dtype=self.dtype
+            size=self.num_inputs,
+            clear_after_read=True,
+            dtype=self.dtype_policy.compute_dtype,
         )
         for i in range(self.num_inputs):
             transformed_embedding = transformed_embedding.write(

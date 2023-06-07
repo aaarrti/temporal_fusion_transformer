@@ -21,8 +21,23 @@ from temporal_fusion_transformer.train_lib import (
 FLAGS = flags.FLAGS
 flags.DEFINE_integer("batch_size", default=32, help=None)
 flags.DEFINE_integer("epochs", default=1, help=None)
+flags.DEFINE_enum(
+    "precision",
+    default="float32",
+    enum_values=[
+        "float32",
+        "mixed_float16",
+        "float16",
+        "bfloat32",
+        "mixed_bfloat16",
+        "bfloat16",
+    ],
+    help=None,
+)
 
 NUM_ELECTRICITY_SAMPLES = 1853057
+# tf.config.run_functions_eagerly(True)
+tf.config.set_soft_device_placement(True)
 
 
 @register_task
@@ -31,28 +46,35 @@ def main():
     batch_size = FLAGS.batch_size
     epochs = FLAGS.epochs
 
-    mixed_precision.set_global_policy("mixed_float16")
+    steps_per_epoch = NUM_ELECTRICITY_SAMPLES // batch_size
+    mixed_precision.set_global_policy(FLAGS.precision)
+    if can_jit_compile():
+        tf.config.optimizer.set_jit("autoclustering")
+
     element_spec = {
         "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
-        "time": tf.TensorSpec([None, 192, 1], dtype=tf.float64),
-        "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float64),
-        "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int64),
-        "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float64),
+        "time": tf.TensorSpec([None, 192, 1], dtype=tf.float32),
+        "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float32),
+        "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int32),
+        "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
     }
 
     def map_fn(arg):
         return (
             TFTInputs(
                 static=tf.cast(arg["inputs_static"], tf.int32),
-                known_real=tf.cast(arg["inputs_known_real"], tf.float32),
+                known_real=tf.cast(
+                    arg["inputs_known_real"],
+                    mixed_precision.global_policy().compute_dtype,
+                ),
                 known_categorical=None,
                 observed=None,
             ),
-            tf.cast(arg["outputs"], tf.float32),
+            tf.cast(arg["outputs"], mixed_precision.global_policy().compute_dtype),
         )
 
     train_ds = load_sharded_dataset(
-        "../data/electricity/train",
+        "data/electricity/train",
         batch_size,
         element_spec=element_spec,
         map_fn=map_fn,
@@ -60,7 +82,7 @@ def main():
     )
 
     validation_ds = load_sharded_dataset(
-        "../data/electricity/validation",
+        "data/electricity/validation",
         batch_size,
         element_spec=element_spec,
         map_fn=map_fn,
@@ -78,6 +100,7 @@ def main():
             num_encoder_steps=fp.num_encoder_steps,
             hidden_layer_size=hp.hidden_layer_size,
             num_attention_heads=hp.num_attention_heads,
+            dtype=mixed_precision.global_policy().variable_dtype,
         )
 
     def make_optimizer():
@@ -93,7 +116,7 @@ def main():
         train_ds,
         validation_ds,
         epochs=epochs,
-        steps_per_epoch=NUM_ELECTRICITY_SAMPLES // batch_size,
+        steps_per_epoch=steps_per_epoch,
     )
     model.save_weights("weights.keras")
 

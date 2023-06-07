@@ -1,8 +1,0 @@
--r requirements.txt
-tensorflow_metal; sys_platform == 'darwin'
-polars
-black[jupyter]
-pytest
-pyarrow
-dvc[s3]
-pre_commit

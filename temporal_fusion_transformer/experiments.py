@@ -599,6 +599,10 @@ def make_np_array_dict(
             if len(cols) == 0:
                 continue
             arr = batch_single_entity(sliced[cols].copy(), total_time_steps)
+            if arr.dtype == np.int64:
+                arr = arr.astype(np.int32)
+            if arr.dtype == np.float64:
+                arr = arr.astype(np.float32)
             data_map[k].append(arr)
 
     data_map = dict(**data_map)
