@@ -15,10 +15,13 @@ module "bucket" {
       role   = "roles/storage.objectAdmin"
       member = "user:artem.sereda.tub@gmail.com"
     },
-    # If I can auth in colab, it is fine.
-    #{
-    #  role   = "roles/storage.objectViewer"
-    #  member = "allUsers"
-    #},
+    {
+      role   = "roles/storage.objectCreator"
+      member = "serviceAccount:service-495559152420@cloud-tpu.iam.gserviceaccount.com"
+    },
+    {
+      role   = "roles/storage.objectViewer"
+      member = "serviceAccount:service-495559152420@cloud-tpu.iam.gserviceaccount.com"
+    },
   ]
 }

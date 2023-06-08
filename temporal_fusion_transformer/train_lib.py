@@ -94,15 +94,14 @@ class QuantileLoss(Loss):
         tf.debugging.assert_rank(y_true, 3)
 
         batch_size = y_pred.shape[0]
-        n_time_steps = y_pred.shape[1]
-        y_pred: tf.Tensor = tf.reshape(
-            y_pred, [self.n_quantiles, batch_size, n_time_steps, self.output_size]
-        )
 
         loss = tf.zeros(shape=(batch_size, self.output_size), dtype=y_pred.dtype)
 
         for i in tf.range(self.n_quantiles):
-            loss = loss + quantile_loss(y_true, y_pred[i], quantiles[i])
+            indexes = tf.range(i * self.output_size, (i + 1) * self.output_size)
+            loss = loss + quantile_loss(
+                y_true, tf.gather(y_pred, indexes, axis=-1), quantiles[i]
+            )
         return loss
 
     def get_config(self) -> Dict[str, ...]:

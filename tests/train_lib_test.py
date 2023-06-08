@@ -3,16 +3,14 @@ from __future__ import annotations
 import tensorflow as tf
 import numpy as np
 from typing import Dict, Tuple
+from keras.utils.tf_utils import can_jit_compile
 from temporal_fusion_transformer.experiments import (
     ElectricityExperiment,
     ModelParams,
     DataParams,
 )
 from temporal_fusion_transformer.modeling import TemporalFusionTransformer
-from temporal_fusion_transformer.train_lib import (
-    QuantileLoss,
-    train_with_fixed_hyper_parameters,
-)
+from temporal_fusion_transformer.train_lib import QuantileLoss
 
 # tf.config.run_functions_eagerly(True)
 
@@ -42,21 +40,20 @@ class TrainStepTest(tf.test.TestCase):
         hp: ModelParams = ElectricityExperiment.default_params[0]
         fp: DataParams = ElectricityExperiment.fixed_params
 
-        def make_model():
-            return TemporalFusionTransformer(
-                static_categories_sizes=fp.static_categories_sizes,
-                known_categories_sizes=fp.known_categories_sizes,
-                num_encoder_steps=fp.num_encoder_steps,
-                hidden_layer_size=hp.hidden_layer_size,
-                num_attention_heads=hp.num_attention_heads,
-            )
-
-        model, history = train_with_fixed_hyper_parameters(
-            make_model,
-            lambda: "adam",
-            self.train_ds,
-            self.val_ds,
+        model = TemporalFusionTransformer(
+            static_categories_sizes=fp.static_categories_sizes,
+            known_categories_sizes=fp.known_categories_sizes,
+            num_encoder_steps=fp.num_encoder_steps,
+            hidden_layer_size=hp.hidden_layer_size,
+            num_attention_heads=hp.num_attention_heads,
         )
+        model.compile(
+            tf.keras.optimizers.Adam(jit_compile=can_jit_compile()),
+            loss=QuantileLoss(model.quantiles),
+            metrics=[],
+            jit_compile=can_jit_compile(),
+        )
+        history = model.fit(self.train_ds, validation_data=self.val_ds).history
 
         assert "val_loss" in history
         tf.debugging.check_numerics(history["val_loss"], "Test Failed.")
@@ -86,9 +83,6 @@ def load_data_from_archive(path: str) -> Dict[str, np.ndarray]:
 
 def make_input_tuple(data: Dict[str, tf.Tensor]) -> Tuple[dict, tf.Tensor]:
     return (
-        dict(
-            static=data["inputs_static"],
-            known_real=data["inputs_known_real"],
-        ),
+        dict(static=data["inputs_static"], known_real=data["inputs_known_real"]),
         data["outputs"],
     )
