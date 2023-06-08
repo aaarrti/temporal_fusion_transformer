@@ -1,5 +1,4 @@
 import json
-import numpy as np
 from absl import flags, app, logging
 from temporal_fusion_transformer.experiments import (
     ElectricityExperiment,
@@ -27,16 +26,11 @@ def main(_):
     with open("data/electricity/metadata.json", "w+") as f:
         json.dump(metadata, f)
     logging.info("Exporting sharded train split.")
-    np.savez("data/electricity/train.npz", **train_ds)
     export_sharded_dataset(train_ds, "data/electricity/train")
-
     logging.info("Exporting sharded validation split.")
-    np.savez("data/electricity/validation.npz", **val_ds)
     export_sharded_dataset(val_ds, "data/electricity/validation")
-
     logging.info("Exporting sharded tests split.")
     export_sharded_dataset(val_ds, "data/electricity/test")
-    np.savez("data/electricity/test.npz", **test_ds)
 
 
 if __name__ == "__main__":

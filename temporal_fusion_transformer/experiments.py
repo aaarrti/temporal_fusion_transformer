@@ -500,7 +500,7 @@ def export_sharded_dataset(
     if n % shard_size != 0:
         n_batches += 1
 
-    for index, shard_slice in keras_pbar(enumerate(batches), n):
+    for index, shard_slice in keras_pbar(enumerate(batches), n_batches):
         shard = map_dict(
             data, value_mapper=lambda v: v[shard_slice.start : shard_slice.stop]
         )

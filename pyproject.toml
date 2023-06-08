@@ -32,8 +32,8 @@ dev = [
     "pytest",
     "pytest_sugar",
     "tox",
-    "pre_commit"
-    # "dvc[s3]",
+    "pre_commit",
+    "dvc_gcp",
     # "pyarrow",
     # "polars",
     # "iree-compiler",

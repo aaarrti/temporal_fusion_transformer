@@ -169,4 +169,7 @@ tensorboard_logs
 .tox
 .dvc/cache
 .dvc/tmp
-
+gcs/terraform.tfstate
+gcs/terraform.tfstate.backup
+gcs/.terraform.lock.hcl
+gcs/.terraform
