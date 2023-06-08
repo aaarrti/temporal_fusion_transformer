@@ -19,6 +19,7 @@ from keras.utils.tf_utils import can_jit_compile
 
 class TFTInputs(tf.experimental.BatchableExtensionType):
     """
+    TODO i probably will need to get rid of it, so I can use TPUs
     A convenience container for all different types of outputs fort TFT model.
     Known can be categorical and time varying, e.g, some experiments encode day of the week as real,
     other as categorical.
@@ -41,8 +42,8 @@ class TFTInputs(tf.experimental.BatchableExtensionType):
 
     static: tf.Tensor
     known_real: tf.Tensor
-    known_categorical: Union[tf.Tensor, None]
-    observed: Union[tf.Tensor, None]
+    known_categorical: Union[tf.Tensor, None] = None
+    observed: Union[tf.Tensor, None] = None
 
     @property
     def dtype(self):
@@ -207,6 +208,8 @@ class TemporalFusionTransformer(tf.keras.Model):
         quantiles: Sequence[int] | None = None,
         prng_seed: int = 42,
         name: str = "temporal_fusion_transformer",
+        unroll_lstm: bool = False,
+        return_attention: bool = False,
         **kwargs,
     ):
         """
@@ -228,6 +231,9 @@ class TemporalFusionTransformer(tf.keras.Model):
             Number of attention heads to use for multi-head attention.
         quantiles:
         output_size:
+        unroll_lstm:
+        return_attention:
+
 
         name:
 
@@ -244,6 +250,8 @@ class TemporalFusionTransformer(tf.keras.Model):
         self.num_attention_heads = num_attention_heads
         self.dropout_rate = dropout_rate
         self.prng_seed = prng_seed
+        self.unroll_lstm = unroll_lstm
+        self.return_attention = return_attention
 
         self.input_embeds = TFTInputEmbedding(
             static_categories_size=self.static_categories_sizes,
@@ -272,9 +280,13 @@ class TemporalFusionTransformer(tf.keras.Model):
             return_sequences=True,
             return_state=True,
             name="historical_features_lstm",
+            unroll=unroll_lstm,
         )
         self.future_features_lstm = tf.keras.layers.LSTM(
-            hidden_layer_size, return_sequences=True, name="future_features_lstm"
+            hidden_layer_size,
+            return_sequences=True,
+            name="future_features_lstm",
+            unroll=unroll_lstm,
         )
         self.temporal_decoder = TemporalFusionDecoder(
             num_attention_heads=num_attention_heads,
@@ -375,6 +387,8 @@ class TemporalFusionTransformer(tf.keras.Model):
                 "known_categories_sizes": self.known_categories_sizes,
                 "num_attention_heads": self.num_attention_heads,
                 "prng_seed": self.prng_seed,
+                "unroll_lstm": self.unroll_lstm,
+                "return_attention": self.return_attention,
             }
         )
         return config
@@ -502,73 +516,51 @@ class TFTInputEmbedding(layers.Layer):
             - observed: (batch, time_steps, n_o)
 
         """
-        static = tf.TensorArray(
-            dtype=self.dtype_policy.compute_dtype,
-            size=self.num_static_inputs,
-            clear_after_read=True,
-        )
-        known_real = tf.TensorArray(
-            dtype=self.dtype_policy.compute_dtype,
-            size=self.num_known_real_inputs,
-            clear_after_read=True,
-        )
-        for i in range(self.num_static_inputs):
-            static = static.write(
-                i, self.static_inputs_embedding[i](inputs.static[:, i])
-            )
+        static_input_embeddings = []
 
-        # TensorArray supports stacking only along 0's axis,
-        # So this is same as tf.stack(..., axis=1).
-        static_t = tf.transpose(static.stack(), [1, 0, 2])
+        known_real_inputs_embeddings = []
+
+        for i, layer in enumerate(self.static_inputs_embedding):
+            static_input_embeddings.append(layer(inputs.static[:, i]))
+        static_input_embeddings = tf.stack(static_input_embeddings, axis=1)
+
+        for i, layer in enumerate(self.known_real_dense):
+            known_real_inputs_embeddings.append(
+                layer(tf.expand_dims(inputs.known_real[..., i], -1))
+            )
 
         if self.num_observed_inputs != 0:
-            observed = tf.TensorArray(
-                dtype=self.dtype_policy.compute_dtype,
-                size=self.num_observed_inputs,
-                clear_after_read=True,
-            )
-            for i in range(self.num_observed_inputs):
-                observed = observed.write(
-                    i,
-                    self.observed_dense[i](tf.expand_dims(inputs.observed[..., i], -1)),
+            observed_input_embeddings = []
+            for i, layer in enumerate(self.observed_dense):
+                observed_input_embeddings.append(
+                    layer(tf.expand_dims(inputs.observed[..., i], axis=-1))
                 )
-            # Same as tf.stack(..., axis=-1).
-            observed_t = tf.transpose(observed.stack(), [1, 2, 3, 0])
+            observed_input_embeddings = tf.stack(observed_input_embeddings, axis=-1)
         else:
-            observed_t = None
-
-        for i in range(self.num_known_real_inputs):
-            known_real = known_real.write(
-                i,
-                self.known_real_dense[i](tf.expand_dims(inputs.known_real[..., i], -1)),
-            )
+            observed_input_embeddings = None
 
         if self.num_known_categorical_inputs != 0:
-            known_categorical = tf.TensorArray(
-                dtype=self.dtype_policy.compute_dtype,
-                size=self.num_known_categorical_inputs,
-                clear_after_read=True,
-            )
-
-            for i in range(self.num_known_categorical_inputs):
-                known_categorical = known_categorical.write(
-                    i,
-                    self.known_categorical_embedding[i](
-                        inputs.known_categorical[..., i]
-                    ),
+            known_categorical_inputs_embeddings = []
+            for i, layer in enumerate(self.known_categorical_embedding):
+                known_categorical_inputs_embeddings.append(
+                    layer(inputs.known_categorical[..., i])
                 )
-            # Same as tf.stack(..., axis=-1).
-            known_t = tf.transpose(
-                tf.concat([known_real.stack(), known_categorical.stack()], axis=0),
-                [1, 2, 3, 0],
-            )
-        else:
-            known_t = tf.transpose(
-                known_real.stack(),
-                [1, 2, 3, 0],
+            known_inputs_embeddings = tf.concat(
+                [
+                    tf.stack(known_real_inputs_embeddings, axis=-1),
+                    tf.stack(known_categorical_inputs_embeddings, axis=-1),
+                ],
+                axis=-1,
             )
 
-        return TFTEmbeddings(static=static_t, observed=observed_t, known=known_t)
+        else:
+            known_inputs_embeddings = tf.stack(known_real_inputs_embeddings, axis=-1)
+
+        return TFTEmbeddings(
+            static=static_input_embeddings,
+            observed=observed_input_embeddings,
+            known=known_inputs_embeddings,
+        )
 
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
@@ -643,14 +635,14 @@ class StaticCovariatesEncoder(layers.Layer):
 
     def build(self, input_shape: tf.TensorShape):
         self.num_static_inputs = input_shape[1]
-        self.variable_selection_grn_0 = GatedResidualNetwork(
+        self.grn = GatedResidualNetwork(
             self.hidden_layer_size,
             output_size=self.num_static_inputs,
             dropout_rate=self.dropout_rate,
             prng_seed=self.prng_seed,
             use_time_distributed=False,
         )
-        self.variable_selection_grn_blocks = [
+        self.grn_blocks = [
             GatedResidualNetwork(
                 self.hidden_layer_size,
                 dropout_rate=self.dropout_rate,
@@ -689,26 +681,19 @@ class StaticCovariatesEncoder(layers.Layer):
 
         flat_x = flatten_over_batch(inputs)
 
-        mlp_outputs, _ = self.variable_selection_grn_0(flat_x)
+        mlp_outputs, _ = self.grn(flat_x)
         sparse_weights = tf.nn.softmax(mlp_outputs)
         sparse_weights = tf.expand_dims(sparse_weights, axis=-1)
 
-        transformed_embedding = tf.TensorArray(
-            dtype=self.dtype_policy.compute_dtype,
-            size=self.num_static_inputs,
-            clear_after_read=True,
-        )
+        transformed_embeddings = []
 
-        for i in range(self.num_static_inputs):
-            embeds_i, _ = self.variable_selection_grn_blocks[i](inputs[:, i : i + 1, :])
-            transformed_embedding = transformed_embedding.write(i, embeds_i)
-        # TensorArray supports stacking only along 0's axis,
-        # so this is the same as tf.concat(..., axis=1).
-        transformed_embedding = tf.concat(
-            tf.unstack(transformed_embedding.stack()), axis=1
-        )
+        for i, layer in enumerate(self.grn_blocks):
+            embeds_i, _ = layer(inputs[:, i : i + 1, :])
+            transformed_embeddings.append(embeds_i)
+
+        transformed_embeddings = tf.concat(transformed_embeddings, axis=1)
         static_context_vector = tf.reduce_sum(
-            sparse_weights * transformed_embedding, axis=1
+            sparse_weights * transformed_embeddings, axis=1
         )
         context_variable_selection, _ = self.context_selection(static_context_vector)
         context_enrichment, _ = self.context_enrichment(static_context_vector)
@@ -1016,21 +1001,14 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         sparse_weights = tf.expand_dims(sparse_weights, axis=2)
 
         # Non-linear Processing & weight application
-        transformed_embedding = tf.TensorArray(
-            size=self.num_inputs,
-            clear_after_read=True,
-            dtype=self.dtype_policy.compute_dtype,
-        )
-        for i in range(self.num_inputs):
-            transformed_embedding = transformed_embedding.write(
-                i, self.grn_blocks[i](inputs[..., i])[0]
-            )
+        transformed_embeddings = []
+        for i, layer in enumerate(self.grn_blocks):
+            embeds_i, _ = layer(inputs[..., i])
+            transformed_embeddings.append(embeds_i)
 
-        transformed_embedding = tf.transpose(
-            transformed_embedding.stack(), [1, 2, 3, 0]
-        )
+        transformed_embeddings = tf.stack(transformed_embeddings, axis=-1)
         temporal_ctx = tf.math.reduce_sum(
-            sparse_weights * transformed_embedding, axis=-1
+            sparse_weights * transformed_embeddings, axis=-1
         )
         return temporal_ctx, sparse_weights, static_gate
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tensorflow as tf
 from absl import flags
-from absl_extra import register_task, requires_gpu, run
+from absl_extra import register_task, requires_gpu, run, make_strategy
 from keras import mixed_precision
 from keras.utils.tf_utils import can_jit_compile
 
@@ -79,7 +79,7 @@ def main():
         element_spec=element_spec,
         map_fn=map_fn,
         drop_remainder=True,
-    )
+    ).repeat(epochs)
 
     validation_ds = load_sharded_dataset(
         "data/electricity/validation",
@@ -87,7 +87,7 @@ def main():
         element_spec=element_spec,
         map_fn=map_fn,
         drop_remainder=True,
-    )
+    ).repeat(epochs)
 
     hp: ModelParams = ElectricityExperiment.default_params[0]
     op: OptimizerParams = ElectricityExperiment.default_params[1]
@@ -101,11 +101,14 @@ def main():
             hidden_layer_size=hp.hidden_layer_size,
             num_attention_heads=hp.num_attention_heads,
             dtype=mixed_precision.global_policy().variable_dtype,
+            unroll_lstm=True,
         )
 
     def make_optimizer():
         return tf.keras.optimizers.Adam(
-            learning_rate=op.learning_rate,
+            learning_rate=tf.keras.experimental.CosineDecay(
+                op.learning_rate, decay_steps=steps_per_epoch * epochs, alpha=0.05
+            ),
             jit_compile=can_jit_compile(True),
             clipnorm=op.max_gradient_norm,
         )

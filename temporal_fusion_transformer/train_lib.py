@@ -30,7 +30,7 @@ def train_with_fixed_hyper_parameters(
         optimizer=optimizer_factory(),
         loss=QuantileLoss(model.quantiles),
         # LSTMs do not support XLA compilation.
-        jit_compile=False,
+        jit_compile=can_jit_compile(True),
     )
 
     history = model.fit(
