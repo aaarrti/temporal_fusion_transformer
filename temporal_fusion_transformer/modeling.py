@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple, Dict, Sequence, TypeVar, Callable, Mapping
+from typing import Tuple, Dict, Sequence, Mapping
 
 import keras.layers as layers
 import tensorflow as tf
@@ -160,21 +160,26 @@ class TemporalFusionTransformer(tf.keras.Model):
         """
         embeddings: Dict[str, tf.Tensor] = self.input_embeds(inputs)
         # Isolate known and observed historical inputs.
+        historical_indexes = tf.range(self.num_encoder_steps)
         if "observed" in inputs:
             historical_inputs = tf.concat(
                 [
-                    embeddings["known"][:, : self.num_encoder_steps],
-                    embeddings["observed"][:, : self.num_encoder_steps],
+                    tf.gather(embeddings["known"], historical_indexes, axis=1),
+                    tf.gather(embeddings["observed"], historical_indexes, axis=1),
                 ],
                 axis=-1,
             )
         else:
-            historical_inputs = embeddings["known"][:, : self.num_encoder_steps]
+            historical_inputs = tf.gather(
+                embeddings["known"], historical_indexes, axis=1
+            )
 
         static_context: Dict[str, tf.Tensor] = self.static_encoder(embeddings["static"])
+        total_time_steps = tf.shape(embeddings["known"])[1]
+        future_indexes = tf.range(self.num_encoder_steps, total_time_steps)
 
         # Isolate only known future inputs.
-        future_inputs = embeddings["known"][:, self.num_encoder_steps :]
+        future_inputs = tf.gather(embeddings["known"], future_indexes, axis=1)
         historical_features, historical_flags, _ = self.historical_variable_selection(
             dict(inputs=historical_inputs, context=static_context["enrichment"])
         )
@@ -197,7 +202,14 @@ class TemporalFusionTransformer(tf.keras.Model):
             context_vector=static_context["vector"],
         )
         decoder_outputs = self.temporal_decoder(decoder_in)
-        outputs = self.output_projection(decoder_outputs[..., self.num_encoder_steps :])
+
+        outputs = self.output_projection(
+            tf.gather(
+                decoder_outputs,
+                future_indexes,
+                axis=1,
+            )
+        )
         # attention_components = {
         # # Temporal attention weights
         # "decoder_self_attn": self_att,
@@ -599,7 +611,9 @@ class GatedLinearUnit(layers.Layer):
         self.prng_seed = prng_seed
         self.use_time_distributed = use_time_distributed
         # Build sub-layers.
-        self.dropout = layers.Dropout(dropout_rate, seed=prng_seed)
+        self.dropout = layers.Dropout(
+            dropout_rate, seed=prng_seed, force_generator=True
+        )
         self.linear = layers.Dense(hidden_layer_size)
         self.activation = layers.Dense(hidden_layer_size, activation="sigmoid")
         # Apply time steps, if needed.
@@ -1016,14 +1030,3 @@ def make_causal_attention_mask(self_attn_inputs: tf.Tensor) -> tf.Tensor:
 def flatten_over_batch(arr: tf.Tensor) -> tf.Tensor:
     batch_size = tf.shape(arr)[0]
     return tf.reshape(arr, (batch_size, -1))
-
-
-T = TypeVar("T")
-R = TypeVar("R")
-
-
-def map_optional(optional: T | None, func: Callable[[T], R]) -> R | None:
-    if optional is not None:
-        return func(optional)
-    else:
-        return None

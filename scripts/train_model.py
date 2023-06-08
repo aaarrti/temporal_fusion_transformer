@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tensorflow as tf
 from absl import flags
-from absl_extra import register_task, requires_gpu, run, make_strategy
+from absl_extra import register_task, run
 from keras import mixed_precision
 from keras.utils.tf_utils import can_jit_compile
 
@@ -12,7 +12,7 @@ from temporal_fusion_transformer.experiments import (
     OptimizerParams,
     ElectricityExperiment,
 )
-from temporal_fusion_transformer.modeling import TFTInputs, TemporalFusionTransformer
+from temporal_fusion_transformer.modeling import TemporalFusionTransformer
 from temporal_fusion_transformer.train_lib import (
     load_sharded_dataset,
     train_with_fixed_hyper_parameters,
@@ -41,7 +41,7 @@ NUM_ELECTRICITY_SAMPLES = 1853057
 
 
 @register_task
-@requires_gpu
+# @requires_gpu
 def main():
     batch_size = FLAGS.batch_size
     epochs = FLAGS.epochs
@@ -61,14 +61,12 @@ def main():
 
     def map_fn(arg):
         return (
-            TFTInputs(
+            dict(
                 static=tf.cast(arg["inputs_static"], tf.int32),
                 known_real=tf.cast(
                     arg["inputs_known_real"],
                     mixed_precision.global_policy().compute_dtype,
                 ),
-                known_categorical=None,
-                observed=None,
             ),
             tf.cast(arg["outputs"], mixed_precision.global_policy().compute_dtype),
         )
@@ -101,7 +99,7 @@ def main():
             hidden_layer_size=hp.hidden_layer_size,
             num_attention_heads=hp.num_attention_heads,
             dtype=mixed_precision.global_policy().variable_dtype,
-            unroll_lstm=True,
+            # unroll_lstm=True,
         )
 
     def make_optimizer():

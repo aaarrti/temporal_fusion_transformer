@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from typing import Callable, Sequence, Dict, Tuple, TYPE_CHECKING, Mapping, Optional
 
 from glob import glob
@@ -36,7 +37,7 @@ def train_with_fixed_hyper_parameters(
         train_ds,
         validation_data=val_ds,
         callbacks=[
-            TensorBoard("tensorboard_logs", write_graph=False),
+            TensorBoard("tensorboard_logs", write_graph=True),
             TerminateOnNaN(),
             BackupAndRestore("checkpoints"),
         ],
@@ -129,10 +130,15 @@ class QuantileLoss(Loss):
             y_pred, [self.n_quantiles, batch_size, n_time_steps, self.output_size]
         )
 
-        loss = tf.vectorized_map(
-            lambda i: quantile_loss(y_true, y_pred[i], quantiles[i]),
-            tf.range(self.n_quantiles),
-        )
+        # loss = tf.vectorized_map(
+        #    lambda i: quantile_loss(y_true, y_pred[i], quantiles[i]),
+        #    tf.range(self.n_quantiles),
+        # )
+        loss = [
+            quantile_loss(y_true, y_pred[0], quantiles[0]),
+            quantile_loss(y_true, y_pred[1], quantiles[1]),
+            quantile_loss(y_true, y_pred[2], quantiles[2]),
+        ]
         return tf.reduce_sum(loss, axis=0)
 
     def get_config(self) -> Dict[str, ...]:
@@ -170,6 +176,31 @@ def quantile_loss(
         (1 - quantile) * negative_prediction_underflow,
     )
     return tf.reduce_sum(q_loss, axis=-2)
+
+
+default_element_spec = {
+    "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
+    "time": tf.TensorSpec([None, 192, 1], dtype=tf.float32),
+    "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float32),
+    "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int32),
+    "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
+    "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int32),
+    "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
+}
+
+
+def default_map_fn(
+    arg: Mapping[str, tf.Tensor], dtype: DType
+) -> Tuple[Dict[str, tf.Tensor], tf.Tensor]:
+    return (
+        dict(
+            static=arg["inputs_static"],
+            known_real=tf.cast(arg["inputs_known_real"], dtype),
+            known_categorical=arg["inputs_known_categorical"],
+            observed=tf.cast(arg["inputs_observed"], dtype),
+        ),
+        tf.cast(arg["outputs"], dtype),
+    )
 
 
 def load_sharded_dataset(
@@ -220,15 +251,7 @@ def load_sharded_dataset(
     """
 
     if element_spec is None:
-        element_spec = {
-            "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
-            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float32),
-            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float32),
-            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int32),
-            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
-            "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int32),
-            "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
-        }
+        element_spec = default_element_spec
 
     def default_map_fn(
         arg: Mapping[str, tf.Tensor]
@@ -244,7 +267,7 @@ def load_sharded_dataset(
         )
 
     if map_fn is None:
-        map_fn = default_map_fn
+        map_fn = functools.partial(default_map_fn, dtype=dtype)
 
     return (
         tf.data.Dataset.from_tensor_slices(glob(f"{path}/*"))
@@ -292,34 +315,18 @@ def load_dataset_from_archive(
     drop_remainder: bool = False,
 ) -> Dict[str, np.ndarray]:
     data = load_data_from_archive(path)
-    batches = gen_batches(len(data["identifier"]), batch_size)
 
     if element_spec is None:
-        element_spec = {
-            "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
-            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float32),
-            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float32),
-            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int32),
-            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
-            "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int32),
-            "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
-        }
-
-    def default_map_fn(
-        arg: Mapping[str, tf.Tensor]
-    ) -> Tuple[Dict[str, tf.Tensor], tf.Tensor]:
-        return (
-            dict(
-                static=arg["inputs_static"],
-                known_real=tf.cast(arg["inputs_known_real"], dtype),
-                known_categorical=arg["inputs_known_categorical"],
-                observed=tf.cast(arg["inputs_observed"], dtype),
-            ),
-            tf.cast(arg["outputs"], dtype),
-        )
+        element_spec = default_element_spec
 
     if map_fn is None:
-        map_fn = default_map_fn
+        map_fn = functools.partial(default_map_fn, dtype=dtype)
+
+    if drop_remainder:
+        batches = list(gen_batches(len(data["identifier"]), batch_size))
+        last_element_len = batches[-1].stop - batches[-1].start
+        if last_element_len != batch_size:
+            batches = batches[:-1]
 
     def generator():
         for i in batches:
