@@ -1,6 +1,6 @@
 provider "google" {
   project = "titanium-atlas-389220"
-  region  = "eu-west4"
+  region  = "europe-west4"
 }
 
 module "bucket" {
