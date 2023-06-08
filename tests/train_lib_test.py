@@ -89,8 +89,6 @@ def make_input_tuple(data: Dict[str, tf.Tensor]) -> Tuple[dict, tf.Tensor]:
         dict(
             static=data["inputs_static"],
             known_real=data["inputs_known_real"],
-            # known_categorical=data.get("inputs_known_categorical"),
-            # observed=data.get("inputs_observed"),
         ),
         data["outputs"],
     )

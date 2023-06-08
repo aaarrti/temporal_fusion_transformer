@@ -1,49 +1,18 @@
 from __future__ import annotations
 
 import functools
-from typing import Callable, Sequence, Dict, Tuple, TYPE_CHECKING, Mapping, Optional
-
 from glob import glob
+from typing import Callable, Sequence, Dict, Tuple, Mapping, Optional
+
+import keras_tuner as kt
 import numpy as np
 import tensorflow as tf
-from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
+from absl_extra.collection_utils import map_dict
+from keras.callbacks import TensorBoard, TerminateOnNaN
 from keras.losses import Loss
 from keras.utils.tf_utils import can_jit_compile
-import keras_tuner as kt
-from tensorflow.python.framework.dtypes import DType
 from sklearn.utils import gen_batches
-from absl_extra.collection_utils import map_dict
-
-if TYPE_CHECKING:
-    from temporal_fusion_transformer.modeling import TemporalFusionTransformer
-
-
-def train_with_fixed_hyper_parameters(
-    model_factory: Callable[[], TemporalFusionTransformer],
-    optimizer_factory: Callable[[], tf.keras.optimizers.Optimizer],
-    train_ds: tf.data.Dataset,
-    val_ds: tf.data.Dataset,
-    **kwargs,
-) -> Tuple[TemporalFusionTransformer, Dict[str, np.ndarray]]:
-    model = model_factory()
-    model.compile(
-        optimizer=optimizer_factory(),
-        loss=QuantileLoss(model.quantiles),
-        # LSTMs do not support XLA compilation.
-        jit_compile=True,
-    )
-
-    history = model.fit(
-        train_ds,
-        validation_data=val_ds,
-        callbacks=[
-            TensorBoard("tensorboard_logs", write_graph=True),
-            TerminateOnNaN(),
-            BackupAndRestore("checkpoints"),
-        ],
-        **kwargs,
-    ).history
-    return model, history
+from tensorflow.python.framework.dtypes import DType
 
 
 def fine_tune_hyper_parameters(
@@ -126,20 +95,15 @@ class QuantileLoss(Loss):
 
         batch_size = y_pred.shape[0]
         n_time_steps = y_pred.shape[1]
-        y_pred = tf.reshape(
+        y_pred: tf.Tensor = tf.reshape(
             y_pred, [self.n_quantiles, batch_size, n_time_steps, self.output_size]
         )
 
-        # loss = tf.vectorized_map(
-        #    lambda i: quantile_loss(y_true, y_pred[i], quantiles[i]),
-        #    tf.range(self.n_quantiles),
-        # )
-        loss = [
-            quantile_loss(y_true, y_pred[0], quantiles[0]),
-            quantile_loss(y_true, y_pred[1], quantiles[1]),
-            quantile_loss(y_true, y_pred[2], quantiles[2]),
-        ]
-        return tf.reduce_sum(loss, axis=0)
+        loss = tf.zeros(shape=(batch_size, self.output_size), dtype=y_pred.dtype)
+
+        for i in tf.range(self.n_quantiles):
+            loss = loss + quantile_loss(y_true, y_pred[i], quantiles[i])
+        return loss
 
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
@@ -253,19 +217,6 @@ def load_sharded_dataset(
     if element_spec is None:
         element_spec = default_element_spec
 
-    def default_map_fn(
-        arg: Mapping[str, tf.Tensor]
-    ) -> Tuple[Dict[str, tf.Tensor], tf.Tensor]:
-        return (
-            dict(
-                static=arg["inputs_static"],
-                known_real=tf.cast(arg["inputs_known_real"], dtype),
-                known_categorical=arg["inputs_known_categorical"],
-                observed=tf.cast(arg["inputs_observed"], dtype),
-            ),
-            tf.cast(arg["outputs"], dtype),
-        )
-
     if map_fn is None:
         map_fn = functools.partial(default_map_fn, dtype=dtype)
 
@@ -313,7 +264,7 @@ def load_dataset_from_archive(
     dtype: DType = tf.float32,
     cache_filename: str = "",
     drop_remainder: bool = False,
-) -> Dict[str, np.ndarray]:
+) -> tf.data.Dataset:
     data = load_data_from_archive(path)
 
     if element_spec is None:
@@ -338,5 +289,4 @@ def load_dataset_from_archive(
         tf.data.Dataset.from_generator(generator, element_spec=element_spec)
         .map(map_fn)
         .cache(cache_filename)
-        .prefetch(tf.data.AUTOTUNE)
     )
