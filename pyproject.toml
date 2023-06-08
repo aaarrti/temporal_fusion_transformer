@@ -19,7 +19,6 @@ classifiers = [
 dependencies = [
     "tensorflow; sys_platform == 'linux'",
     "tensorflow_macos; sys_platform == 'darwin'",
-    "keras_tuner",
     "keras_pbar",
     "scikit_learn",
     "pandas",
@@ -34,15 +33,19 @@ dev = [
     "tox",
     "pre_commit",
     "dvc_gcp",
-    # "pyarrow",
-    # "polars",
-    # "iree-compiler",
-    # "iree-runtime",
-    # "iree-tools-tf"
 ]
-mongo = ["pymongo"]
-ml_collections = ["ml_collections"]
-slack = ["slack_sdk"]
+keras_tuner = [
+    "keras_tuner"
+]
+iree = [
+    "iree-compiler",
+    "iree-runtime",
+    "iree-tools-tf"
+]
+polars = [
+    "pyarrow",
+    "polars",
+]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"
 
