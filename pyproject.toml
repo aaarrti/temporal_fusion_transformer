@@ -23,6 +23,7 @@ dependencies = [
     "keras_pbar",
     "scikit_learn",
     "pandas",
+    "absl_extra"
 ]
 [project.optional-dependencies]
 dev = [

@@ -210,6 +210,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         name: str = "temporal_fusion_transformer",
         unroll_lstm: bool = False,
         return_attention: bool = False,
+        use_cudnn_lstm: bool = False,
         **kwargs,
     ):
         """
@@ -233,6 +234,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         output_size:
         unroll_lstm:
         return_attention:
+        use_cudnn_lstm:
 
 
         name:
@@ -252,6 +254,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         self.prng_seed = prng_seed
         self.unroll_lstm = unroll_lstm
         self.return_attention = return_attention
+        self.use_cudnn_lstm = use_cudnn_lstm
 
         self.input_embeds = TFTInputEmbedding(
             static_categories_size=self.static_categories_sizes,
@@ -275,27 +278,40 @@ class TemporalFusionTransformer(tf.keras.Model):
             prng_seed=prng_seed,
             name="future_variable_selection",
         )
-        self.historical_features_lstm = tf.keras.layers.LSTM(
-            hidden_layer_size,
-            return_sequences=True,
-            return_state=True,
-            name="historical_features_lstm",
-            unroll=unroll_lstm,
-        )
-        self.future_features_lstm = tf.keras.layers.LSTM(
-            hidden_layer_size,
-            return_sequences=True,
-            name="future_features_lstm",
-            unroll=unroll_lstm,
-        )
+        if use_cudnn_lstm:
+            self.historical_features_lstm = tf.compat.v1.keras.layers.CuDNNLSTM(
+                hidden_layer_size,
+                return_sequences=True,
+                return_state=True,
+                name="historical_features_lstm",
+            )
+            self.future_features_lstm = tf.compat.v1.keras.layers.CuDNNLSTM(
+                hidden_layer_size,
+                return_sequences=True,
+                name="future_features_lstm",
+            )
+        else:
+            self.historical_features_lstm = layers.LSTM(
+                hidden_layer_size,
+                return_sequences=True,
+                return_state=True,
+                name="historical_features_lstm",
+                unroll=unroll_lstm,
+            )
+            self.future_features_lstm = layers.LSTM(
+                hidden_layer_size,
+                return_sequences=True,
+                name="future_features_lstm",
+                unroll=unroll_lstm,
+            )
         self.temporal_decoder = TemporalFusionDecoder(
             num_attention_heads=num_attention_heads,
             hidden_layer_size=hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
         )
-        self.output_projection = tf.keras.layers.TimeDistributed(
-            tf.keras.layers.Dense(self.output_size * len(self.quantiles))
+        self.output_projection = layers.TimeDistributed(
+            layers.Dense(self.output_size * len(self.quantiles))
         )
 
     def call(self, inputs: TFTInputs, **kwargs):
@@ -389,6 +405,7 @@ class TemporalFusionTransformer(tf.keras.Model):
                 "prng_seed": self.prng_seed,
                 "unroll_lstm": self.unroll_lstm,
                 "return_attention": self.return_attention,
+                "use_cudnn_lstm": self.use_cudnn_lstm,
             }
         )
         return config
@@ -466,7 +483,6 @@ class TFTInputEmbedding(layers.Layer):
                 size,
                 self.hidden_layer_size,
                 input_length=num_time_steps,
-                # dtype=self.dtype_policy.compute_dtype,
             )
             for size in self.static_categories_size
         ]
@@ -475,7 +491,6 @@ class TFTInputEmbedding(layers.Layer):
                 size,
                 self.hidden_layer_size,
                 input_length=num_time_steps,
-                # dtype=self.dtype_policy.compute_dtype,
             )
             for size in self.known_categories_size
         ]

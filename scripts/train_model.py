@@ -37,7 +37,7 @@ flags.DEFINE_enum(
 
 NUM_ELECTRICITY_SAMPLES = 1853057
 # tf.config.run_functions_eagerly(True)
-tf.config.set_soft_device_placement(True)
+# tf.config.set_soft_device_placement(True)
 
 
 @register_task
