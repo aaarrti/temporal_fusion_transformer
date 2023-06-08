@@ -10,12 +10,11 @@ from keras.losses import Loss
 from keras.utils.tf_utils import can_jit_compile
 import keras_tuner as kt
 from tensorflow.python.framework.dtypes import DType
+from sklearn.utils import gen_batches
+from absl_extra.collection_utils import map_dict
 
 if TYPE_CHECKING:
-    from temporal_fusion_transformer.modeling import (
-        TemporalFusionTransformer,
-        TFTInputs,
-    )
+    from temporal_fusion_transformer.modeling import TemporalFusionTransformer
 
 
 def train_with_fixed_hyper_parameters(
@@ -30,7 +29,7 @@ def train_with_fixed_hyper_parameters(
         optimizer=optimizer_factory(),
         loss=QuantileLoss(model.quantiles),
         # LSTMs do not support XLA compilation.
-        jit_compile=False,
+        jit_compile=True,
     )
 
     history = model.fit(
@@ -178,7 +177,7 @@ def load_sharded_dataset(
     batch_size: int,
     element_spec: Mapping[str, tf.TensorSpec] | Tuple[tf.TensorSpec, ...] | None = None,
     map_fn: Optional[
-        Callable[[Mapping[str, tf.Tensor]], Tuple[TFTInputs, tf.Tensor]]
+        Callable[[Mapping[str, tf.Tensor]], Tuple[Dict[str, tf.Tensor], tf.Tensor]]
     ] = None,
     dtype: DType = tf.float32,
     cache_filename: str = "",
@@ -219,8 +218,6 @@ def load_sharded_dataset(
         tf.data.Dataset ready to use for training.
 
     """
-    # Import actual type during runtime
-    from temporal_fusion_transformer.modeling import TFTInputs
 
     if element_spec is None:
         element_spec = {
@@ -233,9 +230,11 @@ def load_sharded_dataset(
             "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
         }
 
-    def default_map_fn(arg: Mapping[str, tf.Tensor]) -> Tuple[TFTInputs, tf.Tensor]:
+    def default_map_fn(
+        arg: Mapping[str, tf.Tensor]
+    ) -> Tuple[Dict[str, tf.Tensor], tf.Tensor]:
         return (
-            TFTInputs(
+            dict(
                 static=arg["inputs_static"],
                 known_real=tf.cast(arg["inputs_known_real"], dtype),
                 known_categorical=arg["inputs_known_categorical"],
@@ -255,6 +254,82 @@ def load_sharded_dataset(
             ),
         )
         .rebatch(batch_size, drop_remainder=drop_remainder)
+        .cache(cache_filename)
+        .prefetch(tf.data.AUTOTUNE)
+    )
+
+
+def load_data_from_archive(
+    path: str,
+) -> Dict[str, np.ndarray]:
+    archive = np.load(path, allow_pickle=True)
+    data = {}
+
+    for k in (
+        "identifier",
+        "time",
+        "outputs",
+        "inputs_static",
+        "inputs_known_real",
+        "inputs_known_categorical",
+        "inputs_observed",
+    ):
+        if k in archive:
+            data[k] = archive[k]
+
+    return data
+
+
+def load_dataset_from_archive(
+    path: str,
+    batch_size: int,
+    element_spec: Mapping[str, tf.TensorSpec] | Tuple[tf.TensorSpec, ...] | None = None,
+    map_fn: Optional[
+        Callable[[Mapping[str, tf.Tensor]], Tuple[Dict[str, tf.Tensor], tf.Tensor]]
+    ] = None,
+    dtype: DType = tf.float32,
+    cache_filename: str = "",
+    drop_remainder: bool = False,
+) -> Dict[str, np.ndarray]:
+    data = load_data_from_archive(path)
+    batches = gen_batches(len(data["identifier"]), batch_size)
+
+    if element_spec is None:
+        element_spec = {
+            "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
+            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float32),
+            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float32),
+            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int32),
+            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
+            "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int32),
+            "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
+        }
+
+    def default_map_fn(
+        arg: Mapping[str, tf.Tensor]
+    ) -> Tuple[Dict[str, tf.Tensor], tf.Tensor]:
+        return (
+            dict(
+                static=arg["inputs_static"],
+                known_real=tf.cast(arg["inputs_known_real"], dtype),
+                known_categorical=arg["inputs_known_categorical"],
+                observed=tf.cast(arg["inputs_observed"], dtype),
+            ),
+            tf.cast(arg["outputs"], dtype),
+        )
+
+    if map_fn is None:
+        map_fn = default_map_fn
+
+    def generator():
+        for i in batches:
+            length = i.stop - i.start
+            if length == batch_size:
+                yield map_dict(data, value_mapper=lambda v: v[i.start : i.stop])
+
+    return (
+        tf.data.Dataset.from_generator(generator, element_spec=element_spec)
+        .map(map_fn)
         .cache(cache_filename)
         .prefetch(tf.data.AUTOTUNE)
     )

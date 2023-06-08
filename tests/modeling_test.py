@@ -1,13 +1,10 @@
 import tensorflow as tf
 from temporal_fusion_transformer.modeling import (
     TemporalFusionTransformer,
-    TFTInputs,
     StaticCovariatesEncoder,
     TFTInputEmbedding,
     TemporalVariableSelectionNetwork,
-    ContextAwareInputs,
     TemporalFusionDecoder,
-    DecoderInputs,
 )
 from absl.testing import parameterized
 
@@ -30,14 +27,14 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
         )
         x_embeds = layer(x_batch)
         # Same shapes as in the original implementation.
-        self.assertEqual((batch_size, 2, hidden_layer_size), x_embeds.static.shape)
+        self.assertEqual((batch_size, 2, hidden_layer_size), x_embeds["static"].shape)
         self.assertEqual(
             (batch_size, n_time_steps, hidden_layer_size, 4),
-            x_embeds.known.shape,
+            x_embeds["known"].shape,
         )
         self.assertEqual(
             (batch_size, n_time_steps, hidden_layer_size, 1),
-            x_embeds.observed.shape,
+            x_embeds["observed"].shape,
         )
 
     def test_static_covariates_encoder(self):
@@ -46,19 +43,25 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
         )
         static_context = layer(tf.random.uniform((batch_size, 2, hidden_layer_size)))
         # Same shapes as in the original implementation.
-        self.assertEqual((batch_size, hidden_layer_size), static_context.vector.shape)
         self.assertEqual(
-            (batch_size, hidden_layer_size), static_context.enrichment.shape
+            (batch_size, hidden_layer_size), static_context["vector"].shape
         )
-        self.assertEqual((batch_size, hidden_layer_size), static_context.state_h.shape)
-        self.assertEqual((batch_size, hidden_layer_size), static_context.state_c.shape)
+        self.assertEqual(
+            (batch_size, hidden_layer_size), static_context["enrichment"].shape
+        )
+        self.assertEqual(
+            (batch_size, hidden_layer_size), static_context["state_h"].shape
+        )
+        self.assertEqual(
+            (batch_size, hidden_layer_size), static_context["state_c"].shape
+        )
 
     @parameterized.parameters((25, 4), (5, 3))
     def test_temporal_variable_selection_network(self, time_steps, features):
         layer = TemporalVariableSelectionNetwork(
             hidden_layer_size, prng_seed=PRNG_SEED, dropout_rate=0
         )
-        x = ContextAwareInputs(
+        x = dict(
             inputs=tf.random.uniform(
                 (batch_size, time_steps, hidden_layer_size, features)
             ),
@@ -73,7 +76,7 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
         layer = TemporalFusionDecoder(
             4, hidden_layer_size=hidden_layer_size, dropout_rate=0, prng_seed=PRNG_SEED
         )
-        decoder_in = DecoderInputs(
+        decoder_in = dict(
             lstm_outputs=tf.random.uniform(
                 (batch_size, n_time_steps, hidden_layer_size)
             ),
@@ -110,30 +113,27 @@ class TFTModelTest(tf.test.TestCase, parameterized.TestCase):
     @parameterized.named_parameters(
         (
             "known_categorical==None",
-            TFTInputs(
+            dict(
                 static=tf.ones((8, 4), dtype=tf.int32),
                 known_real=tf.ones((8, 30, 3), dtype=tf.float32),
-                known_categorical=None,
                 observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
             ),
             [],
         ),
         (
             "observed==None",
-            TFTInputs(
+            dict(
                 static=tf.ones((8, 4), dtype=tf.int32),
                 known_real=tf.ones((8, 30, 3), dtype=tf.float32),
                 known_categorical=(tf.ones((8, 30, 2), dtype=tf.int32)),
-                observed=None,
             ),
             known_categories_sizes,
         ),
         (
             "known_categorical==None, observed==None",
-            TFTInputs(
+            dict(
                 static=tf.ones((8, 4), dtype=tf.int32),
                 known_real=tf.ones((8, 30, 3), dtype=tf.float32),
-                known_categorical=None,
                 observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
             ),
             [],
@@ -157,7 +157,7 @@ class TFTModelTest(tf.test.TestCase, parameterized.TestCase):
 
 
 def make_x_batch():
-    return TFTInputs(
+    return dict(
         static=tf.ones((8, 4), dtype=tf.int32),
         known_real=tf.ones((8, 30, 3), dtype=tf.float32),
         known_categorical=tf.ones((8, 30, 2), dtype=tf.int32),

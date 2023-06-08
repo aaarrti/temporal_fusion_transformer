@@ -16,22 +16,20 @@ from typing import (
     Hashable,
     Callable,
     DefaultDict,
-    Optional,
     TYPE_CHECKING,
 )
-from glob import glob
 
 import numpy as np
 import pandas as pd
-from absl import logging
 import tensorflow as tf
-from tensorflow.python.framework.dtypes import DType
+from absl import logging
+from keras_pbar import keras_pbar
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils import gen_batches
-from keras_pbar import keras_pbar
+from absl_extra.collection_utils import map_dict, filter_dict
 
 if TYPE_CHECKING:
-    from temporal_fusion_transformer.modeling import TFTInputs
+    pass
 
 
 class classproperty(property):
@@ -469,52 +467,6 @@ V = TypeVar("V")
 K = TypeVar("K", bound=Hashable, covariant=True)
 
 
-def map_dict(
-    dictionary: Mapping[K, T],
-    value_mapper: Callable[[T], R] | None = None,
-    key_mapper: Callable[[K], R] | None = None,
-) -> Dict[K | R, V | R]:
-    """Applies func to values in dict. Additionally, if provided can also map keys."""
-
-    def identity(x: T) -> T:
-        return x
-
-    if value_mapper is None:
-        value_mapper = identity
-
-    if key_mapper is None:
-        key_mapper = identity
-
-    result = {}
-    for k, v in dictionary.items():
-        result[key_mapper(k)] = value_mapper(v)
-    return result
-
-
-def filter_dict(
-    dictionary: Mapping[K, V],
-    key_filter: Callable[[K], bool] | None = None,
-    value_filter: Callable[[V], bool] | None = None,
-) -> Dict[K, V]:
-    def tautology(_) -> bool:
-        # Tautology is an expression, which is always true.
-        return True
-
-    if key_filter is None:
-        key_filter = tautology
-
-    if value_filter is None:
-        value_filter = tautology
-
-    result = {}
-
-    for k, v in dictionary.items():
-        if key_filter(k) and value_filter(v):
-            result[k] = v
-
-    return result
-
-
 def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
     time_steps = len(input_data)
     x = input_data.values
@@ -549,7 +501,9 @@ def export_sharded_dataset(
         n_batches += 1
 
     for index, shard_slice in keras_pbar(enumerate(batches), n):
-        shard = map_dict(data, lambda v: v[shard_slice.start : shard_slice.stop])
+        shard = map_dict(
+            data, value_mapper=lambda v: v[shard_slice.start : shard_slice.stop]
+        )
         tf.data.Dataset.from_tensors(shard).save(f"{export_path}/{index}")
 
 

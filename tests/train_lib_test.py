@@ -8,12 +8,11 @@ from temporal_fusion_transformer.experiments import (
     ModelParams,
     DataParams,
 )
-from temporal_fusion_transformer.modeling import TemporalFusionTransformer, TFTInputs
+from temporal_fusion_transformer.modeling import TemporalFusionTransformer
 from temporal_fusion_transformer.train_lib import (
     QuantileLoss,
     train_with_fixed_hyper_parameters,
 )
-
 
 # tf.config.run_functions_eagerly(True)
 
@@ -85,13 +84,13 @@ def load_data_from_archive(path: str) -> Dict[str, np.ndarray]:
     return data
 
 
-def make_input_tuple(data: Dict[str, tf.Tensor]) -> Tuple[TFTInputs, tf.Tensor]:
+def make_input_tuple(data: Dict[str, tf.Tensor]) -> Tuple[dict, tf.Tensor]:
     return (
-        TFTInputs(
+        dict(
             static=data["inputs_static"],
             known_real=data["inputs_known_real"],
-            known_categorical=data.get("inputs_known_categorical"),
-            observed=data.get("inputs_observed"),
+            # known_categorical=data.get("inputs_known_categorical"),
+            # observed=data.get("inputs_observed"),
         ),
         data["outputs"],
     )
