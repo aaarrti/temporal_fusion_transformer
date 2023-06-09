@@ -16,10 +16,6 @@ module "bucket" {
       member = "user:artem.sereda.tub@gmail.com"
     },
     {
-      role   = "roles/storage.legacyBucketReader"
-      member = "serviceAccount:service-495559152420@cloud-tpu.iam.gserviceaccount.com"
-    },
-    {
       role   = "roles/storage.objectViewer"
       member = "serviceAccount:service-495559152420@cloud-tpu.iam.gserviceaccount.com"
     },
@@ -27,5 +23,14 @@ module "bucket" {
       role   = "roles/storage.objectCreator"
       member = "serviceAccount:service-495559152420@cloud-tpu.iam.gserviceaccount.com"
     },
+    {
+      role   = "roles/storage.legacyBucketReader"
+      member = "serviceAccount:service-495559152420@cloud-tpu.iam.gserviceaccount.com"
+    },
+    {
+      role   = "roles/storage.legacyBucketWriter"
+      member = "serviceAccount:service-495559152420@cloud-tpu.iam.gserviceaccount.com"
+    },
   ]
 }
+

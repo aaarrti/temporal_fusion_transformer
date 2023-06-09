@@ -12,24 +12,17 @@ from typing import (
     Sequence,
     ClassVar,
     Mapping,
-    TypeVar,
-    Hashable,
-    Callable,
     DefaultDict,
-    TYPE_CHECKING,
 )
 
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from absl import logging
+from absl_extra.collection_utils import map_dict, filter_dict
 from keras_pbar import keras_pbar
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils import gen_batches
-from absl_extra.collection_utils import map_dict, filter_dict
-
-if TYPE_CHECKING:
-    pass
 
 
 class classproperty(property):
@@ -459,12 +452,6 @@ class ElectricityExperiment(Experiment):
         validation_ds = apply_fn(validation_df)
         test_ds = apply_fn(test_df)
         return train_ds, validation_ds, test_ds
-
-
-T = TypeVar("T")
-R = TypeVar("R")
-V = TypeVar("V")
-K = TypeVar("K", bound=Hashable, covariant=True)
 
 
 def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:

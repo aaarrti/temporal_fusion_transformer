@@ -2,4 +2,4 @@
     autostage = true
     remote = gcs
 ['remote "gcs"']
-    url = gs://tf2_tft/dvc
+    url = gs://tf2_tft_v2/dvc

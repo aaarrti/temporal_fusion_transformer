@@ -225,7 +225,7 @@ class TemporalFusionTransformer(tf.keras.Model):
             input_embeddings=tf.concat([historical_features, future_features], axis=1),
             context_vector=static_context["vector"],
         )
-        decoder_outputs = self.temporal_decoder(decoder_in)
+        decoder_outputs, self_attn = self.temporal_decoder(decoder_in)
 
         outputs = self.output_projection(
             tf.gather(
@@ -234,17 +234,20 @@ class TemporalFusionTransformer(tf.keras.Model):
                 axis=1,
             )
         )
-        # attention_components = {
-        # # Temporal attention weights
-        # "decoder_self_attn": self_att,
-        # # Static variable selection weights
-        # "static_flags": static_weights[Ellipsis, 0],
-        # # Variable selection weights of past inputs
-        # "historical_flags": historical_flags[Ellipsis, 0, :],
-        # # Variable selection weights of future inputs
-        # "future_flags": future_flags[Ellipsis, 0, :],
-        # }
-        return outputs
+        if not self.return_attention:
+            return outputs
+
+        attention_components = {
+            # Temporal attention weights
+            "decoder_self_attn": self_attn,
+            # Static variable selection weights
+            "static_flags": static_context["weight"][..., 0],
+            # Variable selection weights of past inputs
+            "historical_flags": historical_flags[..., 0, :],
+            # Variable selection weights of future inputs
+            "future_flags": future_flags[Ellipsis, 0, :],
+        }
+        return outputs, attention_components
 
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
@@ -584,6 +587,7 @@ class StaticCovariatesEncoder(layers.Layer):
             state_h=context_state_h,
             state_c=context_state_c,
             vector=context_variable_selection,
+            weight=sparse_weights,
         )
 
     def get_config(self) -> Dict[str, ...]:
@@ -993,7 +997,9 @@ class TemporalFusionDecoder(layers.Layer):
             use_time_distributed=True,
         )
 
-    def call(self, inputs: Mapping[str, tf.Tensor], **kwargs) -> tf.Tensor:
+    def call(
+        self, inputs: Mapping[str, tf.Tensor], **kwargs
+    ) -> Tuple[tf.Tensor, tf.Tensor]:
         """
 
         Parameters
@@ -1019,11 +1025,12 @@ class TemporalFusionDecoder(layers.Layer):
         )
         # Decoder self attention
         mask = make_causal_attention_mask(enriched)
-        x = self.attn_layer(
+        x, attention_scores = self.attn_layer(
             enriched,
             enriched,
             enriched,
             attention_mask=mask,
+            return_attention_scores=True,
         )
         x, _ = self.glu_2(x)
         x = self.layer_norm_2(x + enriched)
@@ -1034,7 +1041,7 @@ class TemporalFusionDecoder(layers.Layer):
         # Final skip connection
         decoded, _ = self.glu_3(decoded)
         decoded = self.layer_norm_3(decoded + temporal_features)
-        return decoded
+        return decoded, attention_scores
 
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
