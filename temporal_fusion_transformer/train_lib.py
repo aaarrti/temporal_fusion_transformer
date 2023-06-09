@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import functools
 from glob import glob
-from typing import Callable, Sequence, Dict, Tuple, Mapping, Optional
+from typing import Callable, Sequence, Dict, Tuple, Mapping, Optional, Literal
+from importlib import util
 
-import keras_tuner as kt
+
 import numpy as np
 import tensorflow as tf
 from absl_extra.collection_utils import map_dict
@@ -15,36 +16,39 @@ from sklearn.utils import gen_batches
 from tensorflow.python.framework.dtypes import DType
 
 
-def fine_tune_hyper_parameters(
-    model_factory: Callable[[kt.HyperParameters], tf.keras.Model],
-    train_ds: tf.data.Dataset,
-    val_ds: tf.data.Dataset,
-    epochs: int = 1,
-    max_trials: int = 20,
-    prng_seed: int = 42,
-    name: str = "experiment",
-) -> kt.HyperParameters:
-    tuner = kt.RandomSearch(
-        hypermodel=model_factory,
-        objective="val_loss",
-        seed=prng_seed,
-        max_trials=max_trials,
-        overwrite=True,
-        directory="tuner_logs",
-        project_name=name,
-    )
-    tuner.search_space_summary()
-    tuner.search(
-        train_ds,
-        epochs=epochs,
-        validation_data=val_ds,
-        callbacks=[
-            TensorBoard("tensorboard_logs", write_graph=False),
-            TerminateOnNaN(),
-        ],
-        verbose=2,
-    )
-    return tuner.get_best_hyperparameters(0)[0]
+if util.find_spec("keras_tuner") is not None:
+    import keras_tuner as kt
+
+    def fine_tune_hyper_parameters(
+        model_factory: Callable[[kt.HyperParameters], tf.keras.Model],
+        train_ds: tf.data.Dataset,
+        val_ds: tf.data.Dataset,
+        epochs: int = 1,
+        max_trials: int = 20,
+        prng_seed: int = 42,
+        name: str = "experiment",
+    ) -> kt.HyperParameters:
+        tuner = kt.RandomSearch(
+            hypermodel=model_factory,
+            objective="val_loss",
+            seed=prng_seed,
+            max_trials=max_trials,
+            overwrite=True,
+            directory="tuner_logs",
+            project_name=name,
+        )
+        tuner.search_space_summary()
+        tuner.search(
+            train_ds,
+            epochs=epochs,
+            validation_data=val_ds,
+            callbacks=[
+                TensorBoard("tensorboard_logs", write_graph=False),
+                TerminateOnNaN(),
+            ],
+            verbose=2,
+        )
+        return tuner.get_best_hyperparameters(0)[0]
 
 
 class QuantileLoss(Loss):
@@ -56,13 +60,21 @@ class QuantileLoss(Loss):
 
     """
 
-    def __init__(self, quantiles: Sequence[int], output_size: int = 1, **kwargs):
+    def __init__(
+        self,
+        quantiles: Sequence[int],
+        output_size: int = 1,
+        **kwargs,
+    ):
         """
 
         Parameters
         ----------
         quantiles:
             Quantiles to compute losses
+        output_size:
+        kwargs
+
         """
         super().__init__(**kwargs)
         for quantile in quantiles:
@@ -93,21 +105,28 @@ class QuantileLoss(Loss):
         quantiles = tf.cast(self.quantiles, y_pred.dtype)
         tf.debugging.assert_rank(y_true, 3)
 
-        batch_size = y_pred.shape[0]
+        loss = tf.TensorArray(
+            size=self.n_quantiles, dtype=y_pred.dtype, clear_after_read=True
+        )
 
-        loss = tf.zeros(shape=(batch_size, self.output_size), dtype=y_pred.dtype)
-
-        for i in tf.range(self.n_quantiles):
+        for i in range(self.n_quantiles):
             indexes = tf.range(i * self.output_size, (i + 1) * self.output_size)
-            loss = loss + quantile_loss(
+            q_loss = quantile_loss(
                 y_true, tf.gather(y_pred, indexes, axis=-1), quantiles[i]
             )
+            loss = loss.write(i, q_loss)
+
+        loss = tf.reduce_sum(loss.stack(), axis=0)
         return loss
 
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
         config.update(
-            {"quantiles": list(self.quantiles), "output_size": int(self.output_size)}
+            {
+                "quantiles": list(self.quantiles),
+                "output_size": int(self.output_size),
+                "accumulate_in_tensor_array": self.accumulate_in_tensor_array,
+            }
         )
         return config
 

@@ -1,16 +1,13 @@
-from __future__ import annotations
-
 import tensorflow as tf
-import numpy as np
-from typing import Dict, Tuple
 from keras.utils.tf_utils import can_jit_compile
+
 from temporal_fusion_transformer.experiments import (
     ElectricityExperiment,
     ModelParams,
     DataParams,
 )
 from temporal_fusion_transformer.modeling import TemporalFusionTransformer
-from temporal_fusion_transformer.train_lib import QuantileLoss
+from temporal_fusion_transformer.train_lib import QuantileLoss, load_data_from_archive
 
 # tf.config.run_functions_eagerly(True)
 
@@ -62,26 +59,7 @@ class TrainStepTest(tf.test.TestCase):
         tf.debugging.check_numerics(history["loss"], "Test Failed.")
 
 
-def load_data_from_archive(path: str) -> Dict[str, np.ndarray]:
-    archive = np.load(path, allow_pickle=True)
-    data = {}
-
-    for k in (
-        "identifier",
-        "time",
-        "outputs",
-        "inputs_static",
-        "inputs_known_real",
-        "inputs_known_categorical",
-        "inputs_observed",
-    ):
-        if k in archive:
-            data[k] = archive[k]
-
-    return data
-
-
-def make_input_tuple(data: Dict[str, tf.Tensor]) -> Tuple[dict, tf.Tensor]:
+def make_input_tuple(data):
     return (
         dict(static=data["inputs_static"], known_real=data["inputs_known_real"]),
         data["outputs"],
