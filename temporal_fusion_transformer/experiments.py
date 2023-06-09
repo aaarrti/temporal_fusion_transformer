@@ -58,22 +58,21 @@ class SchemaEntry(NamedTuple):
     input_type: InputTypes
 
 
-class DataParams(NamedTuple):
+class FixedParams(NamedTuple):
     static_categories_sizes: List[int]
     known_categories_sizes: List[int]
     num_encoder_steps: int
+    total_time_steps: int
     num_outputs: int
 
 
 class ModelParams(NamedTuple):
     hidden_layer_size: int
     num_attention_heads: int
-    dropout_rate: float = 0.1
-
-
-class OptimizerParams(NamedTuple):
     learning_rate: float
     max_gradient_norm: float
+    batch_size: int
+    dropout_rate: float
 
 
 class Experiment(ABC):
@@ -97,7 +96,7 @@ class Experiment(ABC):
 
     @classproperty
     @abstractmethod
-    def default_params(self) -> Tuple[ModelParams, OptimizerParams]:
+    def default_params(self) -> ModelParams:
         """
         Model parameters, are the ones, which are model architecture parameters, which are subject to hyperparameter
         fine-tuning, e.g, number of attention heads. Same goes for OptimizerParams.
@@ -116,7 +115,7 @@ class Experiment(ABC):
 
     @classproperty
     @abstractmethod
-    def fixed_params(self) -> DataParams:
+    def fixed_params(self) -> FixedParams:
         """
         Fixed parameters, are the ones, caused by underlying datasets structure.
         E.g., number of static inputs.
@@ -218,7 +217,6 @@ class ElectricityExperiment(Experiment):
 
     """
 
-    total_time_steps: ClassVar[int] = 8 * 24
     test_boundary: ClassVar[int] = 1339
 
     @classproperty
@@ -238,16 +236,21 @@ class ElectricityExperiment(Experiment):
         }
 
     @classproperty
-    def default_params(self) -> Tuple[ModelParams, OptimizerParams]:
-        return (
-            ModelParams(hidden_layer_size=160, num_attention_heads=4),
-            OptimizerParams(learning_rate=1e-3, max_gradient_norm=1e-2),
+    def default_params(self) -> ModelParams:
+        return ModelParams(
+            hidden_layer_size=160,
+            num_attention_heads=4,
+            dropout_rate=0.1,
+            batch_size=64,
+            max_gradient_norm=0.01,
+            learning_rate=1e-3,
         )
 
     @classproperty
-    def fixed_params(self) -> DataParams:
-        return DataParams(
+    def fixed_params(self) -> FixedParams:
+        return FixedParams(
             num_encoder_steps=7 * 24,
+            total_time_steps=8 * 24,
             num_outputs=1,
             known_categories_sizes=[],
             static_categories_sizes=[369],
@@ -256,6 +259,10 @@ class ElectricityExperiment(Experiment):
     @classproperty
     def num_encoder_steps(self) -> int:
         return self.fixed_params.num_encoder_steps
+
+    @classproperty
+    def total_time_steps(self) -> int:
+        return self.fixed_params.total_time_steps
 
     @classmethod
     def from_raw_csv(

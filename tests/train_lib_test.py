@@ -5,7 +5,7 @@ from keras.utils.tf_utils import can_jit_compile
 from temporal_fusion_transformer.experiments import (
     ElectricityExperiment,
     ModelParams,
-    DataParams,
+    FixedParams,
 )
 from temporal_fusion_transformer.modeling import TemporalFusionTransformer
 from temporal_fusion_transformer.train_lib import QuantileLoss, load_data_from_archive
@@ -100,7 +100,7 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
         )
 
         hp: ModelParams = ElectricityExperiment.default_params[0]
-        fp: DataParams = ElectricityExperiment.fixed_params
+        fp: FixedParams = ElectricityExperiment.fixed_params
 
         model = TemporalFusionTransformer(
             static_categories_sizes=fp.static_categories_sizes,

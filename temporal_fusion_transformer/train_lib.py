@@ -8,12 +8,13 @@ from importlib import util
 
 import numpy as np
 import tensorflow as tf
-from absl_extra.collection_utils import map_dict
 from keras.callbacks import TensorBoard, TerminateOnNaN
 from keras.losses import Loss
 from keras.utils.tf_utils import can_jit_compile
 from sklearn.utils import gen_batches
 from tensorflow.python.framework.dtypes import DType
+
+from temporal_fusion_transformer.experiments import map_dict
 
 
 if util.find_spec("keras_tuner") is not None:
