@@ -99,7 +99,7 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
             )
         )
 
-        hp: ModelParams = ElectricityExperiment.default_params[0]
+        hp: ModelParams = ElectricityExperiment.default_params
         fp: FixedParams = ElectricityExperiment.fixed_params
 
         model = TemporalFusionTransformer(
