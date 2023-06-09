@@ -85,7 +85,7 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
             ),
             context_vector=tf.random.uniform((batch_size, hidden_layer_size)),
         )
-        decoder_out = layer(decoder_in)
+        decoder_out, _ = layer(decoder_in)
         self.assertEqual(
             (batch_size, n_time_steps, hidden_layer_size),
             decoder_out.shape,

@@ -10,7 +10,7 @@ from temporal_fusion_transformer.experiments import (
 from temporal_fusion_transformer.modeling import TemporalFusionTransformer
 from temporal_fusion_transformer.train_lib import QuantileLoss, load_data_from_archive
 
-tf.config.run_functions_eagerly(True)
+# tf.config.run_functions_eagerly(True)
 
 
 class QuantileLossTest(tf.test.TestCase):
