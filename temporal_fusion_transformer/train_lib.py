@@ -109,7 +109,7 @@ class QuantileLoss(Loss):
             size=self.n_quantiles, dtype=y_pred.dtype, clear_after_read=True
         )
 
-        for i in range(self.n_quantiles):
+        for i in tf.range(self.n_quantiles):
             indexes = tf.range(i * self.output_size, (i + 1) * self.output_size)
             q_loss = quantile_loss(
                 y_true, tf.gather(y_pred, indexes, axis=-1), quantiles[i]
