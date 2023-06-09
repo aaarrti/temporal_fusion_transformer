@@ -25,14 +25,16 @@ dependencies = [
     "absl_extra"
 ]
 [project.optional-dependencies]
-dev = [
-    "tensorflow_metal; sys_platform == 'darwin'",
-    "black",
+test = [
     "pytest",
     "pytest_sugar",
     "tox",
+]
+dev = [
+    "tensorflow_metal; sys_platform == 'darwin'",
+    "black",
     "pre_commit",
-    "dvc_gcp",
+    # "dvc_gcp",
 ]
 keras_tuner = [
     "keras_tuner"
