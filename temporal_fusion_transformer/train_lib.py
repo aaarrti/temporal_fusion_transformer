@@ -105,18 +105,23 @@ class QuantileLoss(Loss):
         quantiles = tf.cast(self.quantiles, y_pred.dtype)
         tf.debugging.assert_rank(y_true, 3)
 
-        loss = tf.TensorArray(
-            size=self.n_quantiles, dtype=y_pred.dtype, clear_after_read=True
-        )
-
-        for i in tf.range(self.n_quantiles):
-            indexes = tf.range(i * self.output_size, (i + 1) * self.output_size)
-            q_loss = quantile_loss(
-                y_true, tf.gather(y_pred, indexes, axis=-1), quantiles[i]
-            )
-            loss = loss.write(i, q_loss)
-
-        loss = tf.reduce_sum(loss.stack(), axis=0)
+        # loss = tf.TensorArray(
+        #    size=self.n_quantiles, dtype=y_pred.dtype, clear_after_read=True
+        # )
+        #
+        # for i in tf.range(self.n_quantiles):
+        #    indexes = tf.range(i * self.output_size, (i + 1) * self.output_size)
+        #    q_loss = quantile_loss(
+        #        y_true, tf.gather(y_pred, indexes, axis=-1), quantiles[i]
+        #    )
+        #    loss = loss.write(i, q_loss)
+        # FIXME
+        loss = [
+            quantile_loss(y_true, y_pred[..., 0:1], quantiles[0]),
+            quantile_loss(y_true, y_pred[..., 1:2], quantiles[1]),
+            quantile_loss(y_true, y_pred[..., 2:3], quantiles[1]),
+        ]
+        loss = tf.reduce_sum(loss, axis=0)
         return loss
 
     def get_config(self) -> Dict[str, ...]:
