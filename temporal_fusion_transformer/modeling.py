@@ -112,18 +112,24 @@ class TemporalFusionTransformer(tf.keras.Model):
                 name="future_features_lstm",
             )
         else:
+            if self.dtype_policy.compute_dtype == "bfloat16":
+                dtype = tf.keras.mixed_precision.Policy("float32")
+            else:
+                dtype = None
             self.historical_features_lstm = layers.LSTM(
                 hidden_layer_size,
                 return_sequences=True,
                 return_state=True,
                 name="historical_features_lstm",
                 unroll=unroll_lstm,
+                dtype=dtype,
             )
             self.future_features_lstm = layers.LSTM(
                 hidden_layer_size,
                 return_sequences=True,
                 name="future_features_lstm",
                 unroll=unroll_lstm,
+                dtype=dtype,
             )
         self.temporal_decoder = TemporalFusionDecoder(
             num_attention_heads=num_attention_heads,
@@ -188,14 +194,32 @@ class TemporalFusionTransformer(tf.keras.Model):
             dict(inputs=future_inputs, context=static_context["enrichment"])
         )
 
+        if historical_features.dtype == tf.bfloat16:
+            historical_features = tf.cast(historical_features, tf.float32)
+
+        state_h = static_context["state_h"]
+        state_c = static_context["state_c"]
+        if state_h.dtype == tf.bfloat16:
+            state_h = tf.cast(state_h, tf.float32)
+
+        if state_c.dtype == tf.bfloat16:
+            state_c = tf.cast(state_c, tf.float32)
+
         history_lstm, state_h, state_c = self.historical_features_lstm(
             historical_features,
-            initial_state=[static_context["state_h"], static_context["state_c"]],
+            initial_state=[state_h, state_c],
         )
-
         future_lstm = self.future_features_lstm(
             future_features, initial_state=[state_h, state_c]
         )
+
+        history_lstm = tf.cast(history_lstm, self.dtype_policy.compute_dtype)
+        future_lstm = tf.cast(future_lstm, self.dtype_policy.compute_dtype)
+        historical_features = tf.cast(
+            historical_features, self.dtype_policy.compute_dtype
+        )
+        future_features = tf.cast(future_features, self.dtype_policy.compute_dtype)
+
         decoder_in = dict(
             lstm_outputs=tf.concat([history_lstm, future_lstm], axis=1),
             input_embeddings=tf.concat([historical_features, future_features], axis=1),
@@ -716,7 +740,11 @@ class GatedResidualNetwork(layers.Layer):
             prng_seed=prng_seed,
             use_time_distributed=use_time_distributed,
         )
-        self.layer_norm = layers.LayerNormalization()
+        if self.dtype_policy.name == "mixed_bfloat16":
+            dtype = tf.keras.mixed_precision.Policy("float32")
+        else:
+            dtype = None
+        self.layer_norm = layers.LayerNormalization(dtype=dtype)
         if use_time_distributed:
             self.pre_elu_dense = layers.TimeDistributed(self.pre_elu_dense)
             self.context_dense = layers.TimeDistributed(self.context_dense)
@@ -763,6 +791,7 @@ class GatedResidualNetwork(layers.Layer):
         x = self.linear_dense(x)
         x, gate = self.gated_linear_unit(x)
         x = self.layer_norm(x + x_skip)
+        x = tf.cast(x, self.dtype_policy.compute_dtype)
         return x, gate
 
     def get_config(self) -> Dict[str, ...]:
@@ -942,10 +971,14 @@ class TemporalFusionDecoder(layers.Layer):
             prng_seed=prng_seed,
             use_time_distributed=True,
         )
+        if self.dtype_policy.name == "mixed_bfloat16":
+            dtype = tf.keras.mixed_precision.Policy("float32")
+        else:
+            dtype = None
 
-        self.layer_norm_1 = layers.LayerNormalization()
-        self.layer_norm_2 = layers.LayerNormalization()
-        self.layer_norm_3 = layers.LayerNormalization()
+        self.layer_norm_1 = layers.LayerNormalization(dtype=dtype)
+        self.layer_norm_2 = layers.LayerNormalization(dtype=dtype)
+        self.layer_norm_3 = layers.LayerNormalization(dtype=dtype)
 
         self.grn_1 = GatedResidualNetwork(
             hidden_layer_size,
@@ -974,6 +1007,7 @@ class TemporalFusionDecoder(layers.Layer):
         """
         lstm_outputs, _ = self.glu_1(inputs["lstm_outputs"])
         temporal_features = self.layer_norm_1(lstm_outputs + inputs["input_embeddings"])
+        temporal_features = tf.cast(temporal_features, self.dtype_policy.compute_dtype)
         # Static enrichment layers
         expanded_static_context = tf.expand_dims(inputs["context_vector"], axis=1)
 
