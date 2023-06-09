@@ -84,7 +84,7 @@ class QuantileLoss(Loss):
                 )
         self.quantiles = tf.constant(quantiles)
         self.output_size = tf.constant(output_size)
-        self.n_quantiles = len(quantiles)
+        self.n_quantiles = tf.constant(len(quantiles))
 
     def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
         """
