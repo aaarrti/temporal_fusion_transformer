@@ -1,4 +1,6 @@
 import tensorflow as tf
+from absl.testing import parameterized
+from keras.utils.tf_utils import can_jit_compile
 from temporal_fusion_transformer.modeling import (
     TemporalFusionTransformer,
     StaticCovariatesEncoder,
@@ -6,7 +8,14 @@ from temporal_fusion_transformer.modeling import (
     TemporalVariableSelectionNetwork,
     TemporalFusionDecoder,
 )
-from absl.testing import parameterized
+from temporal_fusion_transformer.experiments import (
+    ElectricityExperiment,
+    ModelParams,
+    FixedParams,
+)
+from temporal_fusion_transformer.quantile_loss import QuantileLoss
+from temporal_fusion_transformer.utils import load_data_from_archive
+
 
 static_categories_sizes = [2, 2]
 known_categories_sizes = [4]
@@ -162,4 +171,113 @@ def make_x_batch():
         known_real=tf.ones((8, 30, 3), dtype=tf.float32),
         known_categorical=tf.ones((8, 30, 2), dtype=tf.int32),
         observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
+    )
+
+
+class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
+    def setUp(self):
+        train_ds = load_data_from_archive("tests/assets/electricity/train.npz")
+        val_ds = load_data_from_archive("tests/assets/electricity/validation.npz")
+
+        self.train_ds = tf.data.Dataset.from_tensors(train_ds)
+        self.val_ds = tf.data.Dataset.from_tensors(val_ds)
+
+    @parameterized.parameters(
+        [
+            (
+                "float32",
+                False,
+            ),
+            (
+                "float16",
+                False,
+            ),
+            (
+                "mixed_float16",
+                False,
+            ),
+            (
+                "mixed_bfloat16",
+                False,
+            ),
+            (
+                "float16",
+                False,
+            ),
+            (
+                "bfloat16",
+                False,
+            ),
+            (
+                "float32",
+                True,
+            ),
+            (
+                "float16",
+                True,
+            ),
+            (
+                "mixed_float16",
+                True,
+            ),
+            (
+                "mixed_bfloat16",
+                True,
+            ),
+            (
+                "float16",
+                True,
+            ),
+            (
+                "bfloat16",
+                True,
+            ),
+        ]
+    )
+    def test_electricity(self, policy, unroll_lstm):
+        tf.keras.mixed_precision.set_global_policy(policy)
+        train_ds = self.train_ds.map(
+            lambda i: make_input_tuple(
+                i, tf.keras.mixed_precision.global_policy().compute_dtype
+            )
+        )
+        val_ds = self.val_ds.map(
+            lambda i: make_input_tuple(
+                i, tf.keras.mixed_precision.global_policy().compute_dtype
+            )
+        )
+
+        hp: ModelParams = ElectricityExperiment.default_params
+        fp: FixedParams = ElectricityExperiment.fixed_params
+
+        model = TemporalFusionTransformer(
+            static_categories_sizes=fp.static_categories_sizes,
+            known_categories_sizes=fp.known_categories_sizes,
+            num_encoder_steps=fp.num_encoder_steps,
+            hidden_layer_size=hp.hidden_layer_size,
+            num_attention_heads=hp.num_attention_heads,
+            unroll_lstm=unroll_lstm,
+        )
+        model.compile(
+            tf.keras.optimizers.Adam(jit_compile=can_jit_compile()),
+            loss=QuantileLoss(model.quantiles),
+            metrics=[],
+            jit_compile=can_jit_compile(),
+        )
+        history = model.fit(train_ds, validation_data=val_ds).history
+
+        assert "val_loss" in history
+        tf.debugging.check_numerics(history["val_loss"], "Test Failed.")
+
+        assert "loss" in history
+        tf.debugging.check_numerics(history["loss"], "Test Failed.")
+
+
+def make_input_tuple(data, dtype):
+    return (
+        dict(
+            static=data["inputs_static"],
+            known_real=tf.cast(data["inputs_known_real"], dtype),
+        ),
+        tf.cast(data["outputs"], dtype),
     )

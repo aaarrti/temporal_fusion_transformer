@@ -13,18 +13,14 @@ from typing import (
     ClassVar,
     Mapping,
     DefaultDict,
-    TypeVar,
-    Hashable,
-    Callable,
 )
 
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 from absl import logging
 from keras_pbar import keras_pbar
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.utils import gen_batches
+from temporal_fusion_transformer.utils import map_dict, filter_dict
 
 
 class classproperty(property):
@@ -73,6 +69,18 @@ class ModelParams(NamedTuple):
     max_gradient_norm: float
     batch_size: int
     dropout_rate: float
+
+
+class DatasetSplit(NamedTuple):
+    train: Dict[str, np.ndarray]
+    validation: Dict[str, np.ndarray]
+    test: Dict[str, np.ndarray]
+
+
+class ScalersSplit(NamedTuple):
+    real: Dict[str, Dict[str, np.ndarray]]
+    categorical: Dict[str, Dict[str, np.ndarray]]
+    target: Dict[str, Dict[str, np.ndarray]]
 
 
 class Experiment(ABC):
@@ -267,7 +275,7 @@ class ElectricityExperiment(Experiment):
     @classmethod
     def from_raw_csv(
         cls, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+    ) -> Tuple[DatasetSplit, ScalersSplit]:
         """
         Read raw CSV, pre-process it, create TF dataset. You probably will want to execute it only once,
         and then write dataset to local filesystem (or mb even create squshFS image).
@@ -459,8 +467,13 @@ class ElectricityExperiment(Experiment):
 
         train_ds = apply_fn(train_df)
         validation_ds = apply_fn(validation_df)
-        test_ds = apply_fn(test_df)
-        return train_ds, validation_ds, test_ds
+        test_ds = apply_fn(test_df, save_only_future_steps=False)
+
+        ds_split = DatasetSplit(train=train_ds, validation=validation_ds, test=test_ds)
+        scalers_params = ScalersSplit(
+            real=real_scalers, categorical=categorical_scalers, target=target_scalers
+        )
+        return ds_split, scalers_params
 
 
 def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
@@ -471,36 +484,6 @@ def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
             [x[i : time_steps - (lags - 1) + i, :] for i in range(lags)], axis=1
         )
     logging.error("time_steps < lags, this is not expected.")
-
-
-def export_sharded_dataset(
-    data: Mapping[str, np.ndarray], export_path: str, shard_size: int = 100_000
-):
-    """
-    Split dataset in shards of size `shard_size`, and write the as TF protobuf to local file system.
-
-    Parameters
-    ----------
-    data
-    export_path
-    shard_size
-
-    Returns
-    -------
-
-    """
-    n = len(data["identifier"])
-    batches = gen_batches(n, shard_size)
-
-    n_batches = n // shard_size
-    if n % shard_size != 0:
-        n_batches += 1
-
-    for index, shard_slice in keras_pbar(enumerate(batches), n_batches):
-        shard = map_dict(
-            data, value_mapper=lambda v: v[shard_slice.start : shard_slice.stop]
-        )
-        tf.data.Dataset.from_tensors(shard).save(f"{export_path}/{index}")
 
 
 def normalize_data(
@@ -538,6 +521,7 @@ def make_np_array_dict(
     col_mapping: Mapping[str, str | Sequence[str]],
     total_time_steps: int,
     num_encoder_steps: int,
+    save_only_future_steps=True,
 ) -> Dict[str, np.ndarray]:
     logging.debug("Grouping and batching data.")
     df.sort_values(by=[id_column, time_col], inplace=True)
@@ -559,77 +543,8 @@ def make_np_array_dict(
     for k in data_map:
         data_map[k] = np.concatenate(data_map[k], axis=0)
     # Save only future steps
-    data_map["outputs"] = data_map["outputs"][:, num_encoder_steps:]
+    if save_only_future_steps:
+        data_map["outputs"] = data_map["outputs"][:, num_encoder_steps:]
     # Static are not time varying
     data_map["inputs_static"] = data_map["inputs_static"][:, 0]
     return data_map
-
-
-T = TypeVar("T")
-R = TypeVar("R")
-V = TypeVar("V")
-K = TypeVar("K", bound=Hashable, covariant=True)
-
-
-def map_dict(
-    dictionary: Mapping[K, T],
-    *,
-    value_mapper: Callable[[T], R] | None = None,
-    key_mapper: Callable[[K], R] | None = None,
-) -> Dict[K | R, V | R]:
-    """
-    Applies func to values in dict.
-    Kinda like tf.nest.map_structure or jax.tree_util.tree_map, but preserves keys.
-    Additionally, if provided can also map keys.
-    """
-
-    def identity(x: T) -> T:
-        return x
-
-    if value_mapper is None:
-        value_mapper = identity
-
-    if key_mapper is None:
-        key_mapper = identity
-
-    result = {}
-    for k, v in dictionary.items():
-        new_key = key_mapper(k)
-        if isinstance(v, Mapping):
-            new_value = map_dict(
-                dictionary[k], value_mapper=value_mapper, key_mapper=key_mapper
-            )
-        else:
-            new_value = value_mapper(v)
-        result[new_key] = new_value
-    return result
-
-
-def filter_dict(
-    dictionary: Mapping[K, V],
-    *,
-    key_filter: Callable[[K], bool] | None = None,
-    value_filter: Callable[[V], bool] | None = None,
-) -> Dict[K, V]:
-    """
-    Filters dictionary based on key or values.
-    Kinda like jax.tree_util.tree_filter, but preserves keys.
-    """
-
-    def tautology(_) -> bool:
-        # Tautology is an expression, which is always true.
-        return True
-
-    if key_filter is None:
-        key_filter = tautology
-
-    if value_filter is None:
-        value_filter = tautology
-
-    result = {}
-
-    for k, v in dictionary.items():
-        if key_filter(k) and value_filter(v):
-            result[k] = v
-
-    return result
