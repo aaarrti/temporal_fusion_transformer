@@ -20,16 +20,7 @@ import pandas as pd
 from absl import logging
 from keras_pbar import keras_pbar
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from temporal_fusion_transformer.utils import map_dict, filter_dict
-
-
-class classproperty(property):
-    def __init__(self, getter):
-        super().__init__()
-        self.getter = getter
-
-    def __get__(self, instance, owner):  # noqa
-        return self.getter(owner)
+from temporal_fusion_transformer.utils import filter_dict
 
 
 class DataTypes(IntEnum):
@@ -97,12 +88,12 @@ class Experiment(ABC):
 
     """
 
-    @classproperty
+    @property
     @abstractmethod
     def column_schema(self) -> Dict[str, SchemaEntry | List[SchemaEntry]]:
         raise NotImplementedError
 
-    @classproperty
+    @property
     @abstractmethod
     def default_params(self) -> ModelParams:
         """
@@ -121,7 +112,7 @@ class Experiment(ABC):
         """
         raise NotImplementedError
 
-    @classproperty
+    @property
     @abstractmethod
     def fixed_params(self) -> FixedParams:
         """
@@ -137,8 +128,7 @@ class Experiment(ABC):
         """
         raise NotImplementedError
 
-    @classmethod
-    def get_single_col_by_input_type(cls, input_type: InputTypes) -> str:
+    def get_single_col_by_input_type(self, input_type: InputTypes) -> str:
         """
         Returns name of single column.
 
@@ -150,16 +140,15 @@ class Experiment(ABC):
         Returns
         -------
         """
-        col = cls.get_cols_by_input_type(input_type)
+        col = self.get_cols_by_input_type(input_type)
 
         if len(col) != 1:
             raise ValueError("Invalid number of columns for {}".format(input_type))
 
         return col[0]
 
-    @classmethod
     def get_cols_by_input_type(
-        cls,
+        self,
         input_type: InputTypes,
         excluded_data_types: Sequence[DataTypes] | None = None,
     ) -> List[str]:
@@ -171,11 +160,10 @@ class Experiment(ABC):
                 return any(map(filter_func, i))
             return i.input_type == input_type and i.data_type not in excluded_data_types
 
-        return list(filter_dict(cls.column_schema, value_filter=filter_func).keys())
+        return list(filter_dict(self.column_schema, value_filter=filter_func).keys())
 
-    @classmethod
     def get_cols_by_data_type(
-        cls,
+        self,
         data_type: DataTypes,
         excluded_input_types: Sequence[InputTypes] | None = None,
     ) -> List[str]:
@@ -202,7 +190,7 @@ class Experiment(ABC):
                 return any(map(filter_func, i))
             return i.input_type not in excluded_input_types and i.data_type == data_type
 
-        return list(filter_dict(cls.column_schema, value_filter=filter_func).keys())
+        return list(filter_dict(self.column_schema, value_filter=filter_func).keys())
 
 
 class ElectricityExperiment(Experiment):
@@ -227,7 +215,7 @@ class ElectricityExperiment(Experiment):
 
     test_boundary: ClassVar[int] = 1339
 
-    @classproperty
+    @property
     def column_schema(self) -> Dict[str, SchemaEntry | List[SchemaEntry]]:
         return {
             "id": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.ID),
@@ -243,7 +231,7 @@ class ElectricityExperiment(Experiment):
             ),
         }
 
-    @classproperty
+    @property
     def default_params(self) -> ModelParams:
         return ModelParams(
             hidden_layer_size=160,
@@ -254,7 +242,7 @@ class ElectricityExperiment(Experiment):
             learning_rate=1e-3,
         )
 
-    @classproperty
+    @property
     def fixed_params(self) -> FixedParams:
         return FixedParams(
             num_encoder_steps=7 * 24,
@@ -264,17 +252,16 @@ class ElectricityExperiment(Experiment):
             static_categories_sizes=[369],
         )
 
-    @classproperty
+    @property
     def num_encoder_steps(self) -> int:
         return self.fixed_params.num_encoder_steps
 
-    @classproperty
+    @property
     def total_time_steps(self) -> int:
         return self.fixed_params.total_time_steps
 
-    @classmethod
-    def from_raw_csv(
-        cls, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
+    def read_raw_csv(
+        self, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
     ) -> Tuple[DatasetSplit, ScalersSplit]:
         """
         Read raw CSV, pre-process it, create TF dataset. You probably will want to execute it only once,
@@ -308,14 +295,14 @@ class ElectricityExperiment(Experiment):
         -------
 
         >>> from temporal_fusion_transformer.experiments import ElectricityExperiment
-        >>> experiment = ElectricityExperiment.from_raw_csv("data.csv")
+        >>> experiment = ElectricityExperiment.read_raw_csv("data.csv")
         >>> train_ds, val_ds = experiment.train_test_split()
         >>> train_ds.save("data/train")
         >>> val_ds.save("data/validation")
         """
         logging.info(f"Loading electricity dataset from {csv_path}")
         # This code was copy pasted from original implementation, and I have very little idea
-        # what is it doing. TODO: rewrite using polars.
+        # what is it doing. TODO: rewrite using polars or keras.csv_dataset.
         df = pd.read_csv(csv_path, index_col=0, sep=";", decimal=",")
         df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
@@ -393,33 +380,34 @@ class ElectricityExperiment(Experiment):
         # 3  17547     2.855330  ...                        2                 3
         # 4  17548     2.538071  ...                        2                 4
         # ----------- collect all column types ---------------------
-        id_column = cls.get_single_col_by_input_type(InputTypes.ID)
-        target_column = cls.get_single_col_by_input_type(InputTypes.TARGET)
+        id_column = self.get_single_col_by_input_type(InputTypes.ID)
+        target_column = self.get_single_col_by_input_type(InputTypes.TARGET)
         # Format real scales
-        real_inputs = cls.get_cols_by_data_type(
+        real_inputs = self.get_cols_by_data_type(
             DataTypes.REAL_VALUED, {InputTypes.ID, InputTypes.TIME}
         )
-        categorical_inputs = cls.get_cols_by_data_type(
+        categorical_inputs = self.get_cols_by_data_type(
             DataTypes.CATEGORICAL, {InputTypes.ID, InputTypes.TIME}
         )
-        time_col = cls.get_single_col_by_input_type(InputTypes.TIME)
-        input_static_cols = cls.get_cols_by_input_type(InputTypes.STATIC_INPUT)
-        input_observed = cls.get_cols_by_input_type(InputTypes.OBSERVED_INPUT)
-        input_known_real = cls.get_cols_by_input_type(
+        time_col = self.get_single_col_by_input_type(InputTypes.TIME)
+        input_static_cols = self.get_cols_by_input_type(InputTypes.STATIC_INPUT)
+        input_observed = self.get_cols_by_input_type(InputTypes.OBSERVED_INPUT)
+        input_known_real = self.get_cols_by_input_type(
             InputTypes.KNOWN_INPUT, {DataTypes.CATEGORICAL, DataTypes.DATE}
         )
-        input_known_categorical = cls.get_cols_by_input_type(
+        input_known_categorical = self.get_cols_by_input_type(
             InputTypes.KNOWN_INPUT, {DataTypes.REAL_VALUED, DataTypes.DATE}
         )
 
         # Initialize scalers/label encoders.
+        # TODO use tf.keras.FeatureSpace here instead.
         real_scalers: Dict[str, StandardScaler] = {}
         target_scalers: Dict[str, StandardScaler] = {}
         categorical_scalers: Dict[str, LabelEncoder] = {}
         num_classes = {}
         logging.debug("Fitting scalers.")
         for identifier, sliced in keras_pbar(df.groupby(id_column)):
-            if len(sliced) >= cls.total_time_steps:
+            if len(sliced) >= self.total_time_steps:
                 data = sliced[real_inputs].values
                 targets = sliced[[target_column]].values
                 real_scalers[identifier] = StandardScaler().fit(data)
@@ -439,7 +427,7 @@ class ElectricityExperiment(Experiment):
             categorical_scalers=categorical_scalers,
             real_scalers=real_scalers,
             real_inputs=real_inputs,
-            total_time_steps=cls.total_time_steps,
+            total_time_steps=self.total_time_steps,
         )
 
         train_df = apply_fn(train_df)
@@ -461,8 +449,8 @@ class ElectricityExperiment(Experiment):
             id_column=id_column,
             time_col=time_col,
             col_mapping=col_mapping,
-            total_time_steps=cls.total_time_steps,
-            num_encoder_steps=cls.num_encoder_steps,
+            total_time_steps=self.total_time_steps,
+            num_encoder_steps=self.num_encoder_steps,
         )
 
         train_ds = apply_fn(train_df)
@@ -532,6 +520,7 @@ def make_np_array_dict(
             cols = col_mapping[k]
             if len(cols) == 0:
                 continue
+            # TODO use tf.keras.utils.time_series_dataset here
             arr = batch_single_entity(sliced[cols].copy(), total_time_steps)
             if arr.dtype == np.int64:
                 arr = arr.astype(np.int32)

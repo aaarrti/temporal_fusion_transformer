@@ -15,7 +15,7 @@ flags.DEFINE_string("data_path", default="../data", help=None)
 
 
 def main(_):
-    ds, scalers = ElectricityExperiment.from_raw_csv("data/electricity/LD2011_2014.txt")
+    ds, scalers = ElectricityExperiment.read_raw_csv("data/electricity/LD2011_2014.txt")
     ids = (
         set(ds.train["identifier"].reshape(-1))
         .union(set(ds.validation["identifier"].reshape(-1)))

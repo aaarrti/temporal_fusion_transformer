@@ -1,11 +1,25 @@
 from __future__ import annotations
 
-from typing import Mapping, Dict, TypeVar, Hashable, Callable, Sequence, Tuple, Any
+from typing import (
+    Mapping,
+    Dict,
+    TypeVar,
+    Hashable,
+    Callable,
+    Sequence,
+    Tuple,
+    Any,
+    TYPE_CHECKING,
+)
 
 import numpy as np
 import tensorflow as tf
 from keras_pbar import keras_pbar
 from sklearn.utils import gen_batches
+
+if TYPE_CHECKING:
+    from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
+    from temporal_fusion_transformer.experiments import Experiment
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -24,9 +38,6 @@ def map_dict(
     Kinda like tf.nest.map_structure or jax.tree_util.tree_map, but preserves keys.
     Additionally, if provided can also map keys.
     """
-
-    def identity(x: T) -> T:
-        return x
 
     if value_mapper is None:
         value_mapper = identity
@@ -203,3 +214,25 @@ def unflatten_dict(xs: Mapping[str, ...], sep: str = "/") -> Dict[str, ...]:
             cursor = cursor[key]
         cursor[path[-1]] = value
     return result
+
+
+def identity(x: T) -> T:
+    return x
+
+
+def assert_rank(x, rank, **kwargs):
+    tf.debugging.assert_rank(x, rank, **kwargs)
+
+
+def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransformer:
+    from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
+
+    return TemporalFusionTransformer(
+        static_categories_sizes=experiment.fixed_params.static_categories_sizes,
+        known_categories_sizes=experiment.fixed_params.known_categories_sizes,
+        num_encoder_steps=experiment.fixed_params.num_encoder_steps,
+        hidden_layer_size=experiment.default_params.hidden_layer_size,
+        num_attention_heads=experiment.default_params.num_attention_heads,
+        dropout_rate=experiment.default_params.dropout_rate,
+        **kwargs,
+    )
