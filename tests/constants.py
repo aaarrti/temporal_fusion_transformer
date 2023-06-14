@@ -1,2 +1,1 @@
-QUANTILES = [0.1, 0.5, 0.9]
 PRNG_SEED = 42

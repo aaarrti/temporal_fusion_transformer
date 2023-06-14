@@ -16,6 +16,7 @@ import numpy as np
 import tensorflow as tf
 from keras_pbar import keras_pbar
 from sklearn.utils import gen_batches
+from tensorflow.python.types.core import TensorLike
 
 if TYPE_CHECKING:
     from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
@@ -220,10 +221,6 @@ def identity(x: T) -> T:
     return x
 
 
-def assert_rank(x, rank, **kwargs):
-    tf.debugging.assert_rank(x, rank, **kwargs)
-
-
 def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransformer:
     from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
 
@@ -236,3 +233,20 @@ def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransforme
         dropout_rate=experiment.default_params.dropout_rate,
         **kwargs,
     )
+
+
+def as_tensor(arr: TensorLike | tf.Tensor) -> tf.Tensor:
+    if not isinstance(arr, tf.Tensor):
+        return tf.convert_to_tensor(arr)
+    else:
+        return arr
+
+
+def assert_quantile_values(quantiles: Sequence[float] | None):
+    if quantiles is None:
+        return
+    for quantile in quantiles:
+        if quantile < 0 or quantile > 1:
+            raise ValueError(
+                f"Illegal quantile value={quantile}! Values should be between 0 and 1."
+            )

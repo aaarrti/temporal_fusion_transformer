@@ -537,3 +537,6 @@ def make_np_array_dict(
     # Static are not time varying
     data_map["inputs_static"] = data_map["inputs_static"][:, 0]
     return data_map
+
+
+electricity_experiment = ElectricityExperiment()

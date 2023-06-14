@@ -1,30 +1,37 @@
 from __future__ import annotations
-from typing import Mapping, Sequence, Callable, Protocol, runtime_checkable
+
+from typing import Sequence, Callable, Protocol, runtime_checkable, TypeVar
 
 import matplotlib.pyplot as plt
-import matplotx
 import numpy as np
 import tensorflow as tf
+from jaxtyping import Float
+
+T = TypeVar("T")
+K = TypeVar("K")
 
 
 @runtime_checkable
-class SupportGetItem(Protocol):
-    def __getitem__(self, item):
+class SupportGetItem(Protocol[T]):
+    def __getitem__(self, item: int) -> T:
         ...
 
 
 def plot_predictions(
-    predicted_outputs,
-    future_timestamps,
-    num_outputs,
-    quantiles,
-    future_outputs,
-    past_time_stamps,
-    past_outputs,
+    predicted_outputs: Float[np.ndarray, "batch time_steps n*q"],
+    future_timestamps: Float[np.ndarray, "batch time_steps n"],
+    num_outputs: int,  # n
+    quantiles: Float[np.ndarray, "q"],
+    future_outputs: Float[np.ndarray, "batch time_steps n"],
+    past_time_stamps: Float[np.ndarray, "batch time_steps"],
+    past_outputs: Float[np.ndarray, "batch time_steps n"],
     output_labels: Sequence[str] | None = None,
-    target_scaler: Callable[[str, np.ndarray], np.ndarray] = None,
-    **kwargs,
-):
+    target_scaler: Callable[
+        [str, Float[np.ndarray, "batch*time_steps*n"]],
+        Float[np.ndarray, "batch*time_steps*n"],
+    ]
+    | None = None,
+) -> plt.Figure:
     """
 
     Parameters
@@ -75,7 +82,7 @@ def plot_predictions(
     past_time_stamps = np.take(np.reshape(past_time_stamps, -1), past_sort_idx)
 
     fig: plt.Figure
-    fig, axs = plt.subplots(num_outputs, 1, sharex="row", **kwargs)
+    fig, axs = plt.subplots(num_outputs, 1, sharex="row")
 
     axs = wrap_axes(axs)
     for i, label in enumerate(output_labels):
@@ -120,10 +127,11 @@ def plot_predictions(
     return fig
 
 
-def wrap_axes(axs):
+def wrap_axes(axs: plt.Axes | SupportGetItem[plt.Axes]) -> SupportGetItem[plt.Axes]:
     if not isinstance(axs, SupportGetItem):
         return [axs]
-    return axs
+    else:
+        return axs
 
 
 def plot_feature_importance():

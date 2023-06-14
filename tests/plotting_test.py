@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 from temporal_fusion_transformer.plotting import plot_predictions
-from tests.constants import PRNG_SEED, QUANTILES
+from tests.constants import PRNG_SEED
 
 
 class PlottingTest(tf.test.TestCase):
@@ -17,7 +17,7 @@ class PlottingTest(tf.test.TestCase):
             predicted_outputs=self.predicted_outputs,
             future_timestamps=self.future_time,
             num_outputs=2,
-            quantiles=QUANTILES,
+            quantiles=[0.1, 0.5, 0.9],
             past_outputs=self.past_outputs,
             past_time_stamps=self.past_time,
             future_outputs=self.future_outputs,

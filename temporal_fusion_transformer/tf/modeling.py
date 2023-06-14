@@ -514,6 +514,7 @@ class StaticCovariatesEncoder(layers.Layer):
             prng_seed=prng_seed,
             use_time_distributed=False,
         )
+        self.flatten = layers.Flatten()
 
     def build(self, input_shape: tf.TensorShape):
         self.num_static_inputs = input_shape[1]
@@ -561,7 +562,7 @@ class StaticCovariatesEncoder(layers.Layer):
                 - state_h: has shape (batch_size, hidden_layer_size) and must be used together with `state_c` as initial context for LSTM cells.
         """
 
-        flat_x = flatten_over_batch(inputs)
+        flat_x = self.flatten(inputs)
 
         mlp_outputs, _ = self.grn(flat_x)
         sparse_weights = tf.nn.softmax(mlp_outputs)
@@ -1065,9 +1066,3 @@ def make_causal_attention_mask(self_attn_inputs: tf.Tensor) -> tf.Tensor:
     bs = tf.shape(self_attn_inputs)[:1]
     mask = tf.cumsum(tf.eye(len_s, batch_shape=bs), 1)
     return mask
-
-
-@tf.function(reduce_retracing=True, jit_compile=can_jit_compile(True))
-def flatten_over_batch(arr: tf.Tensor) -> tf.Tensor:
-    batch_size = tf.shape(arr)[0]
-    return tf.reshape(arr, (batch_size, -1))

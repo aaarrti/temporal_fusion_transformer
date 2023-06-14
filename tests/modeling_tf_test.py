@@ -8,13 +8,9 @@ from temporal_fusion_transformer.tf.modeling import (
     TemporalVariableSelectionNetwork,
     TemporalFusionDecoder,
 )
-from temporal_fusion_transformer.experiments import (
-    ElectricityExperiment,
-    ModelParams,
-    FixedParams,
-)
-from temporal_fusion_transformer.tf.quantile_loss import QuantileLoss
-from temporal_fusion_transformer.utils import load_data_from_archive
+from temporal_fusion_transformer.experiments import electricity_experiment
+from temporal_fusion_transformer.tf.quantile_loss import QuantileLoss, QuantileRMSE
+from temporal_fusion_transformer.utils import load_data_from_archive, make_tft_model
 
 from tests.constants import PRNG_SEED
 
@@ -246,23 +242,15 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
                 i, tf.keras.mixed_precision.global_policy().compute_dtype
             )
         )
-
-        hp: ModelParams = ElectricityExperiment.default_params
-        fp: FixedParams = ElectricityExperiment.fixed_params
-
-        model = TemporalFusionTransformer(
-            static_categories_sizes=fp.static_categories_sizes,
-            known_categories_sizes=fp.known_categories_sizes,
-            num_encoder_steps=fp.num_encoder_steps,
-            hidden_layer_size=hp.hidden_layer_size,
-            num_attention_heads=hp.num_attention_heads,
+        model = make_tft_model(
+            electricity_experiment,
             unroll_lstm=unroll_lstm,
         )
         model.compile(
-            tf.keras.optimizers.Adam(jit_compile=can_jit_compile()),
+            tf.keras.optimizers.Adam(jit_compile=can_jit_compile(True)),
             loss=QuantileLoss(model.quantiles),
-            metrics=[],
-            jit_compile=can_jit_compile(),
+            metrics=[QuantileRMSE(model.quantiles)],
+            jit_compile=can_jit_compile(True),
         )
         history = model.fit(train_ds, validation_data=val_ds).history
 

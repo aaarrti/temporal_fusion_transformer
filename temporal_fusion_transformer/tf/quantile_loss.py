@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from typing import Sequence, Dict
+from typing import Sequence
 
 import tensorflow as tf
-from keras.losses import Loss
-from keras.utils.tf_utils import can_jit_compile
 from jaxtyping import Float
+from keras.losses import LossFunctionWrapper
+from keras.metrics import MeanMetricWrapper
+from keras.utils.tf_utils import can_jit_compile
 
 
-class QuantileLoss(Loss):
+from temporal_fusion_transformer.utils import assert_quantile_values, as_tensor
+
+
+class QuantileLoss(LossFunctionWrapper):
     """
     Computes the combined quantile loss for specified quantiles.
 
@@ -19,90 +23,39 @@ class QuantileLoss(Loss):
 
     def __init__(
         self,
-        quantiles: Sequence[int],
-        output_size: int = 1,
+        quantiles: Sequence[float] | None = None,
+        name: str = "quantile_loss",
         **kwargs,
     ):
-        """
-
-        Parameters
-        ----------
-        quantiles:
-            Quantiles to compute losses
-        output_size:
-        kwargs
-
-        """
-        super().__init__(**kwargs)
-        for quantile in quantiles:
-            if quantile < 0 or quantile > 1:
-                raise ValueError(
-                    f"Illegal quantile value={quantile}! Values should be between 0 and 1."
-                )
-        self.quantiles = tf.constant(quantiles)
-        self.output_size = tf.constant(output_size)
-        self.n_quantiles = tf.constant(len(quantiles))
-
-    def call(
-        self,
-        y_true: Float[tf.Tensor, "batch time_steps n"],
-        y_pred: Float[tf.Tensor, "batch time_steps n*q"],
-    ) -> Float[tf.Tensor, "batch time_steps"]:
-        """
-
-        Parameters
-        ----------
-        y_true:
-            Targets of shape (batch, time_steps, 1).
-        y_pred:
-            Predictions of shape (batch, time_steps, quantiles).
-
-        Returns
-        -------
-
-        """
-
-        y_true = tf.cast(y_true, y_pred.dtype)
-        quantiles = tf.cast(self.quantiles, y_pred.dtype)
-        tf.debugging.assert_rank(y_true, 3)
-
-        # loss = tf.TensorArray(
-        #    size=self.n_quantiles, dtype=y_pred.dtype, clear_after_read=True
-        # )
-        #
-        # for i in tf.range(self.n_quantiles):
-        #    indexes = tf.range(i * self.output_size, (i + 1) * self.output_size)
-        #    q_loss = quantile_loss(
-        #        y_true, tf.gather(y_pred, indexes, axis=-1), quantiles[i]
-        #    )
-        #    loss = loss.write(i, q_loss)
-        # FIXME
-        loss = [
-            quantile_loss(y_true, y_pred[..., 0:1], quantiles[0]),
-            quantile_loss(y_true, y_pred[..., 1:2], quantiles[1]),
-            quantile_loss(y_true, y_pred[..., 2:3], quantiles[1]),
-        ]
-        loss = tf.reduce_sum(loss, axis=0)
-        return loss
-
-    def get_config(self) -> Dict[str, ...]:
-        config = super().get_config()
-        config.update(
-            {
-                "quantiles": list(self.quantiles),
-                "output_size": int(self.output_size),
-                "accumulate_in_tensor_array": self.accumulate_in_tensor_array,
-            }
+        assert_quantile_values(quantiles)
+        if quantiles is None:
+            quantiles = [0.1, 0.5, 0.9]
+        super().__init__(
+            fn=quantile_loss, name=name, **kwargs, quantiles=as_tensor(quantiles)
         )
-        return config
+
+
+class QuantileRMSE(MeanMetricWrapper):
+    def __init__(
+        self,
+        quantiles: Sequence[float] | None = None,
+        name: str = "quantile_rmse",
+        **kwargs,
+    ):
+        assert_quantile_values(quantiles)
+        if quantiles is None:
+            quantiles = [0.1, 0.5, 0.9]
+        super().__init__(
+            **kwargs, quantiles=as_tensor(quantiles), name=name, fn=quantile_rmse
+        )
 
 
 @tf.function(reduce_retracing=True, jit_compile=can_jit_compile(True))
 def quantile_loss(
     y_true: Float[tf.Tensor, "batch time_steps n"],
-    y_pred: Float[tf.Tensor, "batch time_steps n"],
-    quantile: Float[tf.Tensor, "1"],
-) -> Float[tf.Tensor, "batch time_steps"]:
+    y_pred: Float[tf.Tensor, "batch time_steps n*q"],
+    quantiles: Float[tf.Tensor, "q"],
+) -> Float[tf.Tensor, "batch"]:
     """
     Parameters
     ----------
@@ -110,7 +63,7 @@ def quantile_loss(
         Targets
     y_pred:
         Predictions
-    quantile:
+    quantiles:
         Quantile to use for loss calculations (between 0 & 1)
 
     Returns
@@ -118,11 +71,57 @@ def quantile_loss(
     loss:
         Loss value.
     """
-    prediction_underflow = y_true - y_pred
-    positive_prediction_underflow = tf.maximum(prediction_underflow, 0)
-    negative_prediction_underflow = tf.maximum(-prediction_underflow, 0)
-    q_loss = tf.add(
-        quantile * positive_prediction_underflow,
-        (1 - quantile) * negative_prediction_underflow,
+
+    y_true = tf.cast(y_true, y_pred.dtype)
+    quantiles = tf.cast(quantiles, y_pred.dtype)
+
+    y_pred = unsqueze_quantiles(y_true, y_pred, quantiles)
+    prediction_underflow = y_true[..., tf.newaxis] - y_pred
+
+    return tf.reduce_mean(
+        # Average over time-steps.
+        tf.reduce_sum(
+            # Sum over quantiles and outputs.
+            tf.add(
+                quantiles * tf.maximum(prediction_underflow, 0),
+                (1 - quantiles) * tf.maximum(-prediction_underflow, 0),
+            ),
+            axis=[-1, -2],
+        ),
+        axis=-1,
     )
-    return tf.reduce_sum(q_loss, axis=-2)
+
+
+@tf.function(jit_compile=can_jit_compile(True), reduce_retracing=True)
+def quantile_rmse(
+    y_true: Float[tf.Tensor, "batch time_steps n"],
+    y_pred: Float[tf.Tensor, "batch time_steps n*q"],
+    quantiles: Float[tf.Tensor, "q"],
+) -> Float[tf.Tensor, "batch"]:
+    y_true = tf.cast(y_true, y_pred.dtype)
+    quantiles = tf.cast(quantiles, y_pred.dtype)
+    y_pred = unsqueze_quantiles(y_true, y_pred, quantiles)
+    # Calculate squared differences, average sum across quantiles.
+    squared_diff = tf.reduce_sum(
+        tf.square(y_true[..., tf.newaxis] - y_pred) * quantiles, axis=-1
+    )
+    # Average squared differences across time steps and outputs.
+    mean_squared_diff = tf.reduce_mean(squared_diff, axis=[-1, -2])
+    # Calculate RMSE
+    rmse = tf.sqrt(mean_squared_diff)
+    return rmse
+
+
+@tf.function(jit_compile=can_jit_compile(True), reduce_retracing=True)
+def unsqueze_quantiles(
+    y_true: Float[tf.Tensor, "batch time_steps n"],
+    y_pred: Float[tf.Tensor, "batch time_steps n*q"],
+    quantiles: Float[tf.Tensor, "q"],
+) -> Float[tf.Tensor, "batch time_steps n q"]:
+    tf.debugging.assert_rank(y_true, 3)
+    tf.debugging.assert_rank(y_pred, 3)
+    n_quantiles = len(quantiles)
+    tf.debugging.assert_shapes(
+        [(y_true, ("N", "T", "D")), (y_pred, ("N", "T", f"D*{str(int(n_quantiles))}"))]
+    )
+    return tf.reshape(y_pred, tf.concat([tf.shape(y_true), [n_quantiles]], axis=0))
