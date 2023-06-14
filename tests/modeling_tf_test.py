@@ -20,6 +20,7 @@ known_categories_sizes = [4]
 n_time_steps = 30
 batch_size = 8
 hidden_layer_size = 5
+tf.config.run_functions_eagerly(True)
 
 
 class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):

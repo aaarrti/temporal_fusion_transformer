@@ -4,6 +4,7 @@ from typing import Tuple, Dict, Sequence, Mapping
 
 import keras.layers as layers
 import tensorflow as tf
+from jaxtyping import Float, Int
 from keras.utils.tf_utils import can_jit_compile
 
 
@@ -142,8 +143,19 @@ class TemporalFusionTransformer(tf.keras.Model):
         )
 
     def call(
-        self, inputs: Mapping[str, tf.Tensor], **kwargs
-    ) -> tf.Tensor | Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
+        self,
+        inputs: Mapping[
+            str,
+            Int[tf.Tensor, "batch s"]
+            | Float[tf.Tensor, "batch time o"]
+            | Float[tf.Tensor, "batch time r"]
+            | Int[tf.Tensor, "batch time c"],
+        ],
+        **kwargs,
+    ) -> (
+        Float[tf.Tensor, "batch time k"]
+        | Tuple[Float[tf.Tensor, "batch time k"], Dict[str, tf.Tensor]]
+    ):
         """
 
         Parameters
@@ -365,7 +377,17 @@ class TFTInputEmbedding(layers.Layer):
             for _ in range(self.num_observed_inputs)
         ]
 
-    def call(self, inputs: Mapping[str, tf.Tensor], **kwargs) -> Dict[str, tf.Tensor]:
+    def call(
+        self,
+        inputs: Mapping[
+            str,
+            Int[tf.Tensor, "batch s"]
+            | Float[tf.Tensor, "batch time o"]
+            | Float[tf.Tensor, "batch time r"]
+            | Int[tf.Tensor, "batch time c"],
+        ],
+        **kwargs,
+    ) -> Dict[str, Float[tf.Tensor, "batch time n"]]:
         """
         This layer project all different inputs into the same latent space.
         Embedding is applied to categorical ones, and real-values ones are
@@ -535,7 +557,9 @@ class StaticCovariatesEncoder(layers.Layer):
             for _ in range(self.num_static_inputs)
         ]
 
-    def call(self, inputs: tf.Tensor, **kwargs) -> Dict[str, tf.Tensor]:
+    def call(
+        self, inputs: Float[tf.Tensor, "batch k n"], **kwargs
+    ) -> Dict[str, Float[tf.Tensor, "batch n"] | Float[tf.Tensor, "batch k 1"]]:
         """
         Create a static context out of static input embeddings.
         Static context is a (enrichment) vector, which must be added to other time varying inputs during
@@ -616,23 +640,6 @@ class GatedLinearUnit(layers.Layer):
         name: str = "glu",
         **kwargs,
     ):
-        """
-        Parameters
-        ----------
-        hidden_layer_size:
-            Latent space dimensionality.
-        dropout_rate:
-            Dropout rate passed down to keras.layer.Dropout.
-        prng_seed:
-            PRNG seed to be used for keras.layer.Dropout.
-
-        use_time_distributed:
-            Whether to apply across time axis.
-        name:
-            Name for layer.
-        kwargs:
-            Standard Keras layers' kwargs.
-        """
         super().__init__(name=name, **kwargs)
         # Save configurations.
         self.hidden_layer_size = hidden_layer_size
@@ -650,24 +657,14 @@ class GatedLinearUnit(layers.Layer):
             self.linear = layers.TimeDistributed(self.linear)
             self.activation = layers.TimeDistributed(self.activation)
 
-    def call(self, inputs: tf.Tensor, **kwargs) -> Tuple[tf.Tensor, tf.Tensor]:
-        """
-        Applies a Gated Linear Unit (GLU) to an input.
-
-        Parameters
-        ----------
-        inputs:
-            Input tensor for gating layer.
-        kwargs:
-            Standard Keras layers' kwargs, unused.
-
-        Returns
-        -------
-
-        retval:
-            Tuple of tensors for: (GLU output, gate)
-
-        """
+    def call(
+        self,
+        inputs: Float[tf.Tensor, "batch time_steps n"] | Float[tf.Tensor, "batch n"],
+        **kwargs,
+    ) -> Tuple[
+        Float[tf.Tensor, "batch time_steps n"] | Float[tf.Tensor, "batch m"],
+        Float[tf.Tensor, "batch time_steps n"] | Float[tf.Tensor, "batch m"],
+    ]:
         x = self.dropout(inputs)
         x_pre_activation = self.linear(x)
         x_gated = self.activation(x)
@@ -757,9 +754,17 @@ class GatedResidualNetwork(layers.Layer):
 
     def call(
         self,
-        inputs: tf.Tensor | Mapping[str, tf.Tensor],
+        inputs: Float[tf.Tensor, "batch n k"]
+        | Float[tf.Tensor, "batch n"]
+        | Mapping[str, Float[tf.Tensor, "batch * k"]],
         **kwargs,
-    ) -> Tuple[tf.Tensor, tf.Tensor]:
+    ) -> (
+        Tuple[
+            Float[tf.Tensor, "batch n k"],
+            Float[tf.Tensor, "batch n k"],
+        ]
+        | Tuple[Float[tf.Tensor, "batch n"], Float[tf.Tensor, "batch n"]]
+    ):
         """
         Applies the gated residual network (GRN) as defined in paper.
 
@@ -871,8 +876,16 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         ]
 
     def call(
-        self, inputs: Mapping[str, tf.Tensor], **kwargs
-    ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+        self,
+        inputs: Mapping[
+            str, Float[tf.Tensor, "batch n"] | Float[tf.Tensor, "batch k n m"]
+        ],
+        **kwargs,
+    ) -> Tuple[
+        Float[tf.Tensor, "batch k m"],
+        Float[tf.Tensor, "batch k c m"],
+        Float[tf.Tensor, "batch k m"],
+    ]:
         """
         Parameters
         ----------
@@ -1061,7 +1074,9 @@ class TemporalFusionDecoder(layers.Layer):
 
 
 @tf.function(reduce_retracing=True, jit_compile=can_jit_compile(True))
-def make_causal_attention_mask(self_attn_inputs: tf.Tensor) -> tf.Tensor:
+def make_causal_attention_mask(
+    self_attn_inputs: Float[tf.Tensor, "batch time_steps n"]
+) -> Float[tf.Tensor, "batch encoder_steps encoder_steps"]:
     len_s = tf.shape(self_attn_inputs)[1]
     bs = tf.shape(self_attn_inputs)[:1]
     mask = tf.cumsum(tf.eye(len_s, batch_shape=bs), 1)

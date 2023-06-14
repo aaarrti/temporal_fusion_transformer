@@ -23,7 +23,8 @@ dependencies = [
     "pandas",
     "matplotlib",
     "matplotx",
-    "jaxtyping"
+    "jaxtyping",
+    "keras_tuner"
 ]
 [project.optional-dependencies]
 jax = [
