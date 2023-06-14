@@ -25,13 +25,13 @@ class TemporalFusionTransformer(tf.keras.Model):
         num_encoder_steps: int,
         hidden_layer_size: int,
         num_attention_heads: int,
+        num_stacks: int = 1,
         dropout_rate: float = 0.1,
         output_size: int = 1,
         quantiles: Sequence[int] | None = None,
         prng_seed: int = 42,
         name: str = "temporal_fusion_transformer",
         unroll_lstm: bool = False,
-        return_attention: bool = False,
         use_cudnn_lstm: bool = False,
         **kwargs,
     ):
@@ -55,7 +55,6 @@ class TemporalFusionTransformer(tf.keras.Model):
         quantiles:
         output_size:
         unroll_lstm:
-        return_attention:
         use_cudnn_lstm:
 
 
@@ -75,8 +74,8 @@ class TemporalFusionTransformer(tf.keras.Model):
         self.dropout_rate = dropout_rate
         self.prng_seed = prng_seed
         self.unroll_lstm = unroll_lstm
-        self.return_attention = return_attention
         self.use_cudnn_lstm = use_cudnn_lstm
+        self.num_stacks = num_stacks
 
         self.input_embeds = TFTInputEmbedding(
             static_categories_size=self.static_categories_sizes,
@@ -112,6 +111,7 @@ class TemporalFusionTransformer(tf.keras.Model):
                 return_sequences=True,
                 name="future_features_lstm",
             )
+            dtype = None
         else:
             if self.dtype_policy.compute_dtype == "bfloat16":
                 dtype = tf.keras.mixed_precision.Policy("float32")
@@ -132,30 +132,33 @@ class TemporalFusionTransformer(tf.keras.Model):
                 unroll=unroll_lstm,
                 dtype=dtype,
             )
-        self.temporal_decoder = TemporalFusionDecoder(
-            num_attention_heads=num_attention_heads,
+
+        self.context_enrichment = ContextEnrichment(
             hidden_layer_size=hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
         )
-        self.output_projection = layers.TimeDistributed(
+        self.encoder_blocks = [
+            TemporalEncoderBlock(
+                num_attention_heads=num_attention_heads,
+                hidden_layer_size=hidden_layer_size,
+                dropout_rate=dropout_rate,
+                prng_seed=prng_seed,
+            )
+            for _ in range(num_stacks)
+        ]
+
+        self.post_encoder_layer_norm = [
+            layers.LayerNormalization(dtype=dtype) for _ in range(num_stacks)
+        ]
+
+        self.output_dense = layers.TimeDistributed(
             layers.Dense(self.output_size * len(self.quantiles))
         )
 
     def call(
-        self,
-        inputs: Mapping[
-            str,
-            Int[tf.Tensor, "batch s"]
-            | Float[tf.Tensor, "batch time o"]
-            | Float[tf.Tensor, "batch time r"]
-            | Int[tf.Tensor, "batch time c"],
-        ],
-        **kwargs,
-    ) -> (
-        Float[tf.Tensor, "batch time k"]
-        | Tuple[Float[tf.Tensor, "batch time k"], Dict[str, tf.Tensor]]
-    ):
+        self, inputs: Mapping[str, tf.Tensor], **kwargs
+    ) -> Float[tf.Tensor, "batch time k"]:
         """
 
         Parameters
@@ -225,41 +228,37 @@ class TemporalFusionTransformer(tf.keras.Model):
             future_features, initial_state=[state_h, state_c]
         )
 
-        history_lstm = tf.cast(history_lstm, self.dtype_policy.compute_dtype)
-        future_lstm = tf.cast(future_lstm, self.dtype_policy.compute_dtype)
-        historical_features = tf.cast(
-            historical_features, self.dtype_policy.compute_dtype
+        enriched, temporal_features = self.context_enrichment(
+            dict(
+                history_lstm=tf.cast(history_lstm, self.dtype_policy.compute_dtype),
+                future_lstm=tf.cast(future_lstm, self.dtype_policy.compute_dtype),
+                historical_features=tf.cast(
+                    historical_features, self.dtype_policy.compute_dtype
+                ),
+                future_features=tf.cast(
+                    future_features, self.dtype_policy.compute_dtype
+                ),
+                static_context=static_context["vector"],
+            ),
         )
-        future_features = tf.cast(future_features, self.dtype_policy.compute_dtype)
 
-        decoder_in = dict(
-            lstm_outputs=tf.concat([history_lstm, future_lstm], axis=1),
-            input_embeddings=tf.concat([historical_features, future_features], axis=1),
-            context_vector=static_context["vector"],
-        )
-        decoder_outputs, self_attn = self.temporal_decoder(decoder_in)
+        mask = make_causal_attention_mask(enriched)
+        encoder_in = enriched
 
-        outputs = self.output_projection(
+        for ln, block in zip(self.post_encoder_layer_norm, self.encoder_blocks):
+            encoder_out = block(encoder_in, mask=mask)
+            encoder_out = ln(encoder_out + temporal_features)
+            encoder_in = encoder_out
+
+        outputs = self.output_dense(
             tf.gather(
-                decoder_outputs,
+                # It is actually out, but static analysis complains otherwise.
+                encoder_in,
                 future_indexes,
                 axis=1,
             )
         )
-        if not self.return_attention:
-            return outputs
-
-        attention_components = {
-            # Temporal attention weights
-            "decoder_self_attn": self_attn,
-            # Static variable selection weights
-            "static_flags": static_context["weight"][..., 0],
-            # Variable selection weights of past inputs
-            "historical_flags": historical_flags[..., 0, :],
-            # Variable selection weights of future inputs
-            "future_flags": future_flags[Ellipsis, 0, :],
-        }
-        return outputs, attention_components
+        return outputs
 
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
@@ -274,8 +273,8 @@ class TemporalFusionTransformer(tf.keras.Model):
                 "num_attention_heads": self.num_attention_heads,
                 "prng_seed": self.prng_seed,
                 "unroll_lstm": self.unroll_lstm,
-                "return_attention": self.return_attention,
                 "use_cudnn_lstm": self.use_cudnn_lstm,
+                "num_decoder_stacks": self.num_stacks,
             }
         )
         return config
@@ -559,7 +558,7 @@ class StaticCovariatesEncoder(layers.Layer):
 
     def call(
         self, inputs: Float[tf.Tensor, "batch k n"], **kwargs
-    ) -> Dict[str, Float[tf.Tensor, "batch n"] | Float[tf.Tensor, "batch k 1"]]:
+    ) -> Dict[str, Float[tf.Tensor, "batch n"]]:
         """
         Create a static context out of static input embeddings.
         Static context is a (enrichment) vector, which must be added to other time varying inputs during
@@ -612,7 +611,7 @@ class StaticCovariatesEncoder(layers.Layer):
             state_h=context_state_h,
             state_c=context_state_c,
             vector=context_variable_selection,
-            weight=sparse_weights,
+            # weight=sparse_weights,
         )
 
     def get_config(self) -> Dict[str, ...]:
@@ -756,7 +755,7 @@ class GatedResidualNetwork(layers.Layer):
         self,
         inputs: Float[tf.Tensor, "batch n k"]
         | Float[tf.Tensor, "batch n"]
-        | Mapping[str, Float[tf.Tensor, "batch * k"]],
+        | Mapping[str, tf.Tensor],
         **kwargs,
     ) -> (
         Tuple[
@@ -896,8 +895,8 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         -------
 
         """
-        context = inputs["context"]
-        inputs = inputs["inputs"]
+        context: Float[tf.Tensor, "batch n"] = inputs["context"]
+        inputs: Float[tf.Tensor, "batch n n k"] = inputs["inputs"]
 
         mlp_outputs, static_gate = self.context_grn(
             dict(
@@ -934,7 +933,7 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         return config
 
 
-class TemporalFusionDecoder(layers.Layer):
+class TemporalEncoderBlock(layers.Layer):
     def __init__(
         self,
         num_attention_heads: int,
@@ -967,10 +966,9 @@ class TemporalFusionDecoder(layers.Layer):
         self.hidden_layer_size = hidden_layer_size
 
         d_k = hidden_layer_size // num_attention_heads
-        self.attn_layer = layers.MultiHeadAttention(
+        self.self_attn = layers.MultiHeadAttention(
             num_heads=num_attention_heads, key_dim=d_k
         )
-
         self.glu_1 = GatedLinearUnit(
             hidden_layer_size,
             dropout_rate,
@@ -983,28 +981,13 @@ class TemporalFusionDecoder(layers.Layer):
             prng_seed=prng_seed,
             use_time_distributed=True,
         )
-        self.glu_3 = GatedLinearUnit(
-            hidden_layer_size,
-            dropout_rate,
-            prng_seed=prng_seed,
-            use_time_distributed=True,
-        )
         if self.dtype_policy.name == "mixed_bfloat16":
             dtype = tf.keras.mixed_precision.Policy("float32")
         else:
             dtype = None
 
-        self.layer_norm_1 = layers.LayerNormalization(dtype=dtype)
-        self.layer_norm_2 = layers.LayerNormalization(dtype=dtype)
-        self.layer_norm_3 = layers.LayerNormalization(dtype=dtype)
-
-        self.grn_1 = GatedResidualNetwork(
-            hidden_layer_size,
-            dropout_rate,
-            prng_seed=prng_seed,
-            use_time_distributed=True,
-        )
-        self.grn_2 = GatedResidualNetwork(
+        self.layer_norm = layers.LayerNormalization(dtype=dtype)
+        self.grn = GatedResidualNetwork(
             hidden_layer_size,
             dropout_rate,
             prng_seed=prng_seed,
@@ -1012,50 +995,26 @@ class TemporalFusionDecoder(layers.Layer):
         )
 
     def call(
-        self, inputs: Mapping[str, tf.Tensor], **kwargs
-    ) -> Tuple[tf.Tensor, tf.Tensor]:
-        """
-
-        Parameters
-        ----------
-        inputs
-        kwargs
-
-        Returns
-        -------
-
-        """
-        lstm_outputs, _ = self.glu_1(inputs["lstm_outputs"])
-        temporal_features = self.layer_norm_1(lstm_outputs + inputs["input_embeddings"])
-        temporal_features = tf.cast(temporal_features, self.dtype_policy.compute_dtype)
-        # Static enrichment layers
-        expanded_static_context = tf.expand_dims(inputs["context_vector"], axis=1)
-
-        enriched, _ = self.grn_1(
-            dict(
-                inputs=temporal_features,
-                context=expanded_static_context,
-            ),
-        )
-        # Decoder self attention
-        mask = make_causal_attention_mask(enriched)
-        x, attention_scores = self.attn_layer(
-            enriched,
-            enriched,
-            enriched,
+        self,
+        inputs: Float[tf.Tensor, "batch time n"],
+        mask: Float[tf.Tensor, "batch time time"] | None = None,
+        **kwargs,
+    ) -> Float[tf.Tensor, "batch time n"]:
+        if mask is None:
+            mask = make_causal_attention_mask(inputs)
+        x = self.self_attn(
+            inputs,
+            inputs,
+            inputs,
             attention_mask=mask,
-            return_attention_scores=True,
         )
-        x, _ = self.glu_2(x)
-        x = self.layer_norm_2(x + enriched)
-
+        x, _ = self.glu_1(x)
+        x = self.layer_norm(x + inputs)
         # Nonlinear processing on outputs
-        decoded, _ = self.grn_2(x)
-
+        decoded, _ = self.grn(x)
         # Final skip connection
-        decoded, _ = self.glu_3(decoded)
-        decoded = self.layer_norm_3(decoded + temporal_features)
-        return decoded, attention_scores
+        decoded, _ = self.glu_2(decoded)
+        return decoded
 
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
@@ -1065,6 +1024,82 @@ class TemporalFusionDecoder(layers.Layer):
                 "prng_seed": self.prng_seed,
                 "dropout_rate": self.dropout_rate,
                 "hidden_layer_size": self.hidden_layer_size,
+            }
+        )
+        return config
+
+
+class ContextEnrichment(layers.Layer):
+    def __init__(
+        self,
+        hidden_layer_size: int,
+        dropout_rate: float,
+        prng_seed: int,
+        name: str = "context_enrichment",
+        **kwargs,
+    ):
+        super().__init__(name=name, **kwargs)
+        self.prng_seed = prng_seed
+        self.dropout_rate = dropout_rate
+        self.hidden_layer_size = hidden_layer_size
+
+        self.glu = GatedLinearUnit(
+            hidden_layer_size,
+            dropout_rate,
+            prng_seed=prng_seed,
+            use_time_distributed=True,
+        )
+
+        if self.dtype_policy.name == "mixed_bfloat16":
+            dtype = tf.keras.mixed_precision.Policy("float32")
+        else:
+            dtype = None
+
+        self.layer_norm = layers.LayerNormalization(dtype=dtype)
+        self.grn = GatedResidualNetwork(
+            hidden_layer_size,
+            dropout_rate,
+            prng_seed=prng_seed,
+            use_time_distributed=True,
+        )
+
+    def call(
+        self, inputs: Mapping[str, tf.Tensor], **kwargs
+    ) -> Tuple[
+        Float[tf.Tensor, "batch steps+time n"], Float[tf.Tensor, "batch steps+time n"]
+    ]:
+        history_lstm: Float[tf.Tensor, "batch steps n"] = inputs["history_lstm"]
+        future_lstm: Float[tf.Tensor, "batch time n"] = inputs["future_lstm"]
+        historical_features: Float[tf.Tensor, "batch steps n"] = inputs[
+            "historical_features"
+        ]
+        future_features: Float[tf.Tensor, "batch time n"] = inputs["future_features"]
+        static_context: Float[tf.Tensor, "batch n"] = inputs["static_context"]
+
+        lstm_outputs = tf.concat([history_lstm, future_lstm], axis=1)
+        input_embeddings = tf.concat([historical_features, future_features], axis=1)
+        lstm_outputs, _ = self.glu(lstm_outputs)
+        temporal_features = self.layer_norm(lstm_outputs + input_embeddings)
+        temporal_features = tf.cast(temporal_features, self.dtype_policy.compute_dtype)
+
+        # Static enrichment layers
+        expanded_static_context = tf.expand_dims(static_context, axis=1)
+
+        enriched, _ = self.grn(
+            dict(
+                inputs=temporal_features,
+                context=expanded_static_context,
+            ),
+        )
+        return enriched, temporal_features
+
+    def get_config(self) -> Dict[str, ...]:
+        config = super().get_config()
+        config.update(
+            {
+                "hidden_layer_size": self.hidden_layer_size,
+                "dropout_rate": self.dropout_rate,
+                "prng_seed": self.prng_seed,
             }
         )
         return config

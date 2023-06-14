@@ -6,7 +6,7 @@ from temporal_fusion_transformer.tf.modeling import (
     StaticCovariatesEncoder,
     TFTInputEmbedding,
     TemporalVariableSelectionNetwork,
-    TemporalFusionDecoder,
+    TemporalEncoderBlock,
 )
 from temporal_fusion_transformer.experiments import electricity_experiment
 from temporal_fusion_transformer.tf.quantile_loss import QuantileLoss, QuantileRMSE
@@ -14,13 +14,14 @@ from temporal_fusion_transformer.utils import load_data_from_archive, make_tft_m
 
 from tests.constants import PRNG_SEED
 
+tf.config.run_functions_eagerly(True)
+
 
 static_categories_sizes = [2, 2]
 known_categories_sizes = [4]
 n_time_steps = 30
 batch_size = 8
 hidden_layer_size = 5
-tf.config.run_functions_eagerly(True)
 
 
 class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
@@ -79,19 +80,14 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
         self.assertEqual((batch_size, time_steps, 1, features), flags.shape)
 
     def test_decoder(self):
-        layer = TemporalFusionDecoder(
+        layer = TemporalEncoderBlock(
             4, hidden_layer_size=hidden_layer_size, dropout_rate=0, prng_seed=PRNG_SEED
         )
-        decoder_in = dict(
-            lstm_outputs=tf.random.uniform(
-                (batch_size, n_time_steps, hidden_layer_size)
+        decoder_out = layer(
+            tf.random.uniform(
+                (batch_size, n_time_steps, hidden_layer_size), seed=PRNG_SEED
             ),
-            input_embeddings=tf.random.uniform(
-                (batch_size, n_time_steps, hidden_layer_size)
-            ),
-            context_vector=tf.random.uniform((batch_size, hidden_layer_size)),
         )
-        decoder_out, _ = layer(decoder_in)
         self.assertEqual(
             (batch_size, n_time_steps, hidden_layer_size),
             decoder_out.shape,
@@ -99,7 +95,8 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
 
 
 class TFTModelTest(tf.test.TestCase, parameterized.TestCase):
-    def test_tft_model(self):
+    @parameterized.parameters(1, 4, 12)
+    def test_tft_model(self, num_stacks):
         x_batch = make_x_batch()
         model = TemporalFusionTransformer(
             num_encoder_steps=25,
@@ -110,6 +107,7 @@ class TFTModelTest(tf.test.TestCase, parameterized.TestCase):
             dropout_rate=0,
             quantiles=[1, 2, 3],
             output_size=1,
+            num_stacks=num_stacks,
         )
         logits = model(x_batch)
         tf.debugging.check_numerics(logits, "Test Failed.")
