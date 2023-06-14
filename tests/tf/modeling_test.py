@@ -14,8 +14,6 @@ from temporal_fusion_transformer.utils import load_data_from_archive, make_tft_m
 
 from tests.constants import PRNG_SEED
 
-tf.config.run_functions_eagerly(True)
-
 
 static_categories_sizes = [2, 2]
 known_categories_sizes = [4]

@@ -251,12 +251,7 @@ class TemporalFusionTransformer(tf.keras.Model):
             encoder_in = encoder_out
 
         outputs = self.output_dense(
-            tf.gather(
-                # It is actually out, but static analysis complains otherwise.
-                encoder_in,
-                future_indexes,
-                axis=1,
-            )
+            encoder_in[:, self.num_encoder_steps : total_time_steps]
         )
         return outputs
 
@@ -423,21 +418,17 @@ class TFTInputEmbedding(layers.Layer):
         known_real_inputs_embeddings = []
 
         for i, layer in enumerate(self.static_inputs_embedding):
-            static_input_embeddings.append(layer(tf.gather(static, i, axis=1)))
+            static_input_embeddings.append(layer(static[:, i]))
 
         static_input_embeddings = tf.stack(static_input_embeddings, axis=1)
 
         for i, layer in enumerate(self.known_real_dense):
-            known_real_inputs_embeddings.append(
-                layer(tf.expand_dims(tf.gather(known_real, i, axis=-1), -1))
-            )
+            known_real_inputs_embeddings.append(layer(known_real[..., i, tf.newaxis]))
 
         if self.num_observed_inputs != 0:
             observed_input_embeddings = []
             for i, layer in enumerate(self.observed_dense):
-                observed_input_embeddings.append(
-                    layer(tf.expand_dims(tf.gather(observed, i, axis=-1), axis=-1))
-                )
+                observed_input_embeddings.append(layer(observed[..., i, tf.newaxis]))
             observed_input_embeddings = tf.stack(observed_input_embeddings, axis=-1)
         else:
             observed_input_embeddings = None
@@ -588,14 +579,12 @@ class StaticCovariatesEncoder(layers.Layer):
         flat_x = self.flatten(inputs)
 
         mlp_outputs, _ = self.grn(flat_x)
-        sparse_weights = tf.nn.softmax(mlp_outputs)
-        sparse_weights = tf.expand_dims(sparse_weights, axis=-1)
+        sparse_weights = tf.nn.softmax(mlp_outputs)[..., tf.newaxis]
 
         transformed_embeddings = []
 
         for i, layer in enumerate(self.grn_blocks):
-            inputs_i = tf.expand_dims(tf.gather(inputs, i, axis=1), axis=1)
-            embeds_i, _ = layer(inputs_i)
+            embeds_i, _ = layer(inputs[:, i][:, tf.newaxis])
             transformed_embeddings.append(embeds_i)
 
         transformed_embeddings = tf.concat(transformed_embeddings, axis=1)
@@ -903,11 +892,11 @@ class TemporalVariableSelectionNetwork(layers.Layer):
                 inputs=tf.reshape(
                     inputs, [-1, self.time_steps, self.embedding_dim * self.num_inputs]
                 ),
-                context=tf.expand_dims(context, axis=1),
+                context=context[:, tf.newaxis],
             )
         )
         sparse_weights = tf.nn.softmax(mlp_outputs)
-        sparse_weights = tf.expand_dims(sparse_weights, axis=2)
+        sparse_weights = sparse_weights[:, :, tf.newaxis]
 
         # Non-linear Processing & weight application
         transformed_embeddings = []
@@ -964,8 +953,8 @@ class TemporalEncoderBlock(layers.Layer):
         self.prng_seed = prng_seed
         self.dropout_rate = dropout_rate
         self.hidden_layer_size = hidden_layer_size
-
         d_k = hidden_layer_size // num_attention_heads
+        tf.debugging.assert_positive(d_k, "Key dim can't be 0")
         self.self_attn = layers.MultiHeadAttention(
             num_heads=num_attention_heads, key_dim=d_k
         )
@@ -1083,7 +1072,7 @@ class ContextEnrichment(layers.Layer):
         temporal_features = tf.cast(temporal_features, self.dtype_policy.compute_dtype)
 
         # Static enrichment layers
-        expanded_static_context = tf.expand_dims(static_context, axis=1)
+        expanded_static_context = static_context[:, tf.newaxis]
 
         enriched, _ = self.grn(
             dict(

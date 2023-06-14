@@ -82,5 +82,9 @@ class GatedResidualNetwork(nn.Module):
         pass
 
 
+class TemporalEncoderBlock(nn.Module):
+    pass
+
+
 def make_causal_attention_mask(self_attn_inputs):
     pass

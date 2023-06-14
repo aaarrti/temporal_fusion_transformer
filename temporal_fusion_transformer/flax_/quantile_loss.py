@@ -18,17 +18,16 @@ def quantile_loss(
 
 
 @jax.jit
-@partial(jax.vmap, in_axes=(0, 0, None))
 def _quantile_loss(
-    y_true: Float[Array, "time_steps n"],
-    y_pred: Float[Array, "time_steps n*q"],
+    y_true: Float[Array, "n"],
+    y_pred: Float[Array, "n*q"],
     quantiles: Float[Array, "q"],
 ) -> Float[Scalar]:
     y_true = jnp.asarray(y_true, y_pred.dtype)
     quantiles = jnp.asarray(quantiles, y_pred.dtype)
+    y_pred = unsqueze_quantiles(y_pred, quantiles)
 
-    y_pred = unsqueze_quantiles(y_true, y_pred, quantiles)
-    prediction_underflow = y_true[..., tf.newaxis] - y_pred
+    prediction_underflow = y_true[..., jnp.newaxis] - y_pred
 
     return tf.reduce_mean(
         # Average over time-steps.

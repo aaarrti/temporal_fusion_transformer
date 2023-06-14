@@ -221,9 +221,9 @@ def identity(x: T) -> T:
     return x
 
 
-def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransformer:
-    from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
-
+def make_tft_model(
+    experiment: Experiment, use_flax: bool = False, **kwargs
+) -> TemporalFusionTransformer:
     kwargs = add_default_items(
         kwargs,
         dict(
@@ -235,6 +235,10 @@ def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransforme
             dropout_rate=experiment.default_params.dropout_rate,
         ),
     )
+    if use_flax:
+        from temporal_fusion_transformer.flax_.modeling import TemporalFusionTransformer
+    else:
+        from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
     return TemporalFusionTransformer(**kwargs)
 
 
