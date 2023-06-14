@@ -224,15 +224,18 @@ def identity(x: T) -> T:
 def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransformer:
     from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
 
-    return TemporalFusionTransformer(
-        static_categories_sizes=experiment.fixed_params.static_categories_sizes,
-        known_categories_sizes=experiment.fixed_params.known_categories_sizes,
-        num_encoder_steps=experiment.fixed_params.num_encoder_steps,
-        hidden_layer_size=experiment.default_params.hidden_layer_size,
-        num_attention_heads=experiment.default_params.num_attention_heads,
-        dropout_rate=experiment.default_params.dropout_rate,
-        **kwargs,
+    kwargs = add_default_items(
+        kwargs,
+        dict(
+            static_categories_sizes=experiment.fixed_params.static_categories_sizes,
+            known_categories_sizes=experiment.fixed_params.known_categories_sizes,
+            num_encoder_steps=experiment.fixed_params.num_encoder_steps,
+            hidden_layer_size=experiment.default_params.hidden_layer_size,
+            num_attention_heads=experiment.default_params.num_attention_heads,
+            dropout_rate=experiment.default_params.dropout_rate,
+        ),
     )
+    return TemporalFusionTransformer(**kwargs)
 
 
 def as_tensor(arr: TensorLike | tf.Tensor) -> tf.Tensor:
@@ -250,3 +253,21 @@ def assert_quantile_values(quantiles: Sequence[float] | None):
             raise ValueError(
                 f"Illegal quantile value={quantile}! Values should be between 0 and 1."
             )
+
+
+def add_default_items(
+    dictionary: Mapping[str, ...] | None, default_items: Mapping[str, ...]
+) -> Dict[str, Any]:
+    """Add default_items into dictionary if not present."""
+    if dictionary is None:
+        return dict(**default_items)
+    if len(dictionary) == 0:
+        return dict(**default_items)
+
+    copy = dict(**dictionary)
+
+    for k, v in default_items.items():
+        if k not in copy:
+            copy[k] = v
+
+    return copy

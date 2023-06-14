@@ -1,17 +1,16 @@
 [project]
 name = "temporal_fusion_transformer"
 version = "0.0.1"
-description = "TF2 re-write of Temporal Fusion Transformer model."
+description = "TF2 and Flax re-write of Temporal Fusion Transformer model."
 readme = "Readme.md"
 requires-python = ">=3.8"
-# In case I publish it in a public repository.
 authors = [
-    { name = "Artem Sereda", email = "a.sereda@sevensenders.com" }
-    # { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" },
+    { name = "Artem Sereda", email = "a.sereda@sevensenders.com" },
+    { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" },
 ]
 maintainers = [
     { name = "Artem Sereda", email = "a.sereda@sevensenders.com" },
-    # { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" }
+    { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" }
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -22,21 +21,28 @@ dependencies = [
     "keras_pbar",
     "scikit_learn",
     "pandas",
+    "matplotlib",
+    "matplotx",
+    "jaxtyping"
 ]
 [project.optional-dependencies]
-test = [
-    "pytest",
-    "pytest_sugar",
-    "tox",
+jax = [
+    "jax",
+    "jaxlib",
+    "flax",
+    "orbax",
+    "tf2jax",
+    "optax",
+    "jmp",
+    "common_loop_utils",
+    "msgpack",
+    "orbax_checkpoint"
 ]
 dev = [
-    "tensorflow_metal; sys_platform == 'darwin'",
     "black",
     "pre_commit",
-    # "dvc_gcp",
-]
-keras_tuner = [
-    "keras_tuner"
+    "dvc",
+    "dvc_gcp",
 ]
 iree = [
     "iree-compiler",
