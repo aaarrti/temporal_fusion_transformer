@@ -28,7 +28,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         num_stacks: int = 1,
         dropout_rate: float = 0.1,
         output_size: int = 1,
-        quantiles: Sequence[int] | None = None,
+        num_quantiles: int,
         prng_seed: int = 42,
         name: str = "temporal_fusion_transformer",
         unroll_lstm: bool = False,
@@ -52,7 +52,7 @@ class TemporalFusionTransformer(tf.keras.Model):
             Latent space dimensionality.
         num_attention_heads:
             Number of attention heads to use for multi-head attention.
-        quantiles:
+        num_quantiles:
         output_size:
         unroll_lstm:
         use_cudnn_lstm:
@@ -62,9 +62,7 @@ class TemporalFusionTransformer(tf.keras.Model):
 
         """
         super().__init__(name=name, **kwargs)
-        if quantiles is None:
-            quantiles = [0.1, 0.5, 0.9]
-        self.quantiles = quantiles
+        self.num_quantiles = num_quantiles
         self.output_size = output_size
         self.num_encoder_steps = num_encoder_steps
         self.hidden_layer_size = hidden_layer_size
@@ -153,7 +151,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         ]
 
         self.output_dense = layers.TimeDistributed(
-            layers.Dense(self.output_size * len(self.quantiles))
+            layers.Dense(self.output_size * self.num_quantiles)
         )
 
     def call(
@@ -259,7 +257,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         config = super().get_config()
         config.update(
             {
-                "quantiles": self.quantiles,
+                "num_quantiles": self.num_quantiles,
                 "output_size": self.output_size,
                 "num_encoder_steps": self.num_encoder_steps,
                 "hidden_layer_size": self.hidden_layer_size,
@@ -638,11 +636,11 @@ class GatedLinearUnit(layers.Layer):
         self.dropout = layers.Dropout(
             dropout_rate, seed=prng_seed, force_generator=True
         )
-        self.linear = layers.Dense(hidden_layer_size)
+        self.dense = layers.Dense(hidden_layer_size)
         self.activation = layers.Dense(hidden_layer_size, activation="sigmoid")
         # Apply time steps, if needed.
         if use_time_distributed:
-            self.linear = layers.TimeDistributed(self.linear)
+            self.dense = layers.TimeDistributed(self.dense)
             self.activation = layers.TimeDistributed(self.activation)
 
     def call(
@@ -654,7 +652,7 @@ class GatedLinearUnit(layers.Layer):
         Float[tf.Tensor, "batch time_steps n"] | Float[tf.Tensor, "batch m"],
     ]:
         x = self.dropout(inputs)
-        x_pre_activation = self.linear(x)
+        x_pre_activation = self.dense(x)
         x_gated = self.activation(x)
         x = x_pre_activation * x_gated
         return x, x_gated
@@ -901,7 +899,7 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         # Non-linear Processing & weight application
         transformed_embeddings = []
         for i, layer in enumerate(self.grn_blocks):
-            embeds_i, _ = layer(tf.gather(inputs, i, axis=-1))
+            embeds_i, _ = layer(inputs[..., i])
             transformed_embeddings.append(embeds_i)
 
         transformed_embeddings = tf.stack(transformed_embeddings, axis=-1)

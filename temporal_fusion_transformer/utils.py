@@ -222,7 +222,7 @@ def identity(x: T) -> T:
 
 
 def make_tft_model(
-    experiment: Experiment, use_flax: bool = False, **kwargs
+    experiment: Experiment, num_quantiles: int, use_flax: bool = False, **kwargs
 ) -> TemporalFusionTransformer:
     kwargs = add_default_items(
         kwargs,
@@ -239,7 +239,7 @@ def make_tft_model(
         from temporal_fusion_transformer.flax_.modeling import TemporalFusionTransformer
     else:
         from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
-    return TemporalFusionTransformer(**kwargs)
+    return TemporalFusionTransformer(**kwargs, num_quantiles=num_quantiles)
 
 
 def as_tensor(arr: TensorLike | tf.Tensor) -> tf.Tensor:

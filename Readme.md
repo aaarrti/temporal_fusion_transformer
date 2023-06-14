@@ -52,3 +52,6 @@ terraform plan
 terraform apply
 gsutil cp -r data gs://tf2_tft_v2/
 ```
+
+### TODO:
+- create v2 models without RNN-s and LSTM-s (like full blown transformer).

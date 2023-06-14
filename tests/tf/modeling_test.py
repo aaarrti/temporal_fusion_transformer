@@ -245,8 +245,8 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
         )
         model.compile(
             tf.keras.optimizers.Adam(jit_compile=can_jit_compile(True)),
-            loss=QuantileLoss(model.quantiles),
-            metrics=[QuantileRMSE(model.quantiles)],
+            loss=QuantileLoss(model.num_quantiles),
+            metrics=[QuantileRMSE(model.num_quantiles)],
             jit_compile=can_jit_compile(True),
         )
         history = model.fit(train_ds, validation_data=val_ds).history
