@@ -5,7 +5,7 @@ from temporal_fusion_transformer.tf.modeling import (
     TemporalFusionTransformer,
     StaticCovariatesEncoder,
     TFTInputEmbedding,
-    TemporalVariableSelectionNetwork,
+    VariableSelection,
     TemporalEncoderBlock,
 )
 from temporal_fusion_transformer.experiments import electricity_experiment
@@ -20,6 +20,7 @@ known_categories_sizes = [4]
 n_time_steps = 30
 batch_size = 8
 hidden_layer_size = 5
+tf.config.run_functions_eagerly(True)
 
 
 class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
@@ -63,7 +64,7 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
 
     @parameterized.parameters((25, 4), (5, 3))
     def test_temporal_variable_selection_network(self, time_steps, features):
-        layer = TemporalVariableSelectionNetwork(
+        layer = VariableSelection(
             hidden_layer_size, prng_seed=PRNG_SEED, dropout_rate=0
         )
         x = dict(

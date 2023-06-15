@@ -85,13 +85,13 @@ class TemporalFusionTransformer(tf.keras.Model):
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
         )
-        self.historical_variable_selection = TemporalVariableSelectionNetwork(
+        self.historical_variable_selection = VariableSelection(
             hidden_layer_size=hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
             name="historical_variable_selection",
         )
-        self.future_variable_selection = TemporalVariableSelectionNetwork(
+        self.future_variable_selection = VariableSelection(
             hidden_layer_size=hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
@@ -500,25 +500,25 @@ class StaticCovariatesEncoder(layers.Layer):
         self.dropout_rate = dropout_rate
         self.prng_seed = prng_seed
         # Build sub layers.
-        self.context_selection = GatedResidualNetwork(
+        self.context_selection = GRN(
             hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
             use_time_distributed=False,
         )
-        self.context_enrichment = GatedResidualNetwork(
+        self.context_enrichment = GRN(
             hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
             use_time_distributed=False,
         )
-        self.context_state_h = GatedResidualNetwork(
+        self.context_state_h = GRN(
             hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
             use_time_distributed=False,
         )
-        self.context_state_c = GatedResidualNetwork(
+        self.context_state_c = GRN(
             hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
@@ -528,7 +528,7 @@ class StaticCovariatesEncoder(layers.Layer):
 
     def build(self, input_shape: tf.TensorShape):
         self.num_static_inputs = input_shape[1]
-        self.grn = GatedResidualNetwork(
+        self.grn = GRN(
             self.hidden_layer_size,
             output_size=self.num_static_inputs,
             dropout_rate=self.dropout_rate,
@@ -536,7 +536,7 @@ class StaticCovariatesEncoder(layers.Layer):
             use_time_distributed=False,
         )
         self.grn_blocks = [
-            GatedResidualNetwork(
+            GRN(
                 self.hidden_layer_size,
                 dropout_rate=self.dropout_rate,
                 prng_seed=self.prng_seed,
@@ -616,7 +616,7 @@ class StaticCovariatesEncoder(layers.Layer):
 # --------------------------------- GLU && GRN --------------------------------
 
 
-class GatedLinearUnit(layers.Layer):
+class GLU(layers.Layer):
     def __init__(
         self,
         hidden_layer_size: int,
@@ -670,7 +670,7 @@ class GatedLinearUnit(layers.Layer):
         return config
 
 
-class GatedResidualNetwork(layers.Layer):
+class GRN(layers.Layer):
     def __init__(
         self,
         hidden_layer_size: int,
@@ -722,7 +722,7 @@ class GatedResidualNetwork(layers.Layer):
         self.context_dense = layers.Dense(hidden_layer_size)
         self.linear_dense = layers.Dense(hidden_layer_size)
         # Apply gating layer.
-        self.gated_linear_unit = GatedLinearUnit(
+        self.gated_linear_unit = GLU(
             output_size or hidden_layer_size,
             dropout_rate=dropout_rate,
             prng_seed=prng_seed,
@@ -807,7 +807,7 @@ class GatedResidualNetwork(layers.Layer):
 # --------------------------- variable selection network ---------------------------------------
 
 
-class TemporalVariableSelectionNetwork(layers.Layer):
+class VariableSelection(layers.Layer):
     def __init__(
         self,
         hidden_layer_size: int,
@@ -843,7 +843,7 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         self.embedding_dim = input_shape[2]
         self.num_inputs = input_shape[3]
 
-        self.context_grn = GatedResidualNetwork(
+        self.context_grn = GRN(
             hidden_layer_size=self.hidden_layer_size,
             dropout_rate=self.dropout_rate,
             output_size=self.num_inputs,
@@ -852,7 +852,7 @@ class TemporalVariableSelectionNetwork(layers.Layer):
         )
 
         self.grn_blocks = [
-            GatedResidualNetwork(
+            GRN(
                 hidden_layer_size=self.hidden_layer_size,
                 dropout_rate=self.dropout_rate,
                 prng_seed=self.prng_seed,
@@ -956,13 +956,13 @@ class TemporalEncoderBlock(layers.Layer):
         self.self_attn = layers.MultiHeadAttention(
             num_heads=num_attention_heads, key_dim=d_k
         )
-        self.glu_1 = GatedLinearUnit(
+        self.glu_1 = GLU(
             hidden_layer_size,
             dropout_rate,
             prng_seed=prng_seed,
             use_time_distributed=True,
         )
-        self.glu_2 = GatedLinearUnit(
+        self.glu_2 = GLU(
             hidden_layer_size,
             dropout_rate,
             prng_seed=prng_seed,
@@ -974,7 +974,7 @@ class TemporalEncoderBlock(layers.Layer):
             dtype = None
 
         self.layer_norm = layers.LayerNormalization(dtype=dtype)
-        self.grn = GatedResidualNetwork(
+        self.grn = GRN(
             hidden_layer_size,
             dropout_rate,
             prng_seed=prng_seed,
@@ -1030,7 +1030,7 @@ class ContextEnrichment(layers.Layer):
         self.dropout_rate = dropout_rate
         self.hidden_layer_size = hidden_layer_size
 
-        self.glu = GatedLinearUnit(
+        self.glu = GLU(
             hidden_layer_size,
             dropout_rate,
             prng_seed=prng_seed,
@@ -1043,7 +1043,7 @@ class ContextEnrichment(layers.Layer):
             dtype = None
 
         self.layer_norm = layers.LayerNormalization(dtype=dtype)
-        self.grn = GatedResidualNetwork(
+        self.grn = GRN(
             hidden_layer_size,
             dropout_rate,
             prng_seed=prng_seed,
