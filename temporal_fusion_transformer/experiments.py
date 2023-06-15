@@ -20,6 +20,7 @@ import pandas as pd
 from absl import logging
 from keras_pbar import keras_pbar
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+import tensorflow as tf
 from temporal_fusion_transformer.utils import filter_dict
 
 
@@ -192,6 +193,11 @@ class Experiment(ABC):
 
         return list(filter_dict(self.column_schema, value_filter=filter_func).keys())
 
+    @property
+    @abstractmethod
+    def element_spec(self) -> Dict[str, tf.TensorSpec]:
+        raise NotImplementedError
+
 
 class ElectricityExperiment(Experiment):
     """
@@ -259,6 +265,16 @@ class ElectricityExperiment(Experiment):
     @property
     def total_time_steps(self) -> int:
         return self.fixed_params.total_time_steps
+
+    @property
+    def element_spec(self) -> Dict[str, tf.TensorSpec]:
+        return {
+            "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
+            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float32),
+            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float32),
+            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int32),
+            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
+        }
 
     def read_raw_csv(
         self, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
@@ -493,6 +509,10 @@ class FavoritaExperiment(Experiment):
             "class": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
             "perishable": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
         }
+
+    @property
+    def element_spec(self) -> Dict[str, tf.TensorSpec]:
+        return {}
 
     @property
     def default_params(self) -> ModelParams:

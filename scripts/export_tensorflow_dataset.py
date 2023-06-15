@@ -1,21 +1,29 @@
 import json
+import pickle
 
 from absl import flags, app, logging
 
-from temporal_fusion_transformer.experiments import ElectricityExperiment
-from temporal_fusion_transformer.utils import export_sharded_dataset, map_dict
-import pickle
+from temporal_fusion_transformer.experiments import electricity_experiment
+from temporal_fusion_transformer.utils import export_sharded_dataset
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
-    "dataset", enum_values=["electricity"], default="electricity", help=None
+    "experiment",
+    enum_values=["electricity", "favorita"],
+    required=True,
+    help="Name of the experiment",
+    default=None,
 )
-flags.DEFINE_integer("shard_size", default=100_000, help=None)
-flags.DEFINE_string("data_path", default="../data", help=None)
+flags.DEFINE_integer("shard_size", default=100_000, help="Size of each exported shard")
+flags.DEFINE_string(
+    "data_path", default="../data", help="Path where to persist the dataset"
+)
 
 
-def main(_):
-    ds, scalers = ElectricityExperiment.read_raw_csv("data/electricity/LD2011_2014.txt")
+def export_electricity_dataset():
+    ds, scalers = electricity_experiment.read_raw_csv(
+        "data/electricity/LD2011_2014.txt"
+    )
     ids = (
         set(ds.train["identifier"].reshape(-1))
         .union(set(ds.validation["identifier"].reshape(-1)))
@@ -44,6 +52,17 @@ def main(_):
     export_sharded_dataset(ds.validation, "data/electricity/validation")
     logging.info("Exporting sharded tests split.")
     export_sharded_dataset(ds.test, "data/electricity/test")
+
+
+def export_favorita_dataset():
+    logging.error("Not implemented")
+
+
+def main(_):
+    if FLAGS.experiment == "electricity":
+        export_electricity_dataset()
+    if FLAGS.experiment == "favorita":
+        export_favorita_dataset()
 
 
 if __name__ == "__main__":

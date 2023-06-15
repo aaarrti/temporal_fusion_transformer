@@ -280,7 +280,7 @@ class TemporalFusionTransformer(tf.keras.Model):
     def compile(
         self,
         optimizer: Optimizer | str = "adam",
-        steps_per_execution: int = 1,
+        steps_per_execution: int | None = None,
         **kwargs,
     ):
         super().compile(

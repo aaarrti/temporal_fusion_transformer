@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import (
     Mapping,
     Dict,
@@ -10,6 +11,8 @@ from typing import (
     Tuple,
     Any,
     TYPE_CHECKING,
+    Type,
+    ContextManager,
 )
 
 import numpy as np
@@ -17,6 +20,7 @@ import tensorflow as tf
 from keras_pbar import keras_pbar
 from sklearn.utils import gen_batches
 from tensorflow.python.types.core import TensorLike
+from contextlib import contextmanager
 
 if TYPE_CHECKING:
     from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
@@ -221,9 +225,7 @@ def identity(x: T) -> T:
     return x
 
 
-def make_tft_model(
-    experiment: Experiment, use_flax: bool = False, **kwargs
-) -> TemporalFusionTransformer:
+def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransformer:
     kwargs = add_default_items(
         kwargs,
         dict(
@@ -235,10 +237,8 @@ def make_tft_model(
             dropout_rate=experiment.default_params.dropout_rate,
         ),
     )
-    if use_flax:
-        from temporal_fusion_transformer.flax_.modeling import TemporalFusionTransformer
-    else:
-        from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
+    from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
+
     return TemporalFusionTransformer(**kwargs)
 
 
@@ -275,3 +275,26 @@ def add_default_items(
             copy[k] = v
 
     return copy
+
+
+class NoOpStrategy:
+    @contextmanager
+    def scope(self) -> ContextManager:
+        yield
+
+
+def make_gpu_strategy(
+    clazz: Type[tf.distribute.Strategy] | None = None,
+) -> tf.distribute.Strategy:
+    gpus = tf.config.list_physical_devices("GPU")
+    logging.info(f"{gpus = }")
+    n_gpus = len(gpus)
+    if n_gpus == 0:
+        logging.error("No GPU found.")
+        return NoOpStrategy()
+    if n_gpus == 1:
+        return tf.distribute.OneDeviceStrategy()
+
+    if clazz is None:
+        clazz = tf.distribute.MirroredStrategy
+    return clazz()
