@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Tuple, List
+from typing import Tuple, List, Mapping
 
 import flax.linen as nn
 import jax
 import jax.nn
 import jax.numpy as jnp
+import numpy as np
 from flax.struct import PyTreeNode
 from jaxtyping import Float, Array, Int
 
@@ -16,6 +17,27 @@ class TFTInput(PyTreeNode):
     known_real: Float[Array, "batch t k"]
     known_categorical: Int[Array, "batch t c"] | None = None
     observed: Float[Array, "batch t o"] | None = None
+
+    @staticmethod
+    def from_dict(d: Mapping[str, np.ndarray]) -> TFTInput:
+        if isinstance(d, TFTInput):
+            return d
+
+        if "known_categorical" in d:
+            known_categorical = jnp.asarray(d["known_categorical"])
+        else:
+            known_categorical = None
+        if "observed" in d:
+            observed = jnp.asarray(d["observed"])
+        else:
+            observed = None
+
+        return TFTInput(
+            static=jnp.asarray(d["static"]),
+            known_real=jnp.asarray(d["known_real"]),
+            known_categorical=known_categorical,
+            observed=observed,
+        )
 
 
 class TFTEmbeddings(PyTreeNode):
@@ -53,7 +75,7 @@ class TemporalFusionTransformer(nn.Module):
     num_encoder_steps: int
     hidden_layer_size: int
     num_attention_heads: int
-    quantiles: List[float]
+    quantiles: Float[Array, "q"] = jnp.asarray([0.1, 0.5, 0.9])
     num_stacks: int = 1
     dropout_rate: float = 0.1
     output_size: int = 1
@@ -95,13 +117,21 @@ class TemporalFusionTransformer(nn.Module):
             hidden_layer_size=self.hidden_layer_size, dropout_rate=self.dropout_rate
         )(ContextInput(inputs=future_inputs, context=static_context.enrichment))
 
-        state_c, state_h, history_lstm = nn.LSTMCell()(
-            [static_context.state_c, static_context.state_h],
+        (state_h, state_c), history_lstm = nn.RNN(
+            nn.OptimizedLSTMCell(),
+            cell_size=self.hidden_layer_size,
+            return_carry=True,
+        )(
             historical_features,
+            initial_carry=(static_context.state_h, static_context.state_c),
         )
-        _, _, future_lstm = self.future_features_lstm(
-            [state_c, state_h],
+        _, future_lstm = nn.RNN(
+            nn.OptimizedLSTMCell(),
+            cell_size=self.hidden_layer_size,
+            return_carry=True,
+        )(
             future_features,
+            initial_carry=(state_h, state_c),
         )
 
         enriched, temporal_features = ContextEnrichment(
@@ -426,8 +456,10 @@ class EncoderBlock(nn.Module):
     ) -> Float[Array, "batch time n"]:
         x = nn.SelfAttention(
             self.num_attention_heads,
-            qkv_features=self.hidden_layer_size * self.num_attention_heads,
-        )(inputs, mask=nn.make_causal_mask(inputs))
+            # qkv_features=self.hidden_layer_size * self.num_attention_heads,
+        )(
+            inputs
+        )  # , mask=nn.make_causal_mask(inputs))
         x, _ = GLU(
             hidden_layer_size=self.hidden_layer_size,
             dropout_rate=self.dropout_rate,

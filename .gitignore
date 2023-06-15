@@ -163,7 +163,7 @@ cython_debug/
 thrirdparty
 thridparty/google-research
 data
-data.sqfs
+*.sqfs
 checkpoints
 tensorboard_logs
 .tox
@@ -175,3 +175,4 @@ terraform.tfstate.backup
 .terraform
 .vscode
 .DS_Store
+TODO.md

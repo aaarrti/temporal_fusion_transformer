@@ -18,41 +18,34 @@ classifiers = [
 dependencies = [
     "tensorflow; sys_platform == 'linux'",
     "tensorflow_macos; sys_platform == 'darwin'",
+    "jaxtyping",
     "keras_pbar",
     "scikit_learn",
     "pandas",
     "matplotlib",
     "matplotx",
-    "jaxtyping",
-    "keras_tuner"
 ]
 [project.optional-dependencies]
-jax = [
+flax = [
     "jax",
     "jaxlib",
     "flax",
-    "orbax",
     "tf2jax",
     "optax",
     "jmp",
-    "common_loop_utils",
+    "clu",
     "msgpack",
+    "orbax",
     "orbax_checkpoint"
-]
-dev = [
-    "black",
-    "pre_commit",
-    "dvc",
-    "dvc_gcp",
-]
-iree = [
-    "iree-compiler",
-    "iree-runtime",
-    "iree-tools-tf"
 ]
 polars = [
     "pyarrow",
     "polars",
+]
+tests = [
+    "temporal_fusion_transformer[flax,polars]",
+    "pytest",
+    "chex"
 ]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"

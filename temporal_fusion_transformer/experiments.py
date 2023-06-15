@@ -200,25 +200,6 @@ class Experiment(ABC):
 
 
 class ElectricityExperiment(Experiment):
-    """
-    Electricity is a widely used dataset described by M. Harries and analyzed by J. Gama (see papers below).
-    This data was collected from the Australian New South Wales Electricity Market.  In this market, prices are not
-    fixed and are affected by demand and supply of the market. They are set every five minutes. Electricity transfers
-    to/from the neighboring state of Victoria were done to alleviate fluctuations. The dataset (originally named ELEC2)
-    contains 45,312 instances dated from 7 May 1996 to 5 December 1998. Each example of the dataset refers to a period
-    of 30 minutes, i.e. there are 48 instances for each time period of one day. Each example on the dataset has
-    5 fields, the day of week, the time stamp, the New South Wales electricity demand, the Victoria electricity demand,
-    the scheduled electricity transfer between states and the class label. The class label identifies the change of the
-    price (UP or DOWN) in New South Wales relative to a moving average of the last 24 hours (and removes the impact of
-    longer term price trends).
-
-
-    References:
-    ----------
-    .. [1] https://www.openml.org/d/151
-
-    """
-
     test_boundary: ClassVar[int] = 1339
 
     @property
@@ -276,6 +257,24 @@ class ElectricityExperiment(Experiment):
             "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
         }
 
+    def read_raw_csv_v2(
+        self, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
+    ) -> Tuple[DatasetSplit, ScalersSplit]:
+        import polars as pl
+        pl_df = pl.read_csv(csv_path, separator=";", use_pyarrow=True).sort(
+            by=["column_0"]
+        )
+        cols = pl_df.columns[1:]
+
+        pl_df = pl_df.groupby_dynamic(
+            "column_0", every="1h", period="1y", closed="left"
+        ).agg([pl.col(i).mean() for i in cols])
+
+        # Used to determine the start and end dates of a series
+        pl_df = pl_df.resample("1h").mean().replace(0.0, np.nan)
+
+        earliest_time = pl_df.index.min()
+
     def read_raw_csv(
         self, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
     ) -> Tuple[DatasetSplit, ScalersSplit]:
@@ -318,20 +317,20 @@ class ElectricityExperiment(Experiment):
         """
         logging.info(f"Loading electricity dataset from {csv_path}")
         # This code was copy pasted from original implementation, and I have very little idea
-        # what is it doing. TODO: rewrite using polars or keras.csv_dataset.
-        df = pd.read_csv(csv_path, index_col=0, sep=";", decimal=",")
-        df.index = pd.to_datetime(df.index)
-        df.sort_index(inplace=True)
+        # what is it doing. TODO: rewrite using polars.
+        pd_df = pd.read_csv(csv_path, index_col=0, sep=";", decimal=",")
+        pd_df.index = pd.to_datetime(pd_df.index)
+        pd_df.sort_index(inplace=True)
 
         # Used to determine the start and end dates of a series
-        df = df.resample("1h").mean().replace(0.0, np.nan)
+        pd_df = pd_df.resample("1h").mean().replace(0.0, np.nan)
 
-        earliest_time = df.index.min()
+        earliest_time = pd_df.index.min()
 
         df_list = []
 
-        for label in keras_pbar(df):
-            srs = df[label]
+        for label in keras_pbar(pd_df):
+            srs = pd_df[label]
 
             start_date = min(srs.fillna(method="ffill").dropna().index)
             end_date = max(srs.fillna(method="bfill").dropna().index)
@@ -355,16 +354,18 @@ class ElectricityExperiment(Experiment):
 
             df_list.append(tmp)
 
-        df = pd.concat(df_list, axis=0, join="outer").reset_index(drop=True)
+        pd_df = pd.concat(df_list, axis=0, join="outer").reset_index(drop=True)
         del df_list
 
-        df["categorical_id"] = df["id"].copy()
-        df["hours_from_start"] = df["t"]
-        df["categorical_day_of_week"] = df["day_of_week"].copy()
-        df["categorical_hour"] = df["hour"].copy()
+        pd_df["categorical_id"] = pd_df["id"].copy()
+        pd_df["hours_from_start"] = pd_df["t"]
+        pd_df["categorical_day_of_week"] = pd_df["day_of_week"].copy()
+        pd_df["categorical_hour"] = pd_df["hour"].copy()
 
         # Filter to match range used by other academic papers
-        df = df[(df["days_from_start"] >= 1096) & (df["days_from_start"] < 1346)].copy()
+        pd_df = pd_df[
+            (pd_df["days_from_start"] >= 1096) & (pd_df["days_from_start"] < 1346)
+        ].copy()
         logging.info("Done.")
 
         # index: days_from_start, Length: 2198072, dtype: int64
@@ -373,12 +374,12 @@ class ElectricityExperiment(Experiment):
         # np.min(index)
         # Out[44]: 1096
 
-        index = df["days_from_start"]
-        train_df = df.loc[index < validation_boundary]
-        validation_df = df.loc[
+        index = pd_df["days_from_start"]
+        train_df = pd_df.loc[index < validation_boundary]
+        validation_df = pd_df.loc[
             (index >= validation_boundary - 7) & (index < test_boundary)
         ]
-        test_df = df.loc[index >= test_boundary - 7]
+        test_df = pd_df.loc[index >= test_boundary - 7]
 
         # Pre-processing will do few things:
         # - Find real columns and apply sklearn.NormalScaler to them instance-wise (using ID column).
@@ -422,7 +423,7 @@ class ElectricityExperiment(Experiment):
         categorical_scalers: Dict[str, LabelEncoder] = {}
         num_classes = {}
         logging.debug("Fitting scalers.")
-        for identifier, sliced in keras_pbar(df.groupby(id_column)):
+        for identifier, sliced in keras_pbar(pd_df.groupby(id_column)):
             if len(sliced) >= self.total_time_steps:
                 data = sliced[real_inputs].values
                 targets = sliced[[target_column]].values
@@ -431,7 +432,7 @@ class ElectricityExperiment(Experiment):
 
         for col in keras_pbar(categorical_inputs):
             # Set all to str so that we don't have mixed integer/string columns
-            srs = df[col].apply(str)
+            srs = pd_df[col].apply(str)
             num_classes[col] = srs.nunique()
             categorical_scalers[col] = LabelEncoder().fit(srs.values)
 
@@ -530,13 +531,14 @@ class FavoritaExperiment(Experiment):
 
 
 def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
-    time_steps = len(input_data)
-    x = input_data.values
-    if time_steps >= lags:
-        return np.stack(
-            [x[i : time_steps - (lags - 1) + i, :] for i in range(lags)], axis=1
-        )
-    logging.error("time_steps < lags, this is not expected.")
+    # Doesn't support dict
+    return np.asarray(
+        [
+            *tf.keras.utils.timeseries_dataset_from_array(
+                input_data.to_numpy(), None, lags, batch_size=None
+            ).as_numpy_iterator()
+        ]
+    )
 
 
 def normalize_data(
@@ -578,22 +580,25 @@ def make_np_array_dict(
 ) -> Dict[str, np.ndarray]:
     logging.debug("Grouping and batching data.")
     df.sort_values(by=[id_column, time_col], inplace=True)
-    data_map: DefaultDict[str, List[np.ndarray]] = defaultdict(lambda: [])
+
+    dataset = []
 
     for _, sliced in keras_pbar(df.groupby(id_column)):
+        # Here we group by id, to make sure every time-series we create, contain same entity (id).
+        # later, Dataset.rebatch() changes only leading dimension, so we won't destroy the pattern.
+        data_map: DefaultDict[str, List[np.ndarray]] = defaultdict(lambda: [])
         for k in col_mapping:
             cols = col_mapping[k]
             if len(cols) == 0:
                 continue
-            # TODO use tf.keras.utils.time_series_dataset here
-            arr = batch_single_entity(sliced[cols].copy(), total_time_steps)
+            arr = sliced[cols].to_numpy()
             if arr.dtype == np.int64:
                 arr = arr.astype(np.int32)
             if arr.dtype == np.float64:
                 arr = arr.astype(np.float32)
             data_map[k].append(arr)
+            dataset.append(dict(**data_map))
 
-    data_map = dict(**data_map)
     for k in data_map:
         data_map[k] = np.concatenate(data_map[k], axis=0)
     # Save only future steps

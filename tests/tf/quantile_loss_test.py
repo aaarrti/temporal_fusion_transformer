@@ -11,7 +11,7 @@ quantiles = [0.1, 0.5, 0.9]
 
 
 class QuantileLossTest(tf.test.TestCase):
-    def test_loss_fn(self):
+    def test_loss_fn(self):  # noqa
         y_true = tf.random.uniform((8, 24, 1), seed=PRNG_SEED)
         y_pred = tf.random.uniform((8, 24, 3), seed=PRNG_SEED)
         loss = quantile_loss(y_true, y_pred, tf.constant(quantiles))
@@ -19,7 +19,7 @@ class QuantileLossTest(tf.test.TestCase):
         tf.debugging.assert_rank(loss, 1)
         assert loss.shape == (8,)
 
-    def test_loss_converges_to_0(self):
+    def test_loss_converges_to_0(self):  # noqa
         y_true = tf.ones((8, 24, 1))
         y_pred = tf.ones((8, 24, 3))
 
@@ -28,7 +28,7 @@ class QuantileLossTest(tf.test.TestCase):
         assert loss.shape == (8,)
         tf.debugging.assert_near(loss, 0.0)
 
-    def test_loss_fn_wrapper(self):
+    def test_loss_fn_wrapper(self):  # noqa
         y_true = tf.random.uniform((8, 24, 1), seed=PRNG_SEED)
         y_pred = tf.random.uniform((8, 24, 3), seed=PRNG_SEED)
 
@@ -46,7 +46,7 @@ class QuantileRMSETest(tf.test.TestCase):
         tf.debugging.assert_rank(rmse, 1)
         assert rmse.shape == (8,)
 
-    def test_rmse_converges_to_0(self):
+    def test_rmse_converges_to_0(self):  # noqa
         y_true = tf.ones((8, 24, 1))
         y_pred = tf.ones((8, 24, 3))
 
@@ -55,7 +55,7 @@ class QuantileRMSETest(tf.test.TestCase):
         assert rmse.shape == (8,)
         tf.debugging.assert_near(rmse, 0.0)
 
-    def test_metric_wrapper(self):
+    def test_metric_wrapper(self):  # noqa
         y_true = tf.random.uniform((8, 24, 1), seed=PRNG_SEED)
         y_pred = tf.random.uniform((8, 24, 3), seed=PRNG_SEED)
         rmse = QuantileRMSE()(y_true, y_pred)

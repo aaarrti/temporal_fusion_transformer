@@ -28,12 +28,12 @@ def quantile_loss(
     y_true = jnp.asarray(y_true, y_pred.dtype)
     quantiles = jnp.asarray(quantiles, y_pred.dtype)
 
-    y_pred = jnp.reshape(
-        y_pred,
-        jnp.concatenate(
-            [*y_true.shape, *quantiles.shape],
-        ),
-    )
+    batch_size = y_true.shape[0]
+    time_steps = y_true.shape[1]
+    num_outputs = y_true.shape[2]
+    num_quantiles = quantiles.shape[0]
+
+    y_pred = jnp.reshape(y_pred, [batch_size, time_steps, num_outputs, num_quantiles])
     prediction_underflow = y_true[..., jnp.newaxis] - y_pred
 
     return jnp.mean(
@@ -57,7 +57,13 @@ def quantile_rmse(
 ) -> Float[Array, "batch"]:
     y_true = jnp.asarray(y_true, y_pred.dtype)
     quantiles = jnp.asarray(quantiles, y_pred.dtype)
-    y_pred = jnp.reshape(y_pred, jnp.concatenate([*y_true.shape, quantiles.shape]))
+
+    batch_size = y_true.shape[0]
+    time_steps = y_true.shape[1]
+    num_outputs = y_true.shape[2]
+    num_quantiles = quantiles.shape[0]
+
+    y_pred = jnp.reshape(y_pred, [batch_size, time_steps, num_outputs, num_quantiles])
     # Calculate squared differences, average sum across quantiles.
     squared_diff = jnp.sum(
         jnp.square(y_true[..., jnp.newaxis] - y_pred) * quantiles, axis=-1

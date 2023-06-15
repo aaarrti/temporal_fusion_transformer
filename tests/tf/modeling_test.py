@@ -9,11 +9,11 @@ from temporal_fusion_transformer.tf.modeling import (
     TFTInputEmbedding,
     VariableSelection,
     EncoderBlock,
+    ContextInputs,
 )
-from temporal_fusion_transformer.utils import load_data_from_archive, make_tft_model
+from temporal_fusion_transformer.utils import make_tft_model
 from tests.constants import PRNG_SEED
 
-tf.config.run_functions_eagerly(True)
 static_categories_sizes = [2, 2]
 known_categories_sizes = [4]
 n_time_steps = 30
@@ -61,11 +61,11 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
         )
 
     @parameterized.parameters((25, 4), (5, 3))
-    def test_temporal_variable_selection_network(self, time_steps, features):
+    def test_variable_selection_network(self, time_steps, features):
         layer = VariableSelection(
             hidden_layer_size, prng_seed=PRNG_SEED, dropout_rate=0
         )
-        x = dict(
+        x = ContextInputs(
             inputs=tf.random.uniform(
                 (batch_size, time_steps, hidden_layer_size, features)
             ),
@@ -168,11 +168,19 @@ def make_x_batch():
 
 class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
     def setUp(self):
-        train_ds = load_data_from_archive("tests/assets/electricity/train.npz")
-        val_ds = load_data_from_archive("tests/assets/electricity/validation.npz")
-
-        self.train_ds = tf.data.Dataset.from_tensors(train_ds)
-        self.val_ds = tf.data.Dataset.from_tensors(val_ds)
+        self.train_ds = (
+            tf.data.Dataset.load("tests/assets/electricity/data")
+            .rebatch(8)
+            .take(2)
+            .prefetch(tf.data.AUTOTUNE)
+        )
+        self.val_ds = (
+            tf.data.Dataset.load("tests/assets/electricity/data")
+            .rebatch(8)
+            .skip(2)
+            .take(1)
+            .prefetch(tf.data.AUTOTUNE)
+        )
 
     @parameterized.parameters(
         [
@@ -230,12 +238,12 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
         tf.keras.mixed_precision.set_global_policy(policy)
         train_ds = self.train_ds.map(
             lambda i: make_input_tuple(
-                i, tf.keras.mixed_precision.global_policy().compute_dtype
+                i, tf.keras.mixed_precision.global_policy().compute_dtype, 24
             )
         )
         val_ds = self.val_ds.map(
             lambda i: make_input_tuple(
-                i, tf.keras.mixed_precision.global_policy().compute_dtype
+                i, tf.keras.mixed_precision.global_policy().compute_dtype, 24
             )
         )
         model = make_tft_model(
@@ -252,11 +260,11 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
         tf.debugging.check_numerics(history["loss"], "Test Failed.")
 
 
-def make_input_tuple(data, dtype):
+def make_input_tuple(data, dtype, n):
     return (
         dict(
             static=data["inputs_static"],
             known_real=tf.cast(data["inputs_known_real"], dtype),
         ),
-        tf.cast(data["outputs"], dtype),
+        tf.cast(data["outputs"][:, :n], dtype),
     )

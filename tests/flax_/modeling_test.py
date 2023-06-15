@@ -101,7 +101,7 @@ class TFTLayersTest(chex.TestCase, parameterized.TestCase):
     )
     def test_decoder(self):
         layer = self.variant(EncoderBlock)(
-            4,
+            num_attention_heads=hidden_layer_size,
             hidden_layer_size=hidden_layer_size,
             dropout_rate=0,
         )
@@ -119,12 +119,16 @@ class TFTLayersTest(chex.TestCase, parameterized.TestCase):
 
 
 class TFTModelTest(chex.TestCase, parameterized.TestCase):
+    @lifted_variants.variants(
+        with_lifted_jit=True,
+        without_lifted_jit=True,
+    )
     @parameterized.parameters(1, 4, 12)
     def test_tft_model(self, num_stacks):
         x_batch = make_x_batch()
-        model = TemporalFusionTransformer(
+        model = self.variant(TemporalFusionTransformer)(
             num_encoder_steps=25,
-            num_attention_heads=4,
+            num_attention_heads=hidden_layer_size,
             hidden_layer_size=hidden_layer_size,
             static_categories_sizes=static_categories_sizes,
             known_categories_sizes=known_categories_sizes,
@@ -133,11 +137,15 @@ class TFTModelTest(chex.TestCase, parameterized.TestCase):
             output_size=1,
             num_stacks=num_stacks,
         )
-        logits = model(x_batch)
+        logits, _ = model.init_with_output(prng_key, x_batch)
         chex.assert_tree_all_finite(logits, "Test Failed.")
         # 3 is default number of quantiles.
         chex.assert_shape(logits, (batch_size, 5, 3))
 
+    @lifted_variants.variants(
+        with_lifted_jit=True,
+        without_lifted_jit=True,
+    )
     @parameterized.named_parameters(
         (
             "known_categorical==None",
@@ -168,7 +176,7 @@ class TFTModelTest(chex.TestCase, parameterized.TestCase):
         ),
     )
     def test_input_is_missing(self, x_batch, _known_categories_sizes):
-        model = TemporalFusionTransformer(
+        model = self.variant(TemporalFusionTransformer)(
             num_encoder_steps=25,
             num_attention_heads=4,
             hidden_layer_size=hidden_layer_size,
@@ -177,7 +185,7 @@ class TFTModelTest(chex.TestCase, parameterized.TestCase):
             dropout_rate=0,
             output_size=1,
         )
-        logits = model(x_batch)
+        logits, _ = model.init_with_output(prng_key, x_batch)
         chex.assert_tree_all_finite(logits, "Test Failed.")
         # 3 is default number of quantiles.
         chex.assert_shape(logits, (batch_size, 5, 3))

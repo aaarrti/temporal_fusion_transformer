@@ -6,11 +6,15 @@ from tests.constants import PRNG_SEED
 
 class PlottingTest(tf.test.TestCase):
     def setUp(self):
-        self.past_time = tf.random.uniform(shape=[8, 20], seed=PRNG_SEED)
-        self.future_time = tf.random.uniform(shape=[8, 10], seed=PRNG_SEED)
-        self.past_outputs = tf.random.uniform(shape=[8, 20, 2], seed=PRNG_SEED)
-        self.future_outputs = tf.random.uniform(shape=[8, 10, 2], seed=PRNG_SEED)
-        self.predicted_outputs = tf.random.uniform(shape=[8, 10, 6], seed=PRNG_SEED)
+        self.past_time = tf.random.uniform(shape=[8, 20], seed=PRNG_SEED).numpy()
+        self.future_time = tf.random.uniform(shape=[8, 10], seed=PRNG_SEED).numpy()
+        self.past_outputs = tf.random.uniform(shape=[8, 20, 2], seed=PRNG_SEED).numpy()
+        self.future_outputs = tf.random.uniform(
+            shape=[8, 10, 2], seed=PRNG_SEED
+        ).numpy()
+        self.predicted_outputs = tf.random.uniform(
+            shape=[8, 10, 6], seed=PRNG_SEED
+        ).numpy()
 
     def test_plot_full(self):
         plot_predictions(

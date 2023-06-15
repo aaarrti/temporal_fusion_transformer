@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from importlib import util
 import logging
+from contextlib import contextmanager
 from typing import (
     Mapping,
     Dict,
@@ -20,10 +22,11 @@ import tensorflow as tf
 from keras_pbar import keras_pbar
 from sklearn.utils import gen_batches
 from tensorflow.python.types.core import TensorLike
-from contextlib import contextmanager
 
 if TYPE_CHECKING:
-    from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
+    from temporal_fusion_transformer.tf.modeling import (
+        TemporalFusionTransformer as TF_TemporalFusionTransformer,
+    )
     from temporal_fusion_transformer.experiments import Experiment
 
 T = TypeVar("T")
@@ -123,47 +126,6 @@ def export_sharded_dataset(
         tf.data.Dataset.from_tensors(shard).save(f"{export_path}/{index}")
 
 
-def load_sharded_dataset(
-    file_names: Sequence[str],
-    element_spec: Mapping[str, tf.TensorSpec] | Tuple[tf.TensorSpec, ...] | None = None,
-) -> tf.data.Dataset:
-    if element_spec is None:
-        element_spec = {
-            "identifier": tf.TensorSpec([None, 192, 1], dtype=tf.string),
-            "time": tf.TensorSpec([None, 192, 1], dtype=tf.float32),
-            "outputs": tf.TensorSpec([None, 24, 1], dtype=tf.float32),
-            "inputs_static": tf.TensorSpec([None, 1], dtype=tf.int32),
-            "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
-            "inputs_known_categorical": tf.TensorSpec([None, 192, 3], dtype=tf.int32),
-            "inputs_observed": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
-        }
-
-    return tf.data.Dataset.from_tensor_slices(file_names).flat_map(
-        lambda i: tf.data.Dataset.load(i, element_spec=element_spec)
-    )
-
-
-def load_data_from_archive(
-    path: str,
-) -> Dict[str, np.ndarray]:
-    archive = np.load(path, allow_pickle=True)
-    data = {}
-
-    for k in (
-        "identifier",
-        "time",
-        "outputs",
-        "inputs_static",
-        "inputs_known_real",
-        "inputs_known_categorical",
-        "inputs_observed",
-    ):
-        if k in archive:
-            data[k] = archive[k]
-
-    return data
-
-
 def flatten_dict(xs: Mapping[str, ...], sep: str = "/") -> Dict[str, ...]:
     """
     Examples:
@@ -225,7 +187,26 @@ def identity(x: T) -> T:
     return x
 
 
-def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransformer:
+def make_tft_model(experiment: Experiment, **kwargs) -> TF_TemporalFusionTransformer:
+    """
+    Create TFT model for experiment.
+
+    Parameters
+    ----------
+    experiment:
+        Experiment instance used to fill fixed model parameters, as well as default ones.
+    kwargs:
+        Use this to override default hyperparameters from experiment instance, or to pass additional
+        __init__ kwargs to model.
+
+    Returns
+    -------
+
+    tft_model:
+        TF or Flax implementation of model. In both cases, the model is not traced!
+        It is users responsibility to provide representative input.
+
+    """
     kwargs = add_default_items(
         kwargs,
         dict(
@@ -298,3 +279,49 @@ def make_gpu_strategy(
     if clazz is None:
         clazz = tf.distribute.MirroredStrategy
     return clazz()
+
+
+if util.find_spec("flax") is not None:
+    from temporal_fusion_transformer.flax_.modeling import (
+        TemporalFusionTransformer as Flax_TemporalFusionTransformer,
+    )
+    import flax.linen as nn
+
+    def make_flax_tft_model(
+        experiment: Experiment, jit: bool = True, **kwargs
+    ) -> Flax_TemporalFusionTransformer:
+        """
+        Create TFT model for experiment.
+
+        Parameters
+        ----------
+        experiment:
+            Experiment instance used to fill fixed model parameters, as well as default ones.
+        jit:
+        kwargs:
+            Use this to override default hyperparameters from experiment instance, or to pass additional
+            __init__ kwargs to model.
+
+        Returns
+        -------
+
+        tft_model:
+            TF or Flax implementation of model. In both cases, the model is not traced!
+            It is users responsibility to provide representative input.
+
+        """
+        kwargs = add_default_items(
+            kwargs,
+            dict(
+                static_categories_sizes=experiment.fixed_params.static_categories_sizes,
+                known_categories_sizes=experiment.fixed_params.known_categories_sizes,
+                num_encoder_steps=experiment.fixed_params.num_encoder_steps,
+                hidden_layer_size=experiment.default_params.hidden_layer_size,
+                num_attention_heads=experiment.default_params.num_attention_heads,
+                dropout_rate=experiment.default_params.dropout_rate,
+            ),
+        )
+        clazz = Flax_TemporalFusionTransformer
+        if jit:
+            clazz = nn.jit(clazz)
+        return clazz(**kwargs)

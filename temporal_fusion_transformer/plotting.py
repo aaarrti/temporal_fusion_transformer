@@ -132,7 +132,3 @@ def wrap_axes(axs: plt.Axes | SupportGetItem[plt.Axes]) -> SupportGetItem[plt.Ax
         return [axs]
     else:
         return axs
-
-
-def plot_feature_importance():
-    pass

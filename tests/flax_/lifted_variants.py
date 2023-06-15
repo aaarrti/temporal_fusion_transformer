@@ -5,12 +5,12 @@ from types import MethodType
 
 import flax.linen as nn
 import toolz
-from chex._src.variants import (
+from chex._src.variants import (  # noqa
     Variant,
     check_variant_arguments,
     VariantsTestCaseGenerator,
-    _variant_decorators,
-    _valid_kwargs_keys,
+    _variant_decorators,  # noqa
+    _valid_kwargs_keys,  # noqa
 )
 
 
@@ -44,8 +44,8 @@ def _variants_fn(
 @toolz.curry
 def variants(
     test_method: MethodType,
-    with_lifted_jit: bool = False,
-    without_lifted_jit: bool = False,
+    with_lifted_jit: bool = False,  # noqa
+    without_lifted_jit: bool = False,  # noqa
 ) -> VariantsTestCaseGenerator:
     return _variants_fn(
         test_method,
