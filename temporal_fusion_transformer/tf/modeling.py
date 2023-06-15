@@ -104,13 +104,13 @@ class TemporalFusionTransformer(tf.keras.Model):
             name="future_variable_selection",
         )
         if use_cudnn_lstm:
-            self.historical_features_lstm = tf.compat.v1.keras.layers.CuDNNLSTM(
+            self.historical_features_lstm = layers.CuDNNLSTM(
                 hidden_layer_size,
                 return_sequences=True,
                 return_state=True,
                 name="historical_features_lstm",
             )
-            self.future_features_lstm = tf.compat.v1.keras.layers.CuDNNLSTM(
+            self.future_features_lstm = layers.CuDNNLSTM(
                 hidden_layer_size,
                 return_sequences=True,
                 name="future_features_lstm",

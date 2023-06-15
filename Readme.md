@@ -55,3 +55,7 @@ gsutil cp -r data gs://tf2_tft_v2/
 
 ### TODO:
 - create v2 models without RNN-s and LSTM-s (like full blown transformer).
+- try https://keras.io/examples/structured_data/tabtransformer/
+- https://keras.io/examples/timeseries/timeseries_transformer_classification/
+- https://keras.io/examples/timeseries/timeseries_traffic_forecasting/
+- https://keras.io/examples/keras_recipes/creating_tfrecords/#generate-data-in-the-tfrecord-format

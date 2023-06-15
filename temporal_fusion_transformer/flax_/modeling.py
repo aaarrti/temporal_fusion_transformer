@@ -424,11 +424,10 @@ class EncoderBlock(nn.Module):
         inputs: Float[Array, "batch time n"],
         **kwargs,
     ) -> Float[Array, "batch time n"]:
-        d_k = self.hidden_layer_size // self.num_attention_heads
-
-        x = nn.SelfAttention(self.num_attention_heads, qkv_features=d_k)(
-            inputs, mask=nn.make_causal_mask(inputs)
-        )
+        x = nn.SelfAttention(
+            self.num_attention_heads,
+            qkv_features=self.hidden_layer_size * self.num_attention_heads,
+        )(inputs, mask=nn.make_causal_mask(inputs))
         x, _ = GLU(
             hidden_layer_size=self.hidden_layer_size,
             dropout_rate=self.dropout_rate,
