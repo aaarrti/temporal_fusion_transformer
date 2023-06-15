@@ -464,6 +464,51 @@ class ElectricityExperiment(Experiment):
         return ds_split, scalers_params
 
 
+class FavoritaExperiment(Experiment):
+    @property
+    def column_schema(self) -> Dict[str, SchemaEntry | List[SchemaEntry]]:
+        return {
+            "traj_id": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.ID),
+            "date": SchemaEntry(DataTypes.DATE, InputTypes.TIME),
+            "log_sales": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.TARGET),
+            "onpromotion": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.KNOWN_INPUT),
+            "transactions": SchemaEntry(
+                DataTypes.REAL_VALUED, InputTypes.OBSERVED_INPUT
+            ),
+            "oil": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.OBSERVED_INPUT),
+            "day_of_week": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.KNOWN_INPUT),
+            "day_of_month": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            "month": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            "national_hol": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.KNOWN_INPUT),
+            "regional_hol": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.KNOWN_INPUT),
+            "local_hol": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.KNOWN_INPUT),
+            "open": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
+            "item_nbr": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+            "store_nbr": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+            "city": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+            "state": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+            "type": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+            "cluster": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+            "family": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+            "class": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+            "perishable": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.STATIC_INPUT),
+        }
+
+    @property
+    def default_params(self) -> ModelParams:
+        pass
+
+    @property
+    def fixed_params(self) -> FixedParams:
+        return FixedParams(
+            total_time_steps=120,
+            num_encoder_steps=90,
+            known_categories_sizes=[],
+            static_categories_sizes=[],
+            num_outputs=1,
+        )
+
+
 def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
     time_steps = len(input_data)
     x = input_data.values
@@ -540,3 +585,4 @@ def make_np_array_dict(
 
 
 electricity_experiment = ElectricityExperiment()
+favorita_experiment = FavoritaExperiment()

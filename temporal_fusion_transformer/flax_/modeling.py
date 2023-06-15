@@ -6,23 +6,45 @@ import flax.linen as nn
 import jax
 import jax.nn
 import jax.numpy as jnp
-from flax.struct import dataclass
+from flax.struct import PyTreeNode
 from jaxtyping import Float, Array, Int
 
 
-@dataclass
-class TFTInput:
+# ------------------------------ type defs ------------------------
+class TFTInput(PyTreeNode):
     static: Int[Array, "batch s"]
     known_real: Float[Array, "batch t k"]
     known_categorical: Int[Array, "batch t c"] | None = None
     observed: Float[Array, "batch t o"] | None = None
 
 
-@dataclass
-class TFTEmbeddings:
+class TFTEmbeddings(PyTreeNode):
     static: Float[Array, "batch s n"]
-    real: Float[Array, "batch n r"]
+    known: Float[Array, "batch n r"]
     observed: Float[Array, "batch n o"] | None = None
+
+
+class ContextEnrichmentInputs(PyTreeNode):
+    history_lstm: jnp.ndarray
+    future_lstm: jnp.ndarray
+    historical_features: jnp.ndarray
+    future_features: jnp.ndarray
+    static_context: jnp.ndarray
+
+
+class ContextInput(PyTreeNode):
+    inputs: Float[Array, "batch n"]
+    context: Float[Array, "batch n n k"]
+
+
+class StaticContext(PyTreeNode):
+    enrichment: Float[Array, "batch n"]
+    state_h: Float[Array, "batch n"]
+    state_c: Float[Array, "batch n"]
+    vector: Float[Array, "batch n"]
+
+
+# ----------------------------------------------
 
 
 class TemporalFusionTransformer(nn.Module):
@@ -31,14 +53,86 @@ class TemporalFusionTransformer(nn.Module):
     num_encoder_steps: int
     hidden_layer_size: int
     num_attention_heads: int
-    num_quantiles: int
+    quantiles: List[float]
     num_stacks: int = 1
     dropout_rate: float = 0.1
     output_size: int = 1
 
     @nn.compact
     def __call__(self, inputs: TFTInput, **kwargs) -> Float[Array, "batch t n"]:
-        pass
+        embeddings = TFTInputEmbedding(
+            static_categories_size=self.static_categories_sizes,
+            known_categories_size=self.known_categories_sizes,
+            hidden_layer_size=self.hidden_layer_size,
+        )(inputs)
+
+        # Isolate known and observed historical inputs.
+        historical_indexes = jnp.arange(self.num_encoder_steps)
+        if inputs.observed is not None:
+            historical_inputs = jnp.concatenate(
+                [
+                    jnp.take(embeddings.known, historical_indexes, axis=1),
+                    jnp.take(embeddings.observed, historical_indexes, axis=1),
+                ],
+                axis=-1,
+            )
+        else:
+            historical_inputs = jnp.take(embeddings.known, historical_indexes, axis=1)
+
+        static_context = StaticCovariatesEncoder(
+            hidden_layer_size=self.hidden_layer_size, dropout_rate=self.dropout_rate
+        )(embeddings.static)
+
+        total_time_steps = jnp.shape(embeddings.known)[1]
+
+        # Isolate only known future inputs.
+        future_inputs = embeddings.known[:, self.num_encoder_steps : total_time_steps]
+        historical_features, historical_flags, _ = VariableSelection(
+            hidden_layer_size=self.hidden_layer_size, dropout_rate=self.dropout_rate
+        )(ContextInput(inputs=historical_inputs, context=static_context.enrichment))
+
+        future_features, future_flags, _ = VariableSelection(
+            hidden_layer_size=self.hidden_layer_size, dropout_rate=self.dropout_rate
+        )(ContextInput(inputs=future_inputs, context=static_context.enrichment))
+
+        state_c, state_h, history_lstm = nn.LSTMCell()(
+            [static_context.state_c, static_context.state_h],
+            historical_features,
+        )
+        _, _, future_lstm = self.future_features_lstm(
+            [state_c, state_h],
+            future_features,
+        )
+
+        enriched, temporal_features = ContextEnrichment(
+            hidden_layer_size=self.hidden_layer_size, dropout_rate=self.dropout_rate
+        )(
+            ContextEnrichmentInputs(
+                history_lstm=history_lstm,
+                future_lstm=future_lstm,
+                historical_features=historical_features,
+                future_features=future_features,
+                static_context=static_context.vector,
+            ),
+        )
+        encoder_in = enriched
+
+        for i in range(self.num_stacks):
+            encoder_out = EncoderBlock(
+                num_attention_heads=self.num_attention_heads,
+                hidden_layer_size=self.hidden_layer_size,
+                dropout_rate=self.dropout_rate,
+            )(encoder_in)
+            encoder_out = nn.LayerNorm(encoder_out + temporal_features)
+            encoder_in = encoder_out
+
+        outputs = TimeDistributed(nn.Dense(self.output_size * len(self.quantiles)))(
+            encoder_in[:, self.num_encoder_steps : total_time_steps]
+        )
+        return outputs
+
+
+# -------------------------------------------------------------------
 
 
 class TFTInputEmbedding(nn.Module):
@@ -62,7 +156,9 @@ class TFTInputEmbedding(nn.Module):
 
         for i in range(num_known_real_inputs):
             known_real_inputs_embeddings.append(
-                TimeDistributed(nn.Dense)(inputs.known_real[..., i, jnp.newaxis])
+                TimeDistributed(nn.Dense(self.hidden_layer_size))(
+                    inputs.known_real[..., i, jnp.newaxis]
+                )
             )
 
         if inputs.observed is not None:
@@ -70,7 +166,9 @@ class TFTInputEmbedding(nn.Module):
             observed_input_embeddings = []
             for i in range(num_observed_inputs):
                 observed_input_embeddings.append(
-                    TimeDistributed(nn.Dense(inputs.observed[..., i, jnp.newaxis]))
+                    TimeDistributed(nn.Dense(self.hidden_layer_size))(
+                        inputs.observed[..., i, jnp.newaxis]
+                    )
                 )
 
             observed_input_embeddings = jnp.stack(observed_input_embeddings, axis=-1)
@@ -85,7 +183,7 @@ class TFTInputEmbedding(nn.Module):
                         inputs.known_categorical[..., i]
                     )
                 )
-            known_inputs_embeddings = jnp.concat(
+            known_inputs_embeddings = jnp.concatenate(
                 [
                     jnp.stack(known_real_inputs_embeddings, axis=-1),
                     jnp.stack(known_categorical_inputs_embeddings, axis=-1),
@@ -101,14 +199,6 @@ class TFTInputEmbedding(nn.Module):
             observed=observed_input_embeddings,
             known=known_inputs_embeddings,
         )
-
-
-@dataclass
-class StaticContext:
-    enrichment: Float[Array, "batch n"]
-    state_h: Float[Array, "batch n"]
-    state_c: Float[Array, "batch n"]
-    vector: Float[Array, "batch n"]
 
 
 class StaticCovariatesEncoder(nn.Module):
@@ -140,7 +230,7 @@ class StaticCovariatesEncoder(nn.Module):
             )(inputs[:, i][:, jnp.newaxis])
             transformed_embeddings.append(embeds_i)
 
-        transformed_embeddings = jnp.concat(transformed_embeddings, axis=1)
+        transformed_embeddings = jnp.concatenate(transformed_embeddings, axis=1)
         static_context_vector = jnp.sum(sparse_weights * transformed_embeddings, axis=1)
 
         context_variable_selection, _ = GRN(
@@ -243,7 +333,7 @@ class TimeDistributed(nn.Module):
         # We use batch_size when available so that the 0th dimension is
         # set in the static shape of the reshaped output
         new_inner_shape = y.shape[1:]
-        y = jnp.reshape([batch_size, input_length, *new_inner_shape])
+        y = jnp.reshape(y, [batch_size, input_length, *new_inner_shape])
         return y
 
 
@@ -269,17 +359,11 @@ class GLU(nn.Module):
             dense = TimeDistributed(dense)
             pre_activation = TimeDistributed(pre_activation)
 
-        x = nn.Dropout(rate=self.dropout_rate)(inputs)
+        x = nn.Dropout(rate=self.dropout_rate, deterministic=True)(inputs)
         x_pre_activation = dense(x)
         x_gated = activation(pre_activation(x))
         x = x_pre_activation * x_gated
         return x, x_gated
-
-
-@dataclass
-class ContextInput:
-    inputs: Float[Array, "batch n"]
-    context: Float[Array, "batch n n k"]
 
 
 class GRN(nn.Module):
@@ -338,15 +422,12 @@ class EncoderBlock(nn.Module):
     def __call__(
         self,
         inputs: Float[Array, "batch time n"],
-        mask: Float[Array, "batch time time"] | None = None,
         **kwargs,
     ) -> Float[Array, "batch time n"]:
-        if mask is None:
-            mask = make_causal_attention_mask(inputs)
-        x = nn.MultiHeadDotProductAttention(self.num_attention_heads)(
-            inputs,
-            inputs,
-            attention_mask=mask,
+        d_k = self.hidden_layer_size // self.num_attention_heads
+
+        x = nn.SelfAttention(self.num_attention_heads, qkv_features=d_k)(
+            inputs, mask=nn.make_causal_mask(inputs)
         )
         x, _ = GLU(
             hidden_layer_size=self.hidden_layer_size,
@@ -369,15 +450,6 @@ class EncoderBlock(nn.Module):
         return decoded
 
 
-@dataclass
-class ContextEnrichmentInputs:
-    history_lstm: jnp.ndarray
-    future_lstm: jnp.ndarray
-    historical_features: jnp.ndarray
-    future_features: jnp.ndarray
-    static_context: jnp.ndarray
-
-
 class ContextEnrichment(nn.Module):
     hidden_layer_size: int
     dropout_rate: float
@@ -386,8 +458,10 @@ class ContextEnrichment(nn.Module):
     def __call__(
         self, inputs: ContextEnrichmentInputs, **kwargs
     ) -> Tuple[Float[Array, "batch steps+time n"], Float[Array, "batch steps+time n"]]:
-        lstm_outputs = jnp.concat([inputs.history_lstm, inputs.future_lstm], axis=1)
-        input_embeddings = jnp.concat(
+        lstm_outputs = jnp.concatenate(
+            [inputs.history_lstm, inputs.future_lstm], axis=1
+        )
+        input_embeddings = jnp.concatenate(
             [inputs.historical_features, inputs.future_features], axis=1
         )
         lstm_outputs, _ = GLU(
@@ -412,17 +486,7 @@ class ContextEnrichment(nn.Module):
         return enriched, temporal_features
 
 
-@jax.jit
-def make_causal_attention_mask(
-    self_attn_inputs: Float[Array, "batch time_steps n"]
-) -> Float[Array, "batch encoder_steps encoder_steps"]:
-    len_s = self_attn_inputs.shape[1]
-    bs = self_attn_inputs.shape[:1]
-    mask = jnp.cumsum(jnp.eye(len_s, batch_shape=bs), 1)
-    return mask
-
-
-class Identity(nn.Dense):
+class Identity(nn.Module):
     @nn.compact
     def __call__(self, inputs, **kwargs):
         return inputs

@@ -13,6 +13,7 @@ from temporal_fusion_transformer.tf.modeling import (
 from temporal_fusion_transformer.utils import load_data_from_archive, make_tft_model
 from tests.constants import PRNG_SEED
 
+tf.config.run_functions_eagerly(True)
 static_categories_sizes = [2, 2]
 known_categories_sizes = [4]
 n_time_steps = 30

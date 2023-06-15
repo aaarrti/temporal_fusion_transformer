@@ -201,10 +201,11 @@ class TemporalFusionTransformer(tf.keras.Model):
 
         static_context: Dict[str, tf.Tensor] = self.static_encoder(embeddings["static"])
         total_time_steps = tf.shape(embeddings["known"])[1]
-        future_indexes = tf.range(self.num_encoder_steps, total_time_steps)
 
         # Isolate only known future inputs.
-        future_inputs = tf.gather(embeddings["known"], future_indexes, axis=1)
+        future_inputs = embeddings["known"][
+            :, self.num_encoder_steps : total_time_steps
+        ]
         historical_features, historical_flags, _ = self.historical_variable_selection(
             dict(inputs=historical_inputs, context=static_context["enrichment"])
         )
@@ -245,12 +246,10 @@ class TemporalFusionTransformer(tf.keras.Model):
                 static_context=static_context["vector"],
             ),
         )
-
-        mask = make_causal_attention_mask(enriched)
         encoder_in = enriched
 
         for ln, block in zip(self.post_encoder_layer_norm, self.encoder_blocks):
-            encoder_out = block(encoder_in, mask=mask)
+            encoder_out = block(encoder_in)
             encoder_out = ln(encoder_out + temporal_features)
             encoder_in = encoder_out
 
@@ -455,7 +454,7 @@ class TFTInputEmbedding(layers.Layer):
             known_categorical_inputs_embeddings = []
             for i, layer in enumerate(self.known_categorical_embedding):
                 known_categorical_inputs_embeddings.append(
-                    layer(tf.gather(known_categorical, i, axis=-1))
+                    layer(known_categorical[..., i])
                 )
             known_inputs_embeddings = tf.concat(
                 [
@@ -1002,19 +1001,9 @@ class EncoderBlock(layers.Layer):
         )
 
     def call(
-        self,
-        inputs: Float[tf.Tensor, "batch time n"],
-        mask: Float[tf.Tensor, "batch time time"] | None = None,
-        **kwargs,
+        self, inputs: Float[tf.Tensor, "batch time n"], **kwargs
     ) -> Float[tf.Tensor, "batch time n"]:
-        if mask is None:
-            mask = make_causal_attention_mask(inputs)
-        x = self.self_attn(
-            inputs,
-            inputs,
-            inputs,
-            attention_mask=mask,
-        )
+        x = self.self_attn(inputs, inputs, inputs, use_causal_mask=True)
         x, _ = self.glu_1(x)
         x = self.layer_norm(x + inputs)
         # Nonlinear processing on outputs
@@ -1110,16 +1099,3 @@ class ContextEnrichment(layers.Layer):
             }
         )
         return config
-
-
-# ---------------------- helper functions ---------------------------
-
-
-@tf.function(reduce_retracing=True, jit_compile=can_jit_compile(True))
-def make_causal_attention_mask(
-    self_attn_inputs: Float[tf.Tensor, "batch time_steps n"]
-) -> Float[tf.Tensor, "batch encoder_steps encoder_steps"]:
-    len_s = tf.shape(self_attn_inputs)[1]
-    bs = tf.shape(self_attn_inputs)[:1]
-    mask = tf.cumsum(tf.eye(len_s, batch_shape=bs), 1)
-    return mask

@@ -1,268 +1,192 @@
-# import jax
-# import jax.numpy as jnp
-# import chex
-# from temporal_fusion_transformer.flax_.modeling import (
-#    TemporalFusionTransformer,
-#    StaticCovariatesEncoder,
-#    TFTInputEmbedding,
-#    TemporalVariableSelectionNetwork,
-#    TemporalEncoderBlock,
-# )
-# from temporal_fusion_transformer.experiments import electricity_experiment
-# from temporal_fusion_transformer.utils import load_data_from_archive, make_tft_model
-#
-# from tests.constants import PRNG_SEED
-#
-#
-# static_categories_sizes = [2, 2]
-# known_categories_sizes = [4]
-# n_time_steps = 30
-# batch_size = 8
-# hidden_layer_size = 5
-#
-#
-# class TFTLayersTest(chex.TestCase):
-#    def test_input_embedding(self):
-#        x_batch = make_x_batch()
-#        layer = TFTInputEmbedding(
-#            static_categories_sizes,
-#            known_categories_sizes,
-#            hidden_layer_size,
-#        )
-#        x_embeds = layer(x_batch)
-#        # Same shapes as in the original implementation.
-#        chex.assert_shape(x_embeds["static"], (batch_size, 2, hidden_layer_size))
-#        chex.assert_shape(
-#            x_embeds["known"],
-#            (batch_size, n_time_steps, hidden_layer_size, 4),
-#        )
-#
-#        self.assertEqual(
-#            (batch_size, n_time_steps, hidden_layer_size, 1),
-#            x_embeds["observed"].shape,
-#        )
-#
-#    def test_static_covariates_encoder(self):
-#        layer = StaticCovariatesEncoder(
-#            hidden_layer_size, dropout_rate=0.0, prng_seed=PRNG_SEED
-#        )
-#        static_context = layer(tf.random.uniform((batch_size, 2, hidden_layer_size)))
-#        # Same shapes as in the original implementation.
-#        self.assertEqual(
-#            (batch_size, hidden_layer_size), static_context["vector"].shape
-#        )
-#        self.assertEqual(
-#            (batch_size, hidden_layer_size), static_context["enrichment"].shape
-#        )
-#        self.assertEqual(
-#            (batch_size, hidden_layer_size), static_context["state_h"].shape
-#        )
-#        self.assertEqual(
-#            (batch_size, hidden_layer_size), static_context["state_c"].shape
-#        )
-#
-#    @parameterized.parameters((25, 4), (5, 3))
-#    def test_temporal_variable_selection_network(self, time_steps, features):
-#        layer = TemporalVariableSelectionNetwork(
-#            hidden_layer_size, prng_seed=PRNG_SEED, dropout_rate=0
-#        )
-#        x = dict(
-#            inputs=tf.random.uniform(
-#                (batch_size, time_steps, hidden_layer_size, features)
-#            ),
-#            context=tf.random.uniform((batch_size, hidden_layer_size)),
-#        )
-#        feature, flags, _ = layer(x)
-#        # Same shapes as in the original implementation.
-#        self.assertEqual((batch_size, time_steps, hidden_layer_size), feature.shape)
-#        self.assertEqual((batch_size, time_steps, 1, features), flags.shape)
-#
-#    def test_decoder(self):
-#        layer = TemporalEncoderBlock(
-#            4, hidden_layer_size=hidden_layer_size, dropout_rate=0, prng_seed=PRNG_SEED
-#        )
-#        decoder_out = layer(
-#            tf.random.uniform(
-#                (batch_size, n_time_steps, hidden_layer_size), seed=PRNG_SEED
-#            ),
-#        )
-#        self.assertEqual(
-#            (batch_size, n_time_steps, hidden_layer_size),
-#            decoder_out.shape,
-#        )
-#
-#
-# class TFTModelTest(tf.test.TestCase, parameterized.TestCase):
-#    @parameterized.parameters(1, 4, 12)
-#    def test_tft_model(self, num_stacks):
-#        x_batch = make_x_batch()
-#        model = TemporalFusionTransformer(
-#            num_encoder_steps=25,
-#            num_attention_heads=4,
-#            hidden_layer_size=hidden_layer_size,
-#            static_categories_sizes=static_categories_sizes,
-#            known_categories_sizes=known_categories_sizes,
-#            dropout_rate=0,
-#            quantiles=[1, 2, 3],
-#            output_size=1,
-#            num_stacks=num_stacks,
-#        )
-#        logits = model(x_batch)
-#        tf.debugging.check_numerics(logits, "Test Failed.")
-#        # 3 is default number of quantiles.
-#        self.assertEqual((batch_size, 5, 3), logits.shape)
-#
-#    @parameterized.named_parameters(
-#        (
-#            "known_categorical==None",
-#            dict(
-#                static=tf.ones((8, 4), dtype=tf.int32),
-#                known_real=tf.ones((8, 30, 3), dtype=tf.float32),
-#                observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
-#            ),
-#            [],
-#        ),
-#        (
-#            "observed==None",
-#            dict(
-#                static=tf.ones((8, 4), dtype=tf.int32),
-#                known_real=tf.ones((8, 30, 3), dtype=tf.float32),
-#                known_categorical=(tf.ones((8, 30, 2), dtype=tf.int32)),
-#            ),
-#            known_categories_sizes,
-#        ),
-#        (
-#            "known_categorical==None, observed==None",
-#            dict(
-#                static=tf.ones((8, 4), dtype=tf.int32),
-#                known_real=tf.ones((8, 30, 3), dtype=tf.float32),
-#                observed=tf.random.uniform((8, 30, 1), dtype=tf.float32),
-#            ),
-#            [],
-#        ),
-#    )
-#    def test_input_is_missing(self, x_batch, _known_categories_sizes):
-#        model = TemporalFusionTransformer(
-#            num_encoder_steps=25,
-#            num_attention_heads=4,
-#            hidden_layer_size=hidden_layer_size,
-#            static_categories_sizes=static_categories_sizes,
-#            known_categories_sizes=_known_categories_sizes,
-#            dropout_rate=0,
-#            output_size=1,
-#        )
-#
-#        logits = model(x_batch)
-#        tf.debugging.check_numerics(logits, "Test Failed.")
-#        # 3 is default number of quantiles.
-#        self.assertEqual((batch_size, 5, 3), logits.shape)
-#
-#
-# def make_x_batch():
-#    return dict(
-#        static=jnp.ones((8, 4), dtype=jnp.int32),
-#        known_real=jnp.ones((8, 30, 3), dtype=jnp.float32),
-#        known_categorical=jnp.ones((8, 30, 2), dtype=jnp.int32),
-#        observed=jnp.random.uniform((8, 30, 1), dtype=jnp.float32),
-#    )
-#
-#
-# class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
-#    def setUp(self):
-#        train_ds = load_data_from_archive("tests/assets/electricity/train.npz")
-#        val_ds = load_data_from_archive("tests/assets/electricity/validation.npz")
-#
-#        self.train_ds = tf.data.Dataset.from_tensors(train_ds)
-#        self.val_ds = tf.data.Dataset.from_tensors(val_ds)
-#
-#    @parameterized.parameters(
-#        [
-#            (
-#                "float32",
-#                False,
-#            ),
-#            (
-#                "float16",
-#                False,
-#            ),
-#            (
-#                "mixed_float16",
-#                False,
-#            ),
-#            (
-#                "mixed_bfloat16",
-#                False,
-#            ),
-#            (
-#                "float16",
-#                False,
-#            ),
-#            (
-#                "bfloat16",
-#                False,
-#            ),
-#            (
-#                "float32",
-#                True,
-#            ),
-#            (
-#                "float16",
-#                True,
-#            ),
-#            (
-#                "mixed_float16",
-#                True,
-#            ),
-#            (
-#                "mixed_bfloat16",
-#                True,
-#            ),
-#            (
-#                "float16",
-#                True,
-#            ),
-#            (
-#                "bfloat16",
-#                True,
-#            ),
-#        ]
-#    )
-#    def test_electricity(self, policy, unroll_lstm):
-#        tf.keras.mixed_precision.set_global_policy(policy)
-#        train_ds = self.train_ds.map(
-#            lambda i: make_input_tuple(
-#                i, tf.keras.mixed_precision.global_policy().compute_dtype
-#            )
-#        )
-#        val_ds = self.val_ds.map(
-#            lambda i: make_input_tuple(
-#                i, tf.keras.mixed_precision.global_policy().compute_dtype
-#            )
-#        )
-#        model = make_tft_model(
-#            electricity_experiment,
-#            unroll_lstm=unroll_lstm,
-#        )
-#        model.compile(
-#            tf.keras.optimizers.Adam(jit_compile=can_jit_compile(True)),
-#            loss=QuantileLoss(model.quantiles),
-#            metrics=[QuantileRMSE(model.quantiles)],
-#            jit_compile=can_jit_compile(True),
-#        )
-#        history = model.fit(train_ds, validation_data=val_ds).history
-#
-#        assert "val_loss" in history
-#        tf.debugging.check_numerics(history["val_loss"], "Test Failed.")
-#
-#        assert "loss" in history
-#        tf.debugging.check_numerics(history["loss"], "Test Failed.")
-#
-#
-# def make_input_tuple(data, dtype):
-#    return (
-#        dict(
-#            static=data["inputs_static"],
-#            known_real=tf.cast(data["inputs_known_real"], dtype),
-#        ),
-#        tf.cast(data["outputs"], dtype),
-#    )
+import chex
+import jax
+import jax.numpy as jnp
+from absl.testing import parameterized
+
+from temporal_fusion_transformer.flax_.modeling import (
+    TemporalFusionTransformer,
+    StaticCovariatesEncoder,
+    TFTInputEmbedding,
+    VariableSelection,
+    EncoderBlock,
+    TFTInput,
+    ContextInput,
+)
+from tests.constants import PRNG_SEED
+from tests.flax_ import lifted_variants
+
+static_categories_sizes = [2, 2]
+known_categories_sizes = [4]
+n_time_steps = 30
+batch_size = 8
+hidden_layer_size = 5
+prng_key = jax.random.PRNGKey(PRNG_SEED)
+
+
+class TFTLayersTest(chex.TestCase, parameterized.TestCase):
+    @lifted_variants.variants(
+        with_lifted_jit=True,
+        without_lifted_jit=True,
+    )
+    def test_input_embedding(self):
+        x_batch = make_x_batch()
+        layer = self.variant(TFTInputEmbedding)(
+            static_categories_sizes,
+            known_categories_sizes,
+            hidden_layer_size,
+        )
+        x_embeds, _ = layer.init_with_output(prng_key, x_batch)
+        # Same shapes as in the original implementation.
+        chex.assert_shape(x_embeds.static, (batch_size, 2, hidden_layer_size))
+        chex.assert_shape(
+            x_embeds.known,
+            (batch_size, n_time_steps, hidden_layer_size, 4),
+        )
+        chex.assert_shape(
+            x_embeds.observed,
+            (batch_size, n_time_steps, hidden_layer_size, 1),
+        )
+
+    @lifted_variants.variants(
+        with_lifted_jit=True,
+        without_lifted_jit=True,
+    )
+    def test_static_covariates_encoder(self):
+        layer = self.variant(StaticCovariatesEncoder)(
+            hidden_layer_size,
+            dropout_rate=0.0,
+        )
+        static_context, _ = layer.init_with_output(
+            prng_key, jax.random.uniform(prng_key, (batch_size, 2, hidden_layer_size))
+        )
+        # Same shapes as in the original implementation.
+        chex.assert_shape(
+            static_context.vector,
+            (batch_size, hidden_layer_size),
+        )
+        chex.assert_shape(
+            static_context.enrichment,
+            (batch_size, hidden_layer_size),
+        )
+        chex.assert_shape(
+            static_context.state_h,
+            (batch_size, hidden_layer_size),
+        )
+        chex.assert_shape(
+            static_context.state_c,
+            (batch_size, hidden_layer_size),
+        )
+
+    @lifted_variants.variants(
+        with_lifted_jit=True,
+        without_lifted_jit=True,
+    )
+    @parameterized.parameters((25, 4), (5, 3))
+    def test_temporal_variable_selection_network(self, time_steps, features):
+        layer = self.variant(VariableSelection)(hidden_layer_size, dropout_rate=0)
+        x = ContextInput(
+            inputs=jax.random.uniform(
+                prng_key, (batch_size, time_steps, hidden_layer_size, features)
+            ),
+            context=jax.random.uniform(prng_key, (batch_size, hidden_layer_size)),
+        )
+        (feature, flags, _), _ = layer.init_with_output(prng_key, x)
+        # Same shapes as in the original implementation.
+        chex.assert_shape(feature, (batch_size, time_steps, hidden_layer_size))
+        chex.assert_shape(flags, (batch_size, time_steps, 1, features))
+
+    @lifted_variants.variants(
+        with_lifted_jit=True,
+        without_lifted_jit=True,
+    )
+    def test_decoder(self):
+        layer = self.variant(EncoderBlock)(
+            4,
+            hidden_layer_size=hidden_layer_size,
+            dropout_rate=0,
+        )
+        decoder_out, _ = layer.init_with_output(
+            prng_key,
+            jax.random.uniform(
+                prng_key,
+                (batch_size, n_time_steps, hidden_layer_size),
+            ),
+        )
+        chex.assert_shape(
+            decoder_out,
+            (batch_size, n_time_steps, hidden_layer_size),
+        )
+
+
+class TFTModelTest(chex.TestCase, parameterized.TestCase):
+    @parameterized.parameters(1, 4, 12)
+    def test_tft_model(self, num_stacks):
+        x_batch = make_x_batch()
+        model = TemporalFusionTransformer(
+            num_encoder_steps=25,
+            num_attention_heads=4,
+            hidden_layer_size=hidden_layer_size,
+            static_categories_sizes=static_categories_sizes,
+            known_categories_sizes=known_categories_sizes,
+            dropout_rate=0,
+            quantiles=[1, 2, 3],
+            output_size=1,
+            num_stacks=num_stacks,
+        )
+        logits = model(x_batch)
+        chex.assert_tree_all_finite(logits, "Test Failed.")
+        # 3 is default number of quantiles.
+        chex.assert_shape(logits, (batch_size, 5, 3))
+
+    @parameterized.named_parameters(
+        (
+            "known_categorical==None",
+            TFTInput(
+                static=jnp.ones((8, 4), dtype=jnp.int32),
+                known_real=jnp.ones((8, 30, 3), dtype=jnp.float32),
+                observed=jax.random.uniform(prng_key, (8, 30, 1), dtype=jnp.float32),
+            ),
+            [],
+        ),
+        (
+            "observed==None",
+            TFTInput(
+                static=jnp.ones((8, 4), dtype=jnp.int32),
+                known_real=jnp.ones((8, 30, 3), dtype=jnp.float32),
+                known_categorical=jnp.ones((8, 30, 2), dtype=jnp.int32),
+            ),
+            known_categories_sizes,
+        ),
+        (
+            "known_categorical==None, observed==None",
+            TFTInput(
+                static=jnp.ones((8, 4), dtype=jnp.int32),
+                known_real=jnp.ones((8, 30, 3), dtype=jnp.float32),
+                observed=jax.random.uniform(prng_key, (8, 30, 1), dtype=jnp.float32),
+            ),
+            [],
+        ),
+    )
+    def test_input_is_missing(self, x_batch, _known_categories_sizes):
+        model = TemporalFusionTransformer(
+            num_encoder_steps=25,
+            num_attention_heads=4,
+            hidden_layer_size=hidden_layer_size,
+            static_categories_sizes=static_categories_sizes,
+            known_categories_sizes=_known_categories_sizes,
+            dropout_rate=0,
+            output_size=1,
+        )
+        logits = model(x_batch)
+        chex.assert_tree_all_finite(logits, "Test Failed.")
+        # 3 is default number of quantiles.
+        chex.assert_shape(logits, (batch_size, 5, 3))
+
+
+def make_x_batch():
+    return TFTInput(
+        static=jnp.ones((8, 4), dtype=jnp.int32),
+        known_real=jnp.ones((8, 30, 3), dtype=jnp.float32),
+        known_categorical=jnp.ones((8, 30, 2), dtype=jnp.int32),
+        observed=jax.random.uniform(prng_key, (8, 30, 1), dtype=jnp.float32),
+    )

@@ -17,22 +17,24 @@ class QuantileLossTest(chex.TestCase):
     @chex.variants(
         with_jit=True,
         without_jit=True,
-        with_device=True,
-        without_device=True,
     )
     def test_loss_fn(self):
         y_true = jax.random.uniform(prng_key, (8, 24, 1))
-        y_pred = jnp.random.uniform(prng_key, (8, 24, 3))
-        loss = quantile_loss(y_true, y_pred, quantiles)
+        y_pred = jax.random.uniform(prng_key, (8, 24, 3))
+        loss = self.variant(quantile_loss)(y_true, y_pred, quantiles)
         chex.assert_tree_all_finite(loss)
         chex.assert_rank(loss, 1)
         chex.assert_shape(loss, (8,))
 
+    @chex.variants(
+        with_jit=True,
+        without_jit=True,
+    )
     def test_loss_converges_to_0(self):
         y_true = jnp.ones((8, 24, 1))
         y_pred = jnp.ones((8, 24, 3))
 
-        loss = quantile_loss(y_true, y_pred, quantiles)
+        loss = self.variant(quantile_loss)(y_true, y_pred, quantiles)
         chex.assert_tree_all_finite(loss)
         chex.assert_rank(loss, 1)
         chex.assert_shape(loss, (8,))
@@ -43,19 +45,27 @@ class QuantileLossTest(chex.TestCase):
 
 
 class QuantileRMSETest(chex.TestCase):
+    @chex.variants(
+        with_jit=True,
+        without_jit=True,
+    )
     def test_rmse(self):
         y_true = jax.random.uniform(prng_key, (8, 24, 1))
         y_pred = jax.random.uniform(prng_key, (8, 24, 3))
-        rmse = quantile_rmse(y_true, y_pred, quantiles)
+        rmse = self.variant(quantile_rmse)(y_true, y_pred, quantiles)
         chex.assert_tree_all_finite(rmse)
         chex.assert_rank(rmse, 1)
         chex.assert_shape(rmse, (8,))
 
+    @chex.variants(
+        with_jit=True,
+        without_jit=True,
+    )
     def test_rmse_converges_to_0(self):
         y_true = jnp.ones((8, 24, 1))
         y_pred = jnp.ones((8, 24, 3))
 
-        rmse = quantile_rmse(y_true, y_pred, quantiles)
+        rmse = self.variant(quantile_rmse)(y_true, y_pred, quantiles)
         chex.assert_tree_all_finite(rmse)
         chex.assert_rank(rmse, 1)
         chex.assert_shape(rmse, (8,))
