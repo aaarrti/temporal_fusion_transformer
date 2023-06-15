@@ -6,6 +6,9 @@ import keras.layers as layers
 import tensorflow as tf
 from jaxtyping import Float, Int
 from keras.utils.tf_utils import can_jit_compile
+from keras.optimizers import Optimizer
+
+from temporal_fusion_transformer.tf.quantile_loss import QuantileLoss, QuantileRMSE
 
 
 class TemporalFusionTransformer(tf.keras.Model):
@@ -28,7 +31,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         num_stacks: int = 1,
         dropout_rate: float = 0.1,
         output_size: int = 1,
-        num_quantiles: int,
+        quantiles: Sequence[float] = None,
         prng_seed: int = 42,
         name: str = "temporal_fusion_transformer",
         unroll_lstm: bool = False,
@@ -62,7 +65,10 @@ class TemporalFusionTransformer(tf.keras.Model):
 
         """
         super().__init__(name=name, **kwargs)
-        self.num_quantiles = num_quantiles
+        if quantiles is None:
+            quantiles = [0.1, 0.5, 0.9]
+        self.quantiles = quantiles
+        self.num_quantiles = len(quantiles)
         self.output_size = output_size
         self.num_encoder_steps = num_encoder_steps
         self.hidden_layer_size = hidden_layer_size
@@ -137,7 +143,7 @@ class TemporalFusionTransformer(tf.keras.Model):
             prng_seed=prng_seed,
         )
         self.encoder_blocks = [
-            TemporalEncoderBlock(
+            EncoderBlock(
                 num_attention_heads=num_attention_heads,
                 hidden_layer_size=hidden_layer_size,
                 dropout_rate=dropout_rate,
@@ -271,6 +277,20 @@ class TemporalFusionTransformer(tf.keras.Model):
             }
         )
         return config
+
+    def compile(
+        self,
+        optimizer: Optimizer | str = "adam",
+        steps_per_execution: int = 1,
+        **kwargs,
+    ):
+        super().compile(
+            optimizer=optimizer,
+            loss=QuantileLoss(self.quantiles),
+            metrics=[QuantileRMSE(self.quantiles)],
+            jit_compile=can_jit_compile(True),
+            steps_per_execution=steps_per_execution,
+        )
 
 
 # ----------------------------------- input embedding ----------------------------------------
@@ -920,7 +940,7 @@ class VariableSelection(layers.Layer):
         return config
 
 
-class TemporalEncoderBlock(layers.Layer):
+class EncoderBlock(layers.Layer):
     def __init__(
         self,
         num_attention_heads: int,

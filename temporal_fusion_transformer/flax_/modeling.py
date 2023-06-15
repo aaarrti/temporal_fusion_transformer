@@ -117,7 +117,59 @@ class StaticCovariatesEncoder(nn.Module):
 
     @nn.compact
     def __call__(self, inputs: Float[Array, "batch k n"], **kwargs) -> StaticContext:
-        pass
+        num_static_inputs = inputs.shape[1]
+
+        flat_x = jnp.reshape(inputs, (inputs.shape[0], -1))
+
+        mlp_outputs, _ = GRN(
+            self.hidden_layer_size,
+            output_size=num_static_inputs,
+            dropout_rate=self.dropout_rate,
+            use_time_distributed=False,
+        )(flat_x)
+
+        sparse_weights = jax.nn.softmax(mlp_outputs)[..., jnp.newaxis]
+
+        transformed_embeddings = []
+
+        for i in range(num_static_inputs):
+            embeds_i, _ = GRN(
+                self.hidden_layer_size,
+                dropout_rate=self.dropout_rate,
+                use_time_distributed=False,
+            )(inputs[:, i][:, jnp.newaxis])
+            transformed_embeddings.append(embeds_i)
+
+        transformed_embeddings = jnp.concat(transformed_embeddings, axis=1)
+        static_context_vector = jnp.sum(sparse_weights * transformed_embeddings, axis=1)
+
+        context_variable_selection, _ = GRN(
+            self.hidden_layer_size,
+            dropout_rate=self.dropout_rate,
+            use_time_distributed=False,
+        )(static_context_vector)
+        context_enrichment, _ = GRN(
+            self.hidden_layer_size,
+            dropout_rate=self.dropout_rate,
+            use_time_distributed=False,
+        )(static_context_vector)
+        context_state_h, _ = GRN(
+            self.hidden_layer_size,
+            dropout_rate=self.dropout_rate,
+            use_time_distributed=False,
+        )(static_context_vector)
+        context_state_c, _ = GRN(
+            self.hidden_layer_size,
+            dropout_rate=self.dropout_rate,
+            use_time_distributed=False,
+        )(static_context_vector)
+        return StaticContext(
+            enrichment=context_enrichment,
+            state_h=context_state_h,
+            state_c=context_state_c,
+            vector=context_variable_selection,
+            # weight=sparse_weights,
+        )
 
 
 class VariableSelection(nn.Module):
@@ -141,10 +193,11 @@ class VariableSelection(nn.Module):
         embedding_dim = inputs.shape[2]
         num_inputs = inputs.shape[3]
 
-        mlp_outputs, static_gate = ContextAwareResizingGRN(
+        mlp_outputs, static_gate = GRN(
             hidden_layer_size=self.hidden_layer_size,
             dropout_rate=self.dropout_rate,
             output_size=num_inputs,
+            use_time_distributed=True,
         )(
             ContextInput(
                 inputs=jnp.reshape(
@@ -169,10 +222,6 @@ class VariableSelection(nn.Module):
         transformed_embeddings = jnp.stack(transformed_embeddings, axis=-1)
         temporal_ctx = jnp.sum(sparse_weights * transformed_embeddings, axis=-1)
         return temporal_ctx, sparse_weights, static_gate
-
-
-class TemporalFusionDecoder(nn.Module):
-    pass
 
 
 class TimeDistributed(nn.Module):
@@ -227,88 +276,52 @@ class GLU(nn.Module):
         return x, x_gated
 
 
-# GRN types:
-# - use_time_distributed=False, context=None, output_size None - GRN
-# - use_time_distributed=True, context None, output_size None - Temporal GRN
-# - use_time_distributed=True, context not None, output_size not None - Context Aware GRN ?
-
-
 @dataclass
 class ContextInput:
     inputs: Float[Array, "batch n"]
     context: Float[Array, "batch n n k"]
 
 
-class ContextGRN(nn.Module):
-    hidden_layer_size: int
-    dropout_rate: float
-    # it is always time-distributed.
-
-    @nn.compact
-    def __call__(
-        self, inputs: ContextInput, **kwargs
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        x_skip = inputs.inputs
-        x = TimeDistributed(nn.Dense(self.hidden_layer_size))(inputs.inputs)
-        x = x + TimeDistributed(nn.Dense(self.hidden_layer_size))(inputs.context)
-
-        x = jax.nn.elu(x)
-        x = TimeDistributed(nn.Dense(self.hidden_layer_size))(x)
-        x, gate = GLU(
-            hidden_layer_size=self.hidden_layer_size,
-            dropout_rate=self.dropout_rate,
-            use_time_distributed=True,
-        )(x)
-        x = nn.LayerNorm()(x + x_skip)
-        return x, gate
-
-
-class ContextAwareResizingGRN(nn.Module):
-    hidden_layer_size: int
-    dropout_rate: float
-    output_size: int
-    # it is always time-distributed.
-
-    @nn.compact
-    def __call__(
-        self, inputs: ContextInput, **kwargs
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        x_skip = TimeDistributed(nn.Dense(self.output_size))(inputs.inputs)
-        x = TimeDistributed(nn.Dense(self.hidden_layer_size))(inputs.inputs)
-        x = x + TimeDistributed(nn.Dense(self.hidden_layer_size))(inputs.context)
-
-        x = jax.nn.elu(x)
-        x = TimeDistributed(nn.Dense(self.hidden_layer_size))(x)
-        x, gate = GLU(
-            hidden_layer_size=self.hidden_layer_size,
-            dropout_rate=self.dropout_rate,
-            use_time_distributed=True,
-        )(x)
-        x = nn.LayerNorm()(x + x_skip)
-        return x, gate
-
-
 class GRN(nn.Module):
     hidden_layer_size: int
     dropout_rate: float
     use_time_distributed: bool
+    output_size: int | None = None
 
     @nn.compact
     def __call__(
-        self, inputs: Float[Array, "batch n"], **kwargs
+        self, inputs: Float[Array, "batch n"] | ContextInput, **kwargs
     ) -> Tuple[Float[Array, "batch n"], Float[Array, "batch n"]]:
-        x_skip = inputs
-        dense_1 = nn.Dense(self.hidden_layer_size)
-        dense_2 = nn.Dense(self.hidden_layer_size)
-        if self.use_time_distributed:
-            dense_1 = TimeDistributed(dense_1)
-            dense_2 = TimeDistributed(dense_2)
+        if self.output_size is not None:
+            skip_connection = nn.Dense(self.output_size)
+            if self.use_time_distributed:
+                skip_connection = TimeDistributed(skip_connection)
+        else:
+            skip_connection = Identity()
 
-        x = dense_1(inputs)
+        pre_elu_dense = nn.Dense(self.hidden_layer_size)
+        dense = nn.Dense(self.hidden_layer_size)
+
+        if self.use_time_distributed:
+            pre_elu_dense = TimeDistributed(pre_elu_dense)
+            dense = TimeDistributed(dense)
+
+        if isinstance(inputs, ContextInput):
+            context_dense = nn.Dense(self.hidden_layer_size)
+            if self.use_time_distributed:
+                context_dense = TimeDistributed(context_dense)
+
+            x_skip = skip_connection(inputs.inputs)
+            x = pre_elu_dense(inputs.inputs)
+            x = x + context_dense(inputs.context)
+        else:
+            x_skip = skip_connection(inputs)
+            x = pre_elu_dense(inputs)
+
         x = jax.nn.elu(x)
-        x = dense_2(x)
+        x = dense(x)
         x, gate = GLU(
-            hidden_layer_size=self.hidden_layer_size,
+            hidden_layer_size=self.output_size or self.hidden_layer_size,
             dropout_rate=self.dropout_rate,
             use_time_distributed=self.use_time_distributed,
         )(x)
@@ -358,7 +371,6 @@ class EncoderBlock(nn.Module):
 
 @dataclass
 class ContextEnrichmentInputs:
-    # TODO: shapes
     history_lstm: jnp.ndarray
     future_lstm: jnp.ndarray
     historical_features: jnp.ndarray
@@ -387,9 +399,10 @@ class ContextEnrichment(nn.Module):
         # Static enrichment layers
         expanded_static_context = inputs.static_context[:, jnp.newaxis]
 
-        enriched, _ = ContextGRN(
+        enriched, _ = GRN(
             hidden_layer_size=self.hidden_layer_size,
             dropout_rate=self.dropout_rate,
+            use_time_distributed=True,
         )(
             ContextInput(
                 inputs=temporal_features,
@@ -407,3 +420,9 @@ def make_causal_attention_mask(
     bs = self_attn_inputs.shape[:1]
     mask = jnp.cumsum(jnp.eye(len_s, batch_shape=bs), 1)
     return mask
+
+
+class Identity(nn.Dense):
+    @nn.compact
+    def __call__(self, inputs, **kwargs):
+        return inputs

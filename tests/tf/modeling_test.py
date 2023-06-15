@@ -1,26 +1,23 @@
 import tensorflow as tf
 from absl.testing import parameterized
 from keras.utils.tf_utils import can_jit_compile
+
+from temporal_fusion_transformer.experiments import electricity_experiment
 from temporal_fusion_transformer.tf.modeling import (
     TemporalFusionTransformer,
     StaticCovariatesEncoder,
     TFTInputEmbedding,
     VariableSelection,
-    TemporalEncoderBlock,
+    EncoderBlock,
 )
-from temporal_fusion_transformer.experiments import electricity_experiment
-from temporal_fusion_transformer.tf.quantile_loss import QuantileLoss, QuantileRMSE
 from temporal_fusion_transformer.utils import load_data_from_archive, make_tft_model
-
 from tests.constants import PRNG_SEED
-
 
 static_categories_sizes = [2, 2]
 known_categories_sizes = [4]
 n_time_steps = 30
 batch_size = 8
 hidden_layer_size = 5
-tf.config.run_functions_eagerly(True)
 
 
 class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
@@ -79,7 +76,7 @@ class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
         self.assertEqual((batch_size, time_steps, 1, features), flags.shape)
 
     def test_decoder(self):
-        layer = TemporalEncoderBlock(
+        layer = EncoderBlock(
             4, hidden_layer_size=hidden_layer_size, dropout_rate=0, prng_seed=PRNG_SEED
         )
         decoder_out = layer(
@@ -244,12 +241,7 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
             electricity_experiment,
             unroll_lstm=unroll_lstm,
         )
-        model.compile(
-            tf.keras.optimizers.Adam(jit_compile=can_jit_compile(True)),
-            loss=QuantileLoss(model.num_quantiles),
-            metrics=[QuantileRMSE(model.num_quantiles)],
-            jit_compile=can_jit_compile(True),
-        )
+        model.compile(tf.keras.optimizers.Adam(jit_compile=can_jit_compile(True)))
         history = model.fit(train_ds, validation_data=val_ds).history
 
         assert "val_loss" in history
