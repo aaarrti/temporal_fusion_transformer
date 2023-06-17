@@ -682,7 +682,7 @@ class GLU(layers.Layer):
         self.use_time_distributed = use_time_distributed
         # Build sub-layers.
         self.dropout = layers.Dropout(
-            dropout_rate, seed=prng_seed, force_generator=True
+            dropout_rate, seed=prng_seed, force_generator=True, dtype=tf.float32
         )
         self.dense = layers.Dense(hidden_layer_size)
         self.activation = layers.Dense(hidden_layer_size, activation="sigmoid")
