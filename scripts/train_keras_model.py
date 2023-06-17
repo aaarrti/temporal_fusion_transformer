@@ -14,6 +14,12 @@ from temporal_fusion_transformer.experiments import (
 )
 from temporal_fusion_transformer.utils import can_jit_compile
 
+minor_tf_api_version = int(tf.__version__.split(".")[1])
+if minor_tf_api_version >= 11:
+    from keras.optimizers.optimizer_v2.adam import Adam
+else:
+    from keras.optimizers.optimizer_experimental.adam import Adam
+
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
     "experiment",
@@ -23,13 +29,9 @@ flags.DEFINE_enum(
     default=None,
 )
 flags.DEFINE_integer("batch_size", default=64, help="Training batch size")
-flags.DEFINE_integer("epochs", default=10, help="Number of training epochs")
-flags.DEFINE_string("data_dir", help="Data directory", default="gs://tf2_tft_v2/")
-flags.DEFINE_string("persist_dir", help=None, default="logs")
-flags.DEFINE_boolean("mixed_precision", default=True, help=None)
-flags.DEFINE_boolean("use_xla", default=True, help=None)
-flags.DEFINE_boolean("use_cudnn", default=False, help=None)
-
+flags.DEFINE_integer("epochs", default=1, help="Number of training epochs")
+flags.DEFINE_string("data_dir", help="Data directory", default="gs://tf2_tft_v2/data")
+flags.DEFINE_string("logs_dir", help=None, default="gs://tf2_tft_v2/logs")
 
 PRNG_SEED = 42
 set_random_seed(PRNG_SEED)
@@ -60,11 +62,7 @@ def favorita_map_fn(
 def main(_):
     """The parameters were picked out of the blue, this script's purpose is to demonstrate APIs."""
     experiment_name = FLAGS.experiment
-    persist_dir = FLAGS.persist_dir
-    experiment = None
-    map_fn = None
-    use_xla = FLAGS.use_xla
-    
+    logs_dir = FLAGS.logs_dir
 
     if experiment_name == "electricity":
         experiment = electricity_experiment
@@ -82,14 +80,10 @@ def main(_):
 
     if FLAGS.mixed_precision:
         tf.keras.mixed_precision.set_global_policy("mixed_float16")
-        
-    if can_jit_compile() and use_xla:
-        tf.config.optimizer.set_jit("autoclustering")
 
     map_fn = functools.partial(
-        map_fn, dtype=tf.keras.mixed_precision.global_policy().compute_dtype
+        map_fn, dtype=tf.keras.mixed_precision.global_policy().compute_dtype  # noqa
     )
-    
     train_ds = (
         tf.data.Dataset.from_tensor_slices(
             [f"{data_dir}/{experiment_name}/train/{i}" for i in range(19)]
@@ -97,6 +91,7 @@ def main(_):
         .flat_map(
             lambda i: tf.data.Dataset.load(i, element_spec=experiment.element_spec)
         )
+        # rebatch was added only in 2.12
         .unbatch()
         .batch(batch_size, True)
         .map(map_fn, tf.data.AUTOTUNE)
@@ -113,6 +108,7 @@ def main(_):
         .flat_map(
             lambda i: tf.data.Dataset.load(i, element_spec=experiment.element_spec)
         )
+        # rebatch was added only in 2.12
         .unbatch()
         .batch(batch_size, True)
         .map(map_fn, tf.data.AUTOTUNE)
@@ -123,8 +119,8 @@ def main(_):
     )
 
     model = make_tft_model(
-        experiment,
-        use_cudnn_lstm=FLAGS.use_xla,
+        experiment,  # noqa
+        use_cudnn_lstm=False,
         num_attention_heads=12,
         hidden_layer_size=180,
         num_stacks=4,
@@ -136,9 +132,9 @@ def main(_):
                 int(steps_per_epoch * epochs),
                 alpha=0.02,
             ),
-            jit_compile=can_jit_compile(True)
+            jit_compile=can_jit_compile(True),
         ),
-        jit_compile=can_jit_compile(True) and use_xla,
+        jit_compile=can_jit_compile(True),
     )
 
     model.fit(
@@ -147,19 +143,20 @@ def main(_):
         validation_data=validation_ds,
         callbacks=[
             TensorBoard(
-                f"{persist_dir}/{experiment_name}/tensorboard_logs",
+                f"{logs_dir}/{experiment_name}/tensorboard_logs",
                 update_freq=50,
-                write_graph=False
+                write_graph=True,
+                profile_batch=True,
             ),
             TerminateOnNaN(),
-            BackupAndRestore(f"{persist_dir}/{experiment_name}/checkpoints"),
+            BackupAndRestore(f"{logs_dir}/{experiment_name}/checkpoints"),
         ],
         steps_per_epoch=steps_per_epoch,
         validation_steps=val_steps,
     )
 
     with tf.device("cpu"):
-        model.save_weights(f"{persist_dir}/{experiment_name}/weights_v1.keras")
+        model.save_weights(f"{logs_dir}/{experiment_name}/weights_v1")
 
 
 if __name__ == "__main__":

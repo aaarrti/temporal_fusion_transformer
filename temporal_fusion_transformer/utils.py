@@ -330,7 +330,7 @@ if util.find_spec("flax") is not None:
 
 
 def can_jit_compile(warn=False):
-    # Was added only in 2.12
+    # Was added only in 2.12.
     """Returns True if TensorFlow XLA is available for the platform."""
     if platform.system() == "Darwin" and "arm" in platform.processor().lower():
         if warn:

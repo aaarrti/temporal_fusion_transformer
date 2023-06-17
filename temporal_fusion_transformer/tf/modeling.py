@@ -294,8 +294,8 @@ class TemporalFusionTransformer(tf.keras.Model):
         **kwargs,
     ) -> None:
         if jit_compile is None:
-            jit_compile = can_jit_compile(True),
-            
+            jit_compile = (can_jit_compile(True),)
+
         super().compile(
             optimizer=optimizer,
             loss=QuantileLoss(self.quantiles),
