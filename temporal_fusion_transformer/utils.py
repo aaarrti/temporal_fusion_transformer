@@ -276,7 +276,7 @@ def make_gpu_strategy(
         logging.error("No GPU found.")
         return NoOpStrategy()
     if n_gpus == 1:
-        return tf.distribute.OneDeviceStrategy()
+        return tf.distribute.OneDeviceStrategy(gpus[0])
 
     if clazz is None:
         clazz = tf.distribute.MirroredStrategy

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Tuple, Dict, Sequence, Mapping
 
+from absl import logging
 import keras.layers as layers
 import tensorflow as tf
 from jaxtyping import Float
@@ -9,6 +10,12 @@ from keras.optimizers import Optimizer
 
 from temporal_fusion_transformer.utils import can_jit_compile
 from temporal_fusion_transformer.tf.quantile_loss import QuantileLoss, QuantileRMSE
+
+try:
+    from transformer_engine.tensorflow import Dense, MultiHeadAttention, LayerNormDense
+
+except ModuleNotFoundError:
+    logging.warning("Transformer engine not installed.")
 
 
 class TemporalFusionTransformer(tf.keras.Model):
@@ -36,6 +43,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         name: str = "temporal_fusion_transformer",
         unroll_lstm: bool = False,
         use_cudnn_lstm: bool = False,
+        use_transformer_engine: bool = False,
         **kwargs,
     ):
         """
@@ -58,8 +66,12 @@ class TemporalFusionTransformer(tf.keras.Model):
         num_quantiles:
         output_size:
         unroll_lstm:
+            not recommended.
         use_cudnn_lstm:
+            When set to True, will use CuDNN implementation of LSTM cell.
         name:
+        use_transformer_engine:
+            When set to true, will use layer primitives from https://github.com/NVIDIA/TransformerEngine.
 
         """
         super().__init__(name=name, **kwargs)
@@ -971,6 +983,7 @@ class EncoderBlock(layers.Layer):
         dropout_rate: float,
         prng_seed: int,
         name: str = "temporal_fusion_decoder",
+        use_transformer_engine: bool = False,
         **kwargs,
     ):
         """
@@ -998,11 +1011,22 @@ class EncoderBlock(layers.Layer):
         self.prng_seed = prng_seed
         self.dropout_rate = dropout_rate
         self.hidden_layer_size = hidden_layer_size
+        self.use_transformer_engine = use_transformer_engine
         d_k = hidden_layer_size // num_attention_heads
         tf.debugging.assert_positive(d_k, "Key dim can't be 0")
-        self.self_attn = layers.MultiHeadAttention(
-            num_heads=num_attention_heads, key_dim=d_k
-        )
+        if use_transformer_engine:
+            # TODO: check params
+            self.self_attn = MultiHeadAttention(
+                num_attention_heads=num_attention_heads,
+                kv_channels=d_k,
+                fuse_qkv_params=True,
+                hidden_size=hidden_layer_size,
+                attention_dropout=0,
+            )
+        else:
+            self.self_attn = layers.MultiHeadAttention(
+                num_heads=num_attention_heads, key_dim=d_k
+            )
         self.glu_1 = GLU(
             hidden_layer_size,
             dropout_rate,
@@ -1048,6 +1072,7 @@ class EncoderBlock(layers.Layer):
                 "prng_seed": self.prng_seed,
                 "dropout_rate": self.dropout_rate,
                 "hidden_layer_size": self.hidden_layer_size,
+                "use_transformer_engine": self.use_transformer_engine,
             }
         )
         return config

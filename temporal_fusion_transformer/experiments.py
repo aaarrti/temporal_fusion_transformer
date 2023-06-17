@@ -16,12 +16,20 @@ from typing import (
 )
 
 import numpy as np
-import pandas as pd
+import pandas
 from absl import logging
 from keras_pbar import keras_pbar
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 import tensorflow as tf
 from temporal_fusion_transformer.utils import filter_dict
+
+try:
+    import cudf
+
+    csv_lib = cudf
+except ModuleNotFoundError:
+    logging.warning("CuDF not installed, falling back to pandas")
+    csv_lib = pandas
 
 
 class DataTypes(IntEnum):
@@ -257,25 +265,6 @@ class ElectricityExperiment(Experiment):
             "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
         }
 
-    def read_raw_csv_v2(
-        self, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
-    ) -> Tuple[DatasetSplit, ScalersSplit]:
-        import polars as pl
-
-        pl_df = pl.read_csv(csv_path, separator=";", use_pyarrow=True).sort(
-            by=["column_0"]
-        )
-        cols = pl_df.columns[1:]
-
-        pl_df = pl_df.groupby_dynamic(
-            "column_0", every="1h", period="1y", closed="left"
-        ).agg([pl.col(i).mean() for i in cols])
-
-        # Used to determine the start and end dates of a series
-        pl_df = pl_df.resample("1h").mean().replace(0.0, np.nan)
-
-        earliest_time = pl_df.index.min()
-
     def read_raw_csv(
         self, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
     ) -> Tuple[DatasetSplit, ScalersSplit]:
@@ -318,9 +307,9 @@ class ElectricityExperiment(Experiment):
         """
         logging.info(f"Loading electricity dataset from {csv_path}")
         # This code was copy pasted from original implementation, and I have very little idea
-        # what is it doing. TODO: rewrite using polars.
-        pd_df = pd.read_csv(csv_path, index_col=0, sep=";", decimal=",")
-        pd_df.index = pd.to_datetime(pd_df.index)
+        # what is it doing.
+        pd_df = csv_lib.read_csv(csv_path, index_col=0, sep=";", decimal=",")
+        pd_df.index = csv_lib.to_datetime(pd_df.index)
         pd_df.sort_index(inplace=True)
 
         # Used to determine the start and end dates of a series
@@ -339,7 +328,7 @@ class ElectricityExperiment(Experiment):
             active_range = (srs.index >= start_date) & (srs.index <= end_date)
             srs = srs[active_range].fillna(0.0)
 
-            tmp = pd.DataFrame({"power_usage": srs})
+            tmp = csv_lib.DataFrame({"power_usage": srs})
             date = tmp.index
             tmp["t"] = (date - earliest_time).seconds / 60 / 60 + (
                 date - earliest_time
@@ -355,7 +344,7 @@ class ElectricityExperiment(Experiment):
 
             df_list.append(tmp)
 
-        pd_df = pd.concat(df_list, axis=0, join="outer").reset_index(drop=True)
+        pd_df = csv_lib.concat(df_list, axis=0, join="outer").reset_index(drop=True)
         del df_list
 
         pd_df["categorical_id"] = pd_df["id"].copy()
@@ -531,7 +520,7 @@ class FavoritaExperiment(Experiment):
         )
 
 
-def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
+def batch_single_entity(input_data: csv_lib.Series, lags: int) -> np.ndarray:
     # Doesn't support dict
     return np.asarray(
         [
@@ -543,7 +532,7 @@ def batch_single_entity(input_data: pd.Series, lags: int) -> np.ndarray:
 
 
 def normalize_data(
-    df: pd.DataFrame,
+    df: csv_lib.DataFrame,
     *,
     id_column: str,
     total_time_steps: int,
@@ -551,7 +540,7 @@ def normalize_data(
     real_scalers: Mapping[str, StandardScaler],
     categorical_scalers: Mapping[str, LabelEncoder],
     categorical_inputs: Sequence[str],
-) -> pd.DataFrame:
+) -> csv_lib.DataFrame:
     df_list = []
     for identifier, sliced in keras_pbar(df.groupby(id_column)):
         if len(sliced) >= total_time_steps:
@@ -561,7 +550,7 @@ def normalize_data(
             )
             df_list.append(sliced_copy)
 
-    df = pd.concat(df_list, axis=0)
+    df = csv_lib.concat(df_list, axis=0)
     for col in keras_pbar(categorical_inputs):
         string_df = df[col].apply(str)
         df[col] = categorical_scalers[col].transform(string_df)
@@ -570,7 +559,7 @@ def normalize_data(
 
 
 def make_np_array_dict(
-    df: pd.DataFrame,
+    df: csv_lib.DataFrame,
     *,
     id_column: str,
     time_col: str,

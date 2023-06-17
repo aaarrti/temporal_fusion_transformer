@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Dict, Tuple
 import functools
 from absl import flags, app
@@ -16,9 +17,9 @@ from temporal_fusion_transformer.utils import can_jit_compile
 
 minor_tf_api_version = int(tf.__version__.split(".")[1])
 if minor_tf_api_version >= 11:
-    from keras.optimizers.optimizer_v2.adam import Adam
+    from keras.optimizers.adam import Adam
 else:
-    from keras.optimizers.optimizer_experimental.adam import Adam
+    from keras.optimizers.optimizer_experimental.adam import Adam # noqa
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -38,6 +39,17 @@ set_random_seed(PRNG_SEED)
 setup_logging()
 num_electricity_samples = 1853057
 num_val_samples = 204057
+
+try:
+    from nvidia.dali import pipeline_def, Pipeline
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    import nvidia.dali.plugin.tf as dali_tf
+
+    is_dali_installed = True
+except ModuleNotFoundError:
+    logging.warning("DALI not installed, falling back to TF dataset")
+    is_dali_installed = False
 
 
 def electricity_map_fn(
@@ -78,12 +90,15 @@ def main(_):
     steps_per_epoch = num_electricity_samples // batch_size
     val_steps = num_val_samples // batch_size
 
-    if FLAGS.mixed_precision:
-        tf.keras.mixed_precision.set_global_policy("mixed_float16")
+    tf.keras.mixed_precision.set_global_policy("mixed_float16")
+    if can_jit_compile(True):
+        tf.config.optimizer.set_jit("autoclustering")
 
     map_fn = functools.partial(
         map_fn, dtype=tf.keras.mixed_precision.global_policy().compute_dtype  # noqa
     )
+
+    
     train_ds = (
         tf.data.Dataset.from_tensor_slices(
             [f"{data_dir}/{experiment_name}/train/{i}" for i in range(19)]
@@ -120,13 +135,13 @@ def main(_):
 
     model = make_tft_model(
         experiment,  # noqa
-        use_cudnn_lstm=False,
+        use_cudnn_lstm=True,
         num_attention_heads=12,
         hidden_layer_size=180,
         num_stacks=4,
     )
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(
+        optimizer=Adam(
             CosineDecay(
                 5e-3,
                 int(steps_per_epoch * epochs),
@@ -134,9 +149,8 @@ def main(_):
             ),
             jit_compile=can_jit_compile(True),
         ),
-        jit_compile=can_jit_compile(True),
+        jit_compile=False,
     )
-
     model.fit(
         train_ds,
         epochs=epochs,
@@ -149,7 +163,7 @@ def main(_):
                 profile_batch=True,
             ),
             TerminateOnNaN(),
-            BackupAndRestore(f"{logs_dir}/{experiment_name}/checkpoints"),
+            # BackupAndRestore(f"{logs_dir}/{experiment_name}/checkpoints"),
         ],
         steps_per_epoch=steps_per_epoch,
         validation_steps=val_steps,
