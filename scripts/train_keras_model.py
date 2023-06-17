@@ -26,6 +26,7 @@ flags.DEFINE_enum(
 flags.DEFINE_integer("batch_size", default=64, help="Training batch size")
 flags.DEFINE_integer("epochs", default=10, help="Number of training epochs")
 flags.DEFINE_string("data_dir", help="Data directory", default="gs://tf2_tft_v2/")
+flags.DEFINE_string("persist_dir", help=None, default="logs")
 
 
 PRNG_SEED = 42
@@ -57,6 +58,7 @@ def favorita_map_fn(
 def main(_):
     """The parameters were picked out of the blue, this script's purpose is to demonstrate APIs."""
     experiment_name = FLAGS.experiment
+    persist_dir = FLAGS.persist_dir
     experiment = None
     map_fn = None
 
@@ -137,19 +139,19 @@ def main(_):
             validation_data=validation_ds,
             callbacks=[
                 TensorBoard(
-                    f"{data_dir}/{experiment_name}/tensorboard_logs",
+                    f"{persist_dir}/{experiment_name}/tensorboard_logs",
                     update_freq=50,
                     write_graph=False
                 ),
                 TerminateOnNaN(),
-                BackupAndRestore(f"{data_dir}/{experiment_name}/checkpoints"),
+                BackupAndRestore(f"{persist_dir}/{experiment_name}/checkpoints"),
             ],
             steps_per_epoch=steps_per_epoch,
             validation_steps=val_steps,
         )
 
     with tf.device("cpu"):
-        model.save_weights(f"{data_dir}/{experiment_name}/weights_v1.keras")
+        model.save_weights(f"{persist_dir}/{experiment_name}/weights_v1.keras")
 
 
 if __name__ == "__main__":

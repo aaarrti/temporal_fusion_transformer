@@ -11,9 +11,14 @@
 set -ex
 IMAGE_DIR="/home/artem/shared/nv_tf_py38"
 # Reinstall model source code
-# apptainer exec -B "${IMAGE_DIR}/venv.img:/venv:image-src=/" "${IMAGE_DIR}/IMAGE.sif" /venv/bin/python -m pip install . --force-reinstall --no-deps
+apptainer exec --contain --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/" \
+  "${IMAGE_DIR}/image.sif" /venv/bin/python -m pip install 'git+https://github.com/aaarrti/tf2_temporal_fusion_transformer.git@dev' --force-reinstall --no-deps
 ############################################################################
 # Actual script
 ##########################################################################
-apptainer exec --nv --env-file .env --contain --bind data.sqfs:/data:image-src=/ --bind /home/artem/temporal_fusion_transformer/scripts/:/ \
-  "${IMAGE_DIR}/image.sif" python /scripts/train_keras_model.py --experiment=electricity --data_path=/data --batch_size=512
+apptainer exec --nv --env-file .env --contain \
+  --bind data.sqfs:/data:image-src=/ \
+  --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/,ro" \
+  --bind scripts/:/scripts \
+  --bind logs/:/logs \
+  "${IMAGE_DIR}/image.sif" /venv/bin/python /scripts/train_keras_model.py --experiment=electricity --data_dir=/data --persist_dir=/logs --batch_size=512

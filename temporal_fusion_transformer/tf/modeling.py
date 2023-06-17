@@ -759,7 +759,7 @@ class GRN(layers.Layer):
         # Setup skip connection.
         if output_size is None:
             output_size = hidden_layer_size
-            skip_connection = layers.Identity()
+            skip_connection = Identity()
         else:
             skip_connection = layers.Dense(output_size)
             if use_time_distributed:
@@ -1047,3 +1047,8 @@ class EncoderBlock(layers.Layer):
             }
         )
         return config
+
+
+class Identity(layers.Layer):
+    def call(self, inputs, **kwargs):
+        return tf.identity(inputs)
