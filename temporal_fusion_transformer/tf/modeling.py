@@ -290,13 +290,17 @@ class TemporalFusionTransformer(tf.keras.Model):
     def compile(
         self,
         optimizer: Optimizer | str = "adam",
+        jit_compile: bool | None = None,
         **kwargs,
     ) -> None:
+        if jit_compile is None:
+            jit_compile = can_jit_compile(True),
+            
         super().compile(
             optimizer=optimizer,
             loss=QuantileLoss(self.quantiles),
             metrics=[QuantileRMSE(self.quantiles)],
-            jit_compile=can_jit_compile(True),
+            jit_compile=jit_compile,
             **kwargs,
         )
 
