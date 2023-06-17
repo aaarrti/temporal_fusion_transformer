@@ -12,9 +12,10 @@ def setup_logging():
 
 
 from importlib import util
-from temporal_fusion_transformer.utils import make_tft_model, make_gpu_strategy
-from temporal_fusion_transformer.plotting import plot_predictions
+from temporal_fusion_transformer.src.utils import make_tft_model
+from temporal_fusion_transformer.src.plotting import plot_predictions
+from temporal_fusion_transformer.src import experiments
 
 if util.find_spec("flax") is not None:
-    from temporal_fusion_transformer.utils import make_flax_tft_model
-    from temporal_fusion_transformer.flax_ import train_lib
+    from temporal_fusion_transformer.src.utils import make_flax_tft_model
+    from temporal_fusion_transformer.src import training_flax

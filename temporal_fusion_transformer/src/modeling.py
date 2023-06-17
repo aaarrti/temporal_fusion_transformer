@@ -8,8 +8,8 @@ import tensorflow as tf
 from jaxtyping import Float
 from keras.optimizers import Optimizer
 
-from temporal_fusion_transformer.utils import can_jit_compile
-from temporal_fusion_transformer.tf.quantile_loss import QuantileLoss, QuantileRMSE
+from temporal_fusion_transformer.src.utils import can_jit_compile
+from temporal_fusion_transformer.src.quantile_loss import QuantileLoss, QuantileRMSE
 
 try:
     from transformer_engine.tensorflow import Dense, MultiHeadAttention, LayerNormDense

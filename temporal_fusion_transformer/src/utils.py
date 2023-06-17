@@ -26,10 +26,10 @@ from tensorflow.python.types.core import TensorLike
 from tensorflow.python import pywrap_tfe
 
 if TYPE_CHECKING:
-    from temporal_fusion_transformer.tf.modeling import (
+    from temporal_fusion_transformer.src.modeling import (
         TemporalFusionTransformer as TF_TemporalFusionTransformer,
     )
-    from temporal_fusion_transformer.experiments import Experiment
+    from temporal_fusion_transformer.src.experiments import Experiment
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -220,7 +220,7 @@ def make_tft_model(experiment: Experiment, **kwargs) -> TF_TemporalFusionTransfo
             dropout_rate=experiment.default_params.dropout_rate,
         ),
     )
-    from temporal_fusion_transformer.tf.modeling import TemporalFusionTransformer
+    from modeling import TemporalFusionTransformer
 
     return TemporalFusionTransformer(**kwargs)
 
@@ -264,23 +264,6 @@ class NoOpStrategy:
     @contextmanager
     def scope(self) -> ContextManager:
         yield
-
-
-def make_gpu_strategy(
-    clazz: Type[tf.distribute.Strategy] | None = None,
-) -> tf.distribute.Strategy:
-    gpus = tf.config.list_physical_devices("GPU")
-    logging.info(f"{gpus = }")
-    n_gpus = len(gpus)
-    if n_gpus == 0:
-        logging.error("No GPU found.")
-        return NoOpStrategy()
-    if n_gpus == 1:
-        return tf.distribute.OneDeviceStrategy(gpus[0])
-
-    if clazz is None:
-        clazz = tf.distribute.MirroredStrategy
-    return clazz()
 
 
 if util.find_spec("flax") is not None:

@@ -21,7 +21,7 @@ from absl import logging
 from keras_pbar import keras_pbar
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 import tensorflow as tf
-from temporal_fusion_transformer.utils import filter_dict
+from temporal_fusion_transformer.src.utils import filter_dict
 
 try:
     import cudf

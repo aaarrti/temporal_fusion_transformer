@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from temporal_fusion_transformer.plotting import plot_predictions
+from temporal_fusion_transformer.src.plotting import plot_predictions
 from tests.constants import PRNG_SEED
 
 

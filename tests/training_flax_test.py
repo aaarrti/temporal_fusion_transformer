@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import numpy as np
 import jax
 import chex
-from temporal_fusion_transformer.flax_.quantile_loss import (
+from temporal_fusion_transformer.src.training_flax import (
     quantile_loss,
     quantile_rmse,
 )

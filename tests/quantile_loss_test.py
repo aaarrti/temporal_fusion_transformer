@@ -1,5 +1,5 @@
 import tensorflow as tf
-from temporal_fusion_transformer.tf.quantile_loss import (
+from temporal_fusion_transformer.src.quantile_loss import (
     quantile_loss,
     quantile_rmse,
     QuantileLoss,

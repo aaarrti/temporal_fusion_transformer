@@ -6,7 +6,7 @@ import tensorflow as tf
 from jaxtyping import Float
 from keras.losses import LossFunctionWrapper
 from keras.metrics import MeanMetricWrapper
-from temporal_fusion_transformer.utils import (
+from temporal_fusion_transformer.src.utils import (
     assert_quantile_values,
     as_tensor,
     can_jit_compile,

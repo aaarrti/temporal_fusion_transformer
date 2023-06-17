@@ -9,17 +9,14 @@ from keras.utils.tf_utils import set_random_seed
 from keras.api.keras.experimental import CosineDecay
 from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
 from temporal_fusion_transformer import setup_logging, make_tft_model
-from temporal_fusion_transformer.experiments import (
-    electricity_experiment,
-    favorita_experiment,
-)
-from temporal_fusion_transformer.utils import can_jit_compile
+from temporal_fusion_transformer import experiments
+from temporal_fusion_transformer.src.utils import can_jit_compile
 
 minor_tf_api_version = int(tf.__version__.split(".")[1])
 if minor_tf_api_version >= 11:
     from keras.optimizers.adam import Adam
 else:
-    from keras.optimizers.optimizer_experimental.adam import Adam # noqa
+    from keras.optimizers.optimizer_experimental.adam import Adam  # noqa
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -77,10 +74,10 @@ def main(_):
     logs_dir = FLAGS.logs_dir
 
     if experiment_name == "electricity":
-        experiment = electricity_experiment
+        experiment = experiments.electricity_experiment
         map_fn = electricity_map_fn
     if experiment_name == "favorita":
-        experiment = favorita_experiment
+        experiment = experiments.favorita_experiment
         map_fn = favorita_map_fn
 
     batch_size = FLAGS.batch_size
@@ -98,7 +95,6 @@ def main(_):
         map_fn, dtype=tf.keras.mixed_precision.global_policy().compute_dtype  # noqa
     )
 
-    
     train_ds = (
         tf.data.Dataset.from_tensor_slices(
             [f"{data_dir}/{experiment_name}/train/{i}" for i in range(19)]
@@ -167,6 +163,7 @@ def main(_):
         ],
         steps_per_epoch=steps_per_epoch,
         validation_steps=val_steps,
+        verbose=2,
     )
 
     with tf.device("cpu"):

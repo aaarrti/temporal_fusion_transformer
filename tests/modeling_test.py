@@ -2,8 +2,8 @@ import tensorflow as tf
 from absl.testing import parameterized
 from keras.utils.tf_utils import can_jit_compile
 
-from temporal_fusion_transformer.experiments import electricity_experiment
-from temporal_fusion_transformer.tf.modeling import (
+from temporal_fusion_transformer.src.experiments import electricity_experiment
+from temporal_fusion_transformer.src.modeling import (
     TemporalFusionTransformer,
     StaticCovariatesEncoder,
     TFTInputEmbedding,
@@ -11,7 +11,7 @@ from temporal_fusion_transformer.tf.modeling import (
     EncoderBlock,
     ContextInputs,
 )
-from temporal_fusion_transformer.utils import make_tft_model
+from temporal_fusion_transformer.src.utils import make_tft_model
 from tests.constants import PRNG_SEED
 
 static_categories_sizes = [2, 2]

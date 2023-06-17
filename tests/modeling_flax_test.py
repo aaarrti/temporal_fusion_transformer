@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 from absl.testing import parameterized
 
-from temporal_fusion_transformer.flax_.modeling import (
+from temporal_fusion_transformer.src.modeling_flax import (
     TemporalFusionTransformer,
     StaticCovariatesEncoder,
     TFTInputEmbedding,
@@ -13,7 +13,7 @@ from temporal_fusion_transformer.flax_.modeling import (
     ContextInput,
 )
 from tests.constants import PRNG_SEED
-from tests.flax_ import lifted_variants
+from tests import lifted_variants
 
 static_categories_sizes = [2, 2]
 known_categories_sizes = [4]

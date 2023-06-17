@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-from temporal_fusion_transformer.experiments import electricity_experiment
+from temporal_fusion_transformer.src.experiments import electricity_experiment
 
 
 class ExperimentsTest(tf.test.TestCase):
