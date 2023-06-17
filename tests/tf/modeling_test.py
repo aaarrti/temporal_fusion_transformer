@@ -170,14 +170,12 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
     def setUp(self):
         self.train_ds = (
             tf.data.Dataset.load("tests/assets/electricity/test_data")
-            .rebatch(8)
-            .take(2)
+            .take(1)
             .prefetch(tf.data.AUTOTUNE)
         )
         self.val_ds = (
             tf.data.Dataset.load("tests/assets/electricity/test_data")
-            .rebatch(8)
-            .skip(2)
+            .skip(1)
             .take(1)
             .prefetch(tf.data.AUTOTUNE)
         )

@@ -261,6 +261,7 @@ class ElectricityExperiment(Experiment):
         self, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
     ) -> Tuple[DatasetSplit, ScalersSplit]:
         import polars as pl
+
         pl_df = pl.read_csv(csv_path, separator=";", use_pyarrow=True).sort(
             by=["column_0"]
         )
