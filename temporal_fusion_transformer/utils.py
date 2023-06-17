@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib import util
 import logging
 from contextlib import contextmanager
+import platform
 from typing import (
     Mapping,
     Dict,
@@ -22,6 +23,7 @@ import tensorflow as tf
 from keras_pbar import keras_pbar
 from sklearn.utils import gen_batches
 from tensorflow.python.types.core import TensorLike
+from tensorflow.python import pywrap_tfe
 
 if TYPE_CHECKING:
     from temporal_fusion_transformer.tf.modeling import (
@@ -325,3 +327,23 @@ if util.find_spec("flax") is not None:
         if jit:
             clazz = nn.jit(clazz)
         return clazz(**kwargs)
+
+
+def can_jit_compile(warn=False):
+    # Was added only in 2.12
+    """Returns True if TensorFlow XLA is available for the platform."""
+    if platform.system() == "Darwin" and "arm" in platform.processor().lower():
+        if warn:
+            logging.warning(
+                "XLA (`jit_compile`) is not yet supported on Apple M1/M2 ARM "
+                "processors. Falling back to `jit_compile=False`."
+            )
+        return False
+    if pywrap_tfe.TF_ListPluggablePhysicalDevices():
+        if warn:
+            logging.warning(
+                "XLA (`jit_compile`) is not supported on your system. "
+                "Falling back to `jit_compile=False`."
+            )
+        return False
+    return True

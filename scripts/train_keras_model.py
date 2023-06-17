@@ -5,7 +5,7 @@ import functools
 from absl import flags, app
 import tensorflow as tf
 from keras.optimizers import Adam
-from keras.utils.tf_utils import can_jit_compile, set_random_seed
+from keras.utils.tf_utils import set_random_seed
 from keras.api.keras.experimental import CosineDecay
 from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
 from temporal_fusion_transformer import setup_logging, make_tft_model, make_gpu_strategy
@@ -13,6 +13,7 @@ from temporal_fusion_transformer.experiments import (
     electricity_experiment,
     favorita_experiment,
 )
+from temporal_fusion_transformer.utils import can_jit_compile
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -138,6 +139,7 @@ def main(_):
                 TensorBoard(
                     f"{data_dir}/{experiment_name}/tensorboard_logs",
                     update_freq=50,
+                    write_graph=False
                 ),
                 TerminateOnNaN(),
                 BackupAndRestore(f"{data_dir}/{experiment_name}/checkpoints"),

@@ -5,9 +5,9 @@ from typing import Tuple, Dict, Sequence, Mapping
 import keras.layers as layers
 import tensorflow as tf
 from jaxtyping import Float
-from keras.utils.tf_utils import can_jit_compile
 from keras.optimizers import Optimizer
 
+from temporal_fusion_transformer.utils import can_jit_compile
 from temporal_fusion_transformer.tf.quantile_loss import QuantileLoss, QuantileRMSE
 
 
