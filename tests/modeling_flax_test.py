@@ -138,7 +138,7 @@ class TFTModelTest(chex.TestCase, parameterized.TestCase):
             num_stacks=num_stacks,
         )
         logits, _ = model.init_with_output(prng_key, x_batch)
-        chex.assert_tree_all_finite(logits, "Test Failed.")
+        chex.assert_tree_all_finite(logits)
         # 3 is default number of quantiles.
         chex.assert_shape(logits, (batch_size, 5, 3))
 
@@ -186,7 +186,7 @@ class TFTModelTest(chex.TestCase, parameterized.TestCase):
             output_size=1,
         )
         logits, _ = model.init_with_output(prng_key, x_batch)
-        chex.assert_tree_all_finite(logits, "Test Failed.")
+        chex.assert_tree_all_finite(logits)
         # 3 is default number of quantiles.
         chex.assert_shape(logits, (batch_size, 5, 3))
 

@@ -153,7 +153,7 @@ class TemporalFusionTransformer(nn.Module):
                 hidden_layer_size=self.hidden_layer_size,
                 dropout_rate=self.dropout_rate,
             )(encoder_in)
-            encoder_out = nn.LayerNorm(encoder_out + temporal_features)
+            encoder_out = nn.LayerNorm()(encoder_out + temporal_features)
             encoder_in = encoder_out
 
         outputs = TimeDistributed(nn.Dense(self.output_size * len(self.quantiles)))(

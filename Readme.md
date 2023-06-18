@@ -30,3 +30,5 @@ as well as to utilize performance improving features of TF2 (which is also not t
   from [google-research/google-research/tft](https://github.com/google-research/google-research/tree/master/tft)
   repository.
   If you need a local copy of it, run: `./scripts/clone_original_implementation.sh`
+
+## TODO differences with original implementation

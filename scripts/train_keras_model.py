@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 from typing import Dict, Tuple, Callable
+import datetime
 
 import tensorflow as tf
 from absl import flags, app
@@ -64,7 +65,7 @@ def prepare_dataset(
         .prefetch(tf.data.experimental.AUTOTUNE)
     )
     return ds
-    
+
     # I don't see how it will change much, data input pipeline is nowhere near being a bottleneck.
     # try:
     #    import nvidia.dali.plugin.tf as dali_tf
@@ -150,7 +151,7 @@ def main(_):
         validation_data=validation_split,
         callbacks=[
             TensorBoard(
-                f"{logs_dir}/{experiment_name}/tensorboard_logs",
+                f"{logs_dir}/{experiment_name}/tensorboard_logs/{datetime.datetime.now().strftime('%Y%m%d-%H%M')}",
                 update_freq=50,
                 # Graph is pretty useless, unless debugging NaN's.
                 write_graph=False,

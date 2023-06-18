@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import gc
+import pickle
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import auto, IntEnum
@@ -293,7 +294,7 @@ class ElectricityExperiment(Experiment):
 
         df_list = []
 
-        for label in keras_pbar(pd_df):
+        for label in keras_pbar(pd_df, n=369):
             srs = pd_df[label]
 
             start_date = min(srs.fillna(method="ffill").dropna().index)
@@ -401,6 +402,9 @@ class ElectricityExperiment(Experiment):
             categorical_scalers[col] = LabelEncoder().fit(srs.values)
 
         logging.debug(f"{num_classes = }")
+        with open(f"{save_path}/electricity/target_scalers.pickle", "wb+") as file:
+            pickle.dump(target_scalers, file, protocol=pickle.HIGHEST_PROTOCOL)
+
         apply_fn = functools.partial(
             normalize_data,
             id_column=id_column,
@@ -442,10 +446,6 @@ class ElectricityExperiment(Experiment):
             save_identifier=True,
             save_time=True,
         )
-        scalers_params = ScalersSplit(
-            real=real_scalers, categorical=categorical_scalers, target=target_scalers
-        )
-        return scalers_params
 
 
 class FavoritaExperiment(Experiment):

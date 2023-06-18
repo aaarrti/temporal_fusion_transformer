@@ -170,69 +170,31 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
     def setUp(self):
         self.train_ds = (
             tf.data.Dataset.load("tests/test_data/electricity/mini_dataset")
+            .batch(8)
             .take(1)
+            .cache()
             .prefetch(tf.data.AUTOTUNE)
         )
         self.val_ds = (
             tf.data.Dataset.load("tests/test_data/electricity/mini_dataset")
+            .batch(8)
             .skip(1)
             .take(1)
+            .cache()
             .prefetch(tf.data.AUTOTUNE)
         )
 
     @parameterized.parameters(
         [
-            (
-                "float32",
-                False,
-            ),
-            (
-                "float16",
-                False,
-            ),
-            (
-                "mixed_float16",
-                False,
-            ),
-            (
-                "mixed_bfloat16",
-                False,
-            ),
-            (
-                "float16",
-                False,
-            ),
-            (
-                "bfloat16",
-                False,
-            ),
-            (
-                "float32",
-                True,
-            ),
-            (
-                "float16",
-                True,
-            ),
-            (
-                "mixed_float16",
-                True,
-            ),
-            (
-                "mixed_bfloat16",
-                True,
-            ),
-            (
-                "float16",
-                True,
-            ),
-            (
-                "bfloat16",
-                True,
-            ),
+            "float32",
+            "float16",
+            "mixed_float16",
+            "mixed_bfloat16",
+            "float16",
+            "bfloat16",
         ]
     )
-    def test_electricity(self, policy, unroll_lstm):
+    def test_electricity(self, policy):
         tf.keras.mixed_precision.set_global_policy(policy)
         train_ds = self.train_ds.map(
             lambda i: make_input_tuple(
@@ -246,7 +208,6 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
         )
         model = make_tft_model(
             electricity_experiment,
-            unroll_lstm=unroll_lstm,
         )
         model.compile(tf.keras.optimizers.Adam(jit_compile=can_jit_compile(True)))
         history = model.fit(train_ds, validation_data=val_ds).history

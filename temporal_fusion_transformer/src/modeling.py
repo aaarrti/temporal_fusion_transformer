@@ -21,7 +21,7 @@ else:
     )
 
 try:
-    from transformer_engine.tensorflow import Dense, LayerNorm
+    from transformer_engine.tensorflow.module import Dense, LayerNorm
     from transformer_engine.tensorflow.transformer import MultiHeadAttention
 
     transformer_engine_available = True

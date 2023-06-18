@@ -91,6 +91,8 @@ def filter_dict(
         if key_filter(k) and value_filter(v):
             result[k] = v
 
+    return result
+
 
 def flatten_dict(xs: Mapping[str, ...], sep: str = "/") -> Dict[str, ...]:
     """
