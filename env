@@ -1,2 +1,3 @@
 TF_CPP_MIN_LOG_LEVEL=0
-TF_XLA_FLAGS="--tf_xla_auto_jit=2 --tf_xla_async_io_level=1"
+TF_XLA_FLAGS="--tf_xla_auto_jit=2"
+TF_GPU_THREAD_MODE=gpu_private

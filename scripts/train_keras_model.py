@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 import functools
 from absl import flags, app
 import tensorflow as tf
 from keras.utils.tf_utils import set_random_seed
 from keras.api.keras.experimental import CosineDecay
-from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
+from keras.callbacks import TensorBoard, TerminateOnNaN
 from temporal_fusion_transformer import setup_logging, make_tft_model
 from temporal_fusion_transformer import experiments
 from temporal_fusion_transformer.src.utils import can_jit_compile
@@ -95,49 +95,41 @@ def main(_):
         map_fn, dtype=tf.keras.mixed_precision.global_policy().compute_dtype  # noqa
     )
 
-    train_ds = (
-        tf.data.Dataset.from_tensor_slices(
-            [f"{data_dir}/{experiment_name}/train/{i}" for i in range(19)]
+    def make_dataset(file_names: List[str]) -> tf.data.Dataset:
+        return (
+            tf.data.Dataset.from_tensor_slices(file_names)
+            .flat_map(
+                lambda i: tf.data.Dataset.load(i, element_spec=experiment.element_spec)
+            )
+            # rebatch was added only in 2.12
+            .unbatch()
+            .batch(batch_size, True)
+            .map(map_fn, tf.data.AUTOTUNE)
+            .shuffle(32, PRNG_SEED, True)
+            .cache()
+            .repeat(epochs)
+            .prefetch(tf.data.AUTOTUNE)
         )
-        .flat_map(
-            lambda i: tf.data.Dataset.load(i, element_spec=experiment.element_spec)
-        )
-        # rebatch was added only in 2.12
-        .unbatch()
-        .batch(batch_size, True)
-        .map(map_fn, tf.data.AUTOTUNE)
-        .shuffle(32, PRNG_SEED, True)
-        .cache()
-        .repeat(epochs)
-        .prefetch(tf.data.AUTOTUNE)
-    )
 
-    validation_ds = (
-        tf.data.Dataset.from_tensor_slices(
-            [f"{data_dir}/{experiment_name}/validation/{i}" for i in range(3)]
-        )
-        .flat_map(
-            lambda i: tf.data.Dataset.load(i, element_spec=experiment.element_spec)
-        )
-        # rebatch was added only in 2.12
-        .unbatch()
-        .batch(batch_size, True)
-        .map(map_fn, tf.data.AUTOTUNE)
-        .shuffle(32, PRNG_SEED, True)
-        .cache()
-        .repeat(epochs)
-        .prefetch(tf.data.AUTOTUNE)
+    train_ds = make_dataset(
+        [f"{data_dir}/{experiment_name}/train/{i}" for i in range(19)]
+    )
+    validation_ds = make_dataset(
+        [f"{data_dir}/{experiment_name}/validation/{i}" for i in range(3)]
     )
 
     model = make_tft_model(
         experiment,  # noqa
+        # Unrolling makes it worse, CuDNN is the GOAT.
         use_cudnn_lstm=True,
+        # Those were picked randomly tbh.
         num_attention_heads=12,
         hidden_layer_size=180,
         num_stacks=4,
     )
     model.compile(
         optimizer=Adam(
+            # Also picked randomly lol.
             CosineDecay(
                 5e-3,
                 int(steps_per_epoch * epochs),
@@ -145,6 +137,7 @@ def main(_):
             ),
             jit_compile=can_jit_compile(True),
         ),
+        # Surprisingly, here XLA only slows everything down like 10+ times.
         jit_compile=False,
     )
     model.fit(
@@ -155,10 +148,13 @@ def main(_):
             TensorBoard(
                 f"{logs_dir}/{experiment_name}/tensorboard_logs",
                 update_freq=50,
-                write_graph=True,
+                # Graph is pretty useless, unless debugging NaN's.
+                write_graph=False,
+                # Profile however, does provide some really helpfully details.
                 profile_batch=True,
             ),
             TerminateOnNaN(),
+            # No need really, unless running super large scale training.
             # BackupAndRestore(f"{logs_dir}/{experiment_name}/checkpoints"),
         ],
         steps_per_epoch=steps_per_epoch,

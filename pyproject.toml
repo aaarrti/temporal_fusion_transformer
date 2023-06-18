@@ -16,8 +16,8 @@ classifiers = [
     "Development Status :: 3 - Alpha",
 ]
 dependencies = [
-    "tensorflow; sys_platform == 'linux'",
-    "tensorflow_macos; sys_platform == 'darwin'",
+    "tensorflow>=2.10.0; sys_platform == 'linux'",
+    "tensorflow_macos>=2.10.0; sys_platform == 'darwin'",
     "jaxtyping",
     "keras_pbar",
     "scikit_learn",
@@ -38,12 +38,8 @@ flax = [
     "orbax",
     "orbax_checkpoint"
 ]
-polars = [
-    "pyarrow",
-    "polars",
-]
 tests = [
-    "temporal_fusion_transformer[flax,polars]",
+    "temporal_fusion_transformer[flax]",
     "pytest",
     "chex"
 ]

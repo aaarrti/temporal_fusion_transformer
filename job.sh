@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #$ -binding linear:2  # request 2 cpus
 #$ -l cuda=1          # request one GPU
-#$ -l h_vmem=16G
-#$ -l mem_free=16G
+#$ -l h_vmem=14G
+#$ -l mem_free=14G
 #$ -cwd               # change working directory (to current)
 #$ -N ex              # set consistent base name for output and error files
 #$ -V                 # provide environment variables
@@ -23,5 +23,5 @@ apptainer exec --nv --env-file env --contain \
   --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/,ro" \
   --bind scripts/:/scripts \
   --bind logs/:/logs \
-  "${IMAGE_DIR}/image.sif" /venv/bin/python /scripts/train_keras_model.py --experiment=electricity --data_dir=/data --logs_dir=/logs --batch_size=512
+  "${IMAGE_DIR}/image.sif" /venv/bin/python /scripts/train_keras_model.py --experiment=electricity --data_dir=/data --logs_dir=/logs --batch_size=512 --epochs=5
 ##########################################################################
