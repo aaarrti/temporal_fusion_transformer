@@ -1,26 +1,25 @@
 from __future__ import annotations
 
 import functools
+import gc
 from abc import ABC, abstractmethod
-from collections import defaultdict
+from collections import OrderedDict
 from enum import auto, IntEnum
 from typing import (
     NamedTuple,
     List,
     Dict,
-    Tuple,
     Sequence,
-    ClassVar,
     Mapping,
-    DefaultDict,
 )
 
 import numpy as np
 import pandas
+import tensorflow as tf
 from absl import logging
 from keras_pbar import keras_pbar
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-import tensorflow as tf
+
 from temporal_fusion_transformer.src.utils import filter_dict
 
 try:
@@ -208,8 +207,6 @@ class Experiment(ABC):
 
 
 class ElectricityExperiment(Experiment):
-    test_boundary: ClassVar[int] = 1339
-
     @property
     def column_schema(self) -> Dict[str, SchemaEntry | List[SchemaEntry]]:
         return {
@@ -265,45 +262,22 @@ class ElectricityExperiment(Experiment):
             "inputs_known_real": tf.TensorSpec([None, 192, 3], dtype=tf.float32),
         }
 
-    def read_raw_csv(
-        self, csv_path: str, validation_boundary: int = 1315, test_boundary=1339
-    ) -> Tuple[DatasetSplit, ScalersSplit]:
+    def process_raw_csv(
+        self,
+        csv_path: str,
+        save_path: str,
+        validation_boundary: int = 1315,
+        test_boundary: int = 1339,
+    ):
         """
-        Read raw CSV, pre-process it, create TF dataset. You probably will want to execute it only once,
-        and then write dataset to local filesystem (or mb even create squshFS image).
+        Read raw CSV at csv_path, pre-process it, create TF dataset and save respective splits to
+        - <save_path>/electricity/training
+        - <save_path>/electricity/validation
+        - <save_path>/electricity/test
 
-        Parameters
-        ----------
-        csv_path:
-            Path to raw unprocessed CSV file.
-        validation_boundary:
-            Year at which validation data should start.
-        test_boundary:
-            Year at which test data should start.
-
-        Returns
-        -------
-
-        experiments:
-            Instance of experiment, with train and validation splits loaded. Dataset yields elements of shape
-            {
-                "identifier": (batch, total_time_steps, 1),
-                "time": (batch, total_time_steps, 1),
-                "outputs": (batch, total_time_steps, 1),
-                "inputs_static": (batch, total_time_steps, 1),
-                "inputs_known_real": (batch, total_time_steps, 3),
-            }
-            The dataset is not batched, and must not be further shuffled.
-
-
-        Examples
-        -------
-
-        >>> from temporal_fusion_transformer.experiments import ElectricityExperiment
-        >>> experiment = ElectricityExperiment.read_raw_csv("data.csv")
-        >>> train_ds, val_ds = experiment.train_test_split()
-        >>> train_ds.save("data/train")
-        >>> val_ds.save("data/validation")
+        In order to save disc memory, the identifiers and time are not saved for training splits,
+        and only outputs corresponding to future timestamps are saved. You would probably still want to create
+        SquashFS image from it, e.g., with mksquashfs "data" "data.sqfs" -all-root -action 'chmod(o+rX)@!perm(o+rX)'.
         """
         logging.info(f"Loading electricity dataset from {csv_path}")
         # This code was copy pasted from original implementation, and I have very little idea
@@ -451,8 +425,8 @@ class ElectricityExperiment(Experiment):
             "inputs_observed": input_observed,
         }
 
-        apply_fn = functools.partial(
-            make_np_array_dict,
+        save_fn = functools.partial(
+            make_tf_dataset,
             id_column=id_column,
             time_col=time_col,
             col_mapping=col_mapping,
@@ -460,15 +434,18 @@ class ElectricityExperiment(Experiment):
             num_encoder_steps=self.num_encoder_steps,
         )
 
-        train_ds = apply_fn(train_df)
-        validation_ds = apply_fn(validation_df)
-        test_ds = apply_fn(test_df, save_only_future_steps=False)
-
-        ds_split = DatasetSplit(train=train_ds, validation=validation_ds, test=test_ds)
+        save_fn(train_df, f"{save_path}/electricity/training")
+        save_fn(validation_df, f"{save_path}/electricity/validation")
+        save_fn(
+            test_df,
+            f"{save_path}/electricity/test",
+            save_identifier=True,
+            save_time=True,
+        )
         scalers_params = ScalersSplit(
             real=real_scalers, categorical=categorical_scalers, target=target_scalers
         )
-        return ds_split, scalers_params
+        return scalers_params
 
 
 class FavoritaExperiment(Experiment):
@@ -520,17 +497,6 @@ class FavoritaExperiment(Experiment):
         )
 
 
-def batch_single_entity(input_data: csv_lib.Series, lags: int) -> np.ndarray:
-    # Doesn't support dict
-    return np.asarray(
-        [
-            *tf.keras.utils.timeseries_dataset_from_array(
-                input_data.to_numpy(), None, lags, batch_size=None
-            ).as_numpy_iterator()
-        ]
-    )
-
-
 def normalize_data(
     df: csv_lib.DataFrame,
     *,
@@ -558,46 +524,72 @@ def normalize_data(
     return df
 
 
-def make_np_array_dict(
+def make_tf_dataset(
     df: csv_lib.DataFrame,
+    save_path: str,
     *,
     id_column: str,
     time_col: str,
     col_mapping: Mapping[str, str | Sequence[str]],
     total_time_steps: int,
     num_encoder_steps: int,
-    save_only_future_steps=True,
-) -> Dict[str, np.ndarray]:
-    logging.debug("Grouping and batching data.")
+    save_only_future_outputs=True,
+    save_identifier: bool = False,
+    save_time: bool = False,
+):
+    logging.info(f"Creating TF dataset to be saved at {save_path}")
+    tf_ds = None
+
     df.sort_values(by=[id_column, time_col], inplace=True)
-
-    dataset = []
-
-    for _, sliced in keras_pbar(df.groupby(id_column)):
-        # Here we group by id, to make sure every time-series we create, contain same entity (id).
-        # later, Dataset.rebatch() changes only leading dimension, so we won't destroy the pattern.
-        data_map: DefaultDict[str, List[np.ndarray]] = defaultdict(lambda: [])
+    for name, sliced in keras_pbar(df.groupby(id_column)):
+        data_map: OrderedDict = OrderedDict()
         for k in col_mapping:
             cols = col_mapping[k]
-            if len(cols) == 0:
+            if (
+                (len(cols) == 0)
+                or (k == "identifier" and not save_identifier)
+                or (k == "time" and not save_time)
+            ):
                 continue
             arr = sliced[cols].to_numpy()
-            if arr.dtype == np.int64:
-                arr = arr.astype(np.int32)
             if arr.dtype == np.float64:
                 arr = arr.astype(np.float32)
-            data_map[k].append(arr)
-            dataset.append(dict(**data_map))
 
-    for k in data_map:
-        data_map[k] = np.concatenate(data_map[k], axis=0)
-    # Save only future steps
-    if save_only_future_steps:
-        data_map["outputs"] = data_map["outputs"][:, num_encoder_steps:]
-    # Static are not time varying
-    data_map["inputs_static"] = data_map["inputs_static"][:, 0]
-    return data_map
+            data_map[k] = arr
+
+        for k, v in data_map.items():
+            v = np.stack(
+                list(
+                    tf.keras.utils.timeseries_dataset_from_array(
+                        v,
+                        targets=None,
+                        sequence_length=total_time_steps,
+                        batch_size=None,
+                    ).as_numpy_iterator()
+                )
+            )
+            if k in ("identifier", "inputs_static"):
+                # No need to save time steps for ids or static inputs, they do not vary.
+                v = v[:, 0]
+            # This will cause issue for batching.
+            if k == "outputs" and save_only_future_outputs:
+                v = v[:, num_encoder_steps:]
+            data_map[k] = v
+
+        data_map = dict(**data_map)
+        tf_ds_i = tf.data.Dataset.from_tensor_slices(data_map)
+        tf_ds = concatenate_datasets(tf_ds, tf_ds_i)
+
+    tf_ds.save(save_path)
+    del tf_ds
+    gc.collect()
+
+
+def concatenate_datasets(ds1: tf.data.Dataset | None, ds2: tf.data.Dataset):
+    if ds1 is None:
+        return ds2
+    else:
+        return ds1.concatenate(ds2)
 
 
 electricity_experiment = ElectricityExperiment()
-favorita_experiment = FavoritaExperiment()

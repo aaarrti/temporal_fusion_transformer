@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from importlib import util
 import logging
-from contextlib import contextmanager
 import platform
+from contextlib import contextmanager
+from importlib import util
 from typing import (
     Mapping,
     Dict,
@@ -14,16 +14,12 @@ from typing import (
     Tuple,
     Any,
     TYPE_CHECKING,
-    Type,
     ContextManager,
 )
 
-import numpy as np
 import tensorflow as tf
-from keras_pbar import keras_pbar
-from sklearn.utils import gen_batches
-from tensorflow.python.types.core import TensorLike
 from tensorflow.python import pywrap_tfe
+from tensorflow.python.types.core import TensorLike
 
 if TYPE_CHECKING:
     from temporal_fusion_transformer.src.modeling import (
@@ -94,38 +90,6 @@ def filter_dict(
     for k, v in dictionary.items():
         if key_filter(k) and value_filter(v):
             result[k] = v
-
-    return result
-
-
-def export_sharded_dataset(
-    data: Mapping[str, np.ndarray], export_path: str, shard_size: int = 100_000
-):
-    """
-    Split dataset in shards of size `shard_size`, and write the as TF protobuf to local file system.
-
-    Parameters
-    ----------
-    data
-    export_path
-    shard_size
-
-    Returns
-    -------
-
-    """
-    n = len(data["identifier"])
-    batches = gen_batches(n, shard_size)
-
-    n_batches = n // shard_size
-    if n % shard_size != 0:
-        n_batches += 1
-
-    for index, shard_slice in keras_pbar(enumerate(batches), n_batches):
-        shard = map_dict(
-            data, value_mapper=lambda v: v[shard_slice.start : shard_slice.stop]
-        )
-        tf.data.Dataset.from_tensors(shard).save(f"{export_path}/{index}")
 
 
 def flatten_dict(xs: Mapping[str, ...], sep: str = "/") -> Dict[str, ...]:
@@ -314,7 +278,7 @@ if util.find_spec("flax") is not None:
         return clazz(**kwargs)
 
 
-def can_jit_compile(warn=False):
+def can_jit_compile(warn=True):
     # Was added only in 2.12.
     """Returns True if TensorFlow XLA is available for the platform."""
     if platform.system() == "Darwin" and "arm" in platform.processor().lower():
@@ -332,3 +296,22 @@ def can_jit_compile(warn=False):
             )
         return False
     return True
+
+
+def can_use_cudnn() -> bool:
+    """
+    We can use CuDNN if:
+    - gpu available
+    - gpu device is cuda
+    - tensorflow was able to find CuDNN version
+    - TODO: mb we also need to check installation location for actual dll?
+    Returns
+    -------
+
+    """
+    sysconfig: Dict[str, bool] = tf.sysconfig.get_build_info()
+    return (
+        len(tf.config.list_physical_devices("GPU")) > 0
+        and sysconfig["is_cuda_build"]
+        and "cudnn_version" in sysconfig
+    )

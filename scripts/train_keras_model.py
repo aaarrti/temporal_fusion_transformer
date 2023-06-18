@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import logging
-from typing import Dict, Tuple, List
 import functools
-from absl import flags, app
+from typing import Dict, Tuple, Callable
+
 import tensorflow as tf
-from keras.utils.tf_utils import set_random_seed
+from absl import flags, app
 from keras.api.keras.experimental import CosineDecay
 from keras.callbacks import TensorBoard, TerminateOnNaN
-from temporal_fusion_transformer import setup_logging, make_tft_model
+from keras.utils.tf_utils import set_random_seed
+
 from temporal_fusion_transformer import experiments
+from temporal_fusion_transformer import setup_logging, make_tft_model
 from temporal_fusion_transformer.src.utils import can_jit_compile
 
 minor_tf_api_version = int(tf.__version__.split(".")[1])
@@ -34,19 +35,6 @@ flags.DEFINE_string("logs_dir", help=None, default="gs://tf2_tft_v2/logs")
 PRNG_SEED = 42
 set_random_seed(PRNG_SEED)
 setup_logging()
-num_electricity_samples = 1853057
-num_val_samples = 204057
-
-try:
-    from nvidia.dali import pipeline_def, Pipeline
-    import nvidia.dali.fn as fn
-    import nvidia.dali.types as types
-    import nvidia.dali.plugin.tf as dali_tf
-
-    is_dali_installed = True
-except ModuleNotFoundError:
-    logging.warning("DALI not installed, falling back to TF dataset")
-    is_dali_installed = False
 
 
 def electricity_map_fn(
@@ -61,31 +49,69 @@ def electricity_map_fn(
     )
 
 
-def favorita_map_fn(
-    arg: Dict[str, tf.Tensor], dtype
-) -> Tuple[Dict[str, tf.Tensor], tf.Tensor]:
-    outputs = tf.cast(arg.pop("outputs"), dtype)
-    return arg, outputs
+def prepare_dataset(
+    ds: tf.data.Dataset,
+    batch_size: int,
+    epochs: int,
+    map_fn: Callable[[Dict[str, tf.Tensor]], Tuple[Dict[str, tf.Tensor], tf.Tensor]],
+) -> tf.data.Dataset:
+    ds = (
+        ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+        .map(map_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        .shuffle(32, reshuffle_each_iteration=True, seed=PRNG_SEED)
+        .cache()
+        .repeat(epochs)
+        .prefetch(tf.data.experimental.AUTOTUNE)
+    )
+    return ds
+
+    # try:
+    #    import nvidia.dali.plugin.tf as dali_tf
+    #    from nvidia.dali import pipeline_def
+    #    from nvidia.dali import fn
+    #
+    # except ModuleNotFoundError:
+    #    logging.warning("DALI not installed, falling back to TF dataset.")
+    #    return ds
+
+    # @pipeline_def(batch_size=batch_size, num_threads=4)
+    # def external_source_pipe():
+    #    input_0 = fn.external_source(name="input_0")
+    #    return input_0
+    #
+    # ds = tf.data.experimental.copy_to_device("/gpu:0")(ds)
+    # return dali_tf.experimental.DALIDatasetWithInputs(
+    #    pipeline=external_source_pipe(),
+    #    input_datasets={"input_0": ds},
+    #    device_id=0,
+    #    output_dtypes=tf.float32,
+    # )
 
 
 def main(_):
-    """The parameters were picked out of the blue, this script's purpose is to demonstrate APIs."""
+    """
+    1. The parameters were picked out of the blue, this script's purpose is to demonstrate APIs.
+    2. The script was specifically designed to run in NVIDIA's TensorFlow container with tag 22.12-tf2-py3,
+    more about it here https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tensorflow.
+    """
     experiment_name = FLAGS.experiment
     logs_dir = FLAGS.logs_dir
 
     if experiment_name == "electricity":
         experiment = experiments.electricity_experiment
         map_fn = electricity_map_fn
-    if experiment_name == "favorita":
-        experiment = experiments.favorita_experiment
-        map_fn = favorita_map_fn
 
     batch_size = FLAGS.batch_size
     epochs = FLAGS.epochs
     data_dir = FLAGS.data_dir
 
-    steps_per_epoch = num_electricity_samples // batch_size
-    val_steps = num_val_samples // batch_size
+    training_split = tf.data.Dataset.load(f"{data_dir}/{experiment_name}/training/")
+    validation_split = tf.data.Dataset.load(f"{data_dir}/{experiment_name}/validation/")
+    num_train_samples = int(training_split.cardinality())
+    num_validation_samples = int(validation_split.cardinality())
+
+    steps_per_epoch = num_train_samples // batch_size
+    val_steps = num_validation_samples // batch_size
 
     tf.keras.mixed_precision.set_global_policy("mixed_float16")
     if can_jit_compile(True):
@@ -95,33 +121,10 @@ def main(_):
         map_fn, dtype=tf.keras.mixed_precision.global_policy().compute_dtype  # noqa
     )
 
-    def make_dataset(file_names: List[str]) -> tf.data.Dataset:
-        return (
-            tf.data.Dataset.from_tensor_slices(file_names)
-            .flat_map(
-                lambda i: tf.data.Dataset.load(i, element_spec=experiment.element_spec)
-            )
-            # rebatch was added only in 2.12
-            .unbatch()
-            .batch(batch_size, True)
-            .map(map_fn, tf.data.AUTOTUNE)
-            .shuffle(32, PRNG_SEED, True)
-            .cache()
-            .repeat(epochs)
-            .prefetch(tf.data.AUTOTUNE)
-        )
-
-    train_ds = make_dataset(
-        [f"{data_dir}/{experiment_name}/train/{i}" for i in range(19)]
-    )
-    validation_ds = make_dataset(
-        [f"{data_dir}/{experiment_name}/validation/{i}" for i in range(3)]
-    )
-
+    training_split = prepare_dataset(training_split, batch_size, epochs, map_fn)
+    validation_split = prepare_dataset(validation_split, batch_size, epochs, map_fn)
     model = make_tft_model(
         experiment,  # noqa
-        # Unrolling makes it worse, CuDNN is the GOAT.
-        use_cudnn_lstm=True,
         # Those were picked randomly tbh.
         num_attention_heads=12,
         hidden_layer_size=180,
@@ -141,9 +144,9 @@ def main(_):
         jit_compile=False,
     )
     model.fit(
-        train_ds,
+        training_split,
         epochs=epochs,
-        validation_data=validation_ds,
+        validation_data=validation_split,
         callbacks=[
             TensorBoard(
                 f"{logs_dir}/{experiment_name}/tensorboard_logs",
@@ -152,7 +155,7 @@ def main(_):
                 write_graph=False,
                 # Profile however, does provide some really helpfully details.
                 profile_batch=True,
-                write_steps_per_second=True
+                write_steps_per_second=True,
             ),
             TerminateOnNaN(),
             # No need really, unless running super large scale training.

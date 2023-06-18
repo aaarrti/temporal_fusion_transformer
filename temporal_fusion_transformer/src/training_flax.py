@@ -12,7 +12,6 @@ from typing import (
     Generator,
     Literal,
 )
-
 import flax
 import jax
 import jax.numpy as jnp

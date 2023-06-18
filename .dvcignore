@@ -2,6 +2,13 @@
 # the performance. Learn more at
 # https://dvc.org/doc/user-guide/dvcignore
 # Those can always easily be downloaded.
-data/electricity/__MACOSX
-data/electricity/LD2011_2014.txt
-data/electricity/LD2011_2014.txt.zip
+temporal_fusion_transformer
+nvidia
+raw_data
+tensorboard_logs
+notebooks
+tests
+thirdparty
+transformer_engine
+.tox
+.terraform

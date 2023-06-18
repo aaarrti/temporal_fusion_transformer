@@ -1,10 +1,6 @@
-import json
-import pickle
-
 from absl import flags, app, logging
 
-from temporal_fusion_transformer.experiments import electricity_experiment
-from temporal_fusion_transformer.utils import export_sharded_dataset
+from temporal_fusion_transformer.src.experiments import electricity_experiment
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -14,55 +10,19 @@ flags.DEFINE_enum(
     help="Name of the experiment",
     default=None,
 )
-flags.DEFINE_integer("shard_size", default=100_000, help="Size of each exported shard")
 flags.DEFINE_string(
-    "data_path", default="../data", help="Path where to persist the dataset"
+    "save_path", default="datasets", help="Path where to persist the dataset"
 )
-
-
-def export_electricity_dataset():
-    ds, scalers = electricity_experiment.read_raw_csv(
-        "data/electricity/LD2011_2014.txt"
-    )
-    ids = (
-        set(ds.train["identifier"].reshape(-1))
-        .union(set(ds.validation["identifier"].reshape(-1)))
-        .union(set(ds.test["identifier"].reshape(-1)))
-    )
-    metadata = {
-        "number_training_samples": len(ds.train["identifier"]),
-        "number_validation_samples": len(ds.validation["identifier"]),
-        "number_test_samples": len(ds.test["identifier"]),
-        "ids": list(ids),
-        "scalers": {
-            "real": list(scalers.real.keys()),
-            "categorical": list(scalers.categorical.keys()),
-            "target": list(scalers.target.keys()),
-        },
-    }
-    with open("data/electricity/scalers.pickle", "wb+") as file:
-        pickle.dump(scalers, file, protocol=pickle.HIGHEST_PROTOCOL)
-
-    logging.info(f"Metadata = {json.dumps(metadata, indent=4)}")
-    with open("data/electricity/metadata.json", "w+") as file:
-        json.dump(metadata, file)
-    logging.info("Exporting sharded train split.")
-    export_sharded_dataset(ds.train, "data/electricity/train")
-    logging.info("Exporting sharded validation split.")
-    export_sharded_dataset(ds.validation, "data/electricity/validation")
-    logging.info("Exporting sharded tests split.")
-    export_sharded_dataset(ds.test, "data/electricity/test")
-
-
-def export_favorita_dataset():
-    logging.error("Not implemented")
+flags.DEFINE_string("raw_data_path", default="raw_data", help="Path to raw data.")
 
 
 def main(_):
     if FLAGS.experiment == "electricity":
-        export_electricity_dataset()
+        electricity_experiment.process_raw_csv(
+            "raw_data/electricity/LD2011_2014.txt", FLAGS.save_path
+        )
     if FLAGS.experiment == "favorita":
-        export_favorita_dataset()
+        logging.error("Not implemented")
 
 
 if __name__ == "__main__":

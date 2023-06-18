@@ -8,14 +8,32 @@ import tensorflow as tf
 from jaxtyping import Float
 from keras.optimizers import Optimizer
 
-from temporal_fusion_transformer.src.utils import can_jit_compile
+from temporal_fusion_transformer.src.utils import can_jit_compile, can_use_cudnn
 from temporal_fusion_transformer.src.quantile_loss import QuantileLoss, QuantileRMSE
 
-try:
-    from transformer_engine.tensorflow import Dense, MultiHeadAttention, LayerNormDense
+if can_use_cudnn():
+    logging.info("CuDNN check -> OK.")
+    LSTM = layers.CuDNNLSTM
+else:
+    LSTM = tf.keras.layers.LSTM
+    logging.warning(
+        "CuDNN is not available, falling back to Keras implementation of LSTM."
+    )
 
+try:
+    from transformer_engine.tensorflow import Dense, LayerNorm
+    from transformer_engine.tensorflow.transformer import MultiHeadAttention
+
+    transformer_engine_available = True
+
+    logging.info("Transformers engine check -> OK.")
 except ModuleNotFoundError:
-    logging.warning("Transformer engine not installed.")
+    logging.warning(
+        "Transformer engine not installed. Falling back to Keras implementation."
+    )
+    transformer_engine_available = True
+    Dense = tf.keras.layers.Dense
+    LayerNorm = tf.keras.layers.LayerNormalization
 
 
 class TemporalFusionTransformer(tf.keras.Model):
@@ -41,9 +59,6 @@ class TemporalFusionTransformer(tf.keras.Model):
         quantiles: Sequence[float] = None,
         prng_seed: int = 42,
         name: str = "temporal_fusion_transformer",
-        unroll_lstm: bool = False,
-        use_cudnn_lstm: bool = False,
-        use_transformer_engine: bool = False,
         **kwargs,
     ):
         """
@@ -65,10 +80,6 @@ class TemporalFusionTransformer(tf.keras.Model):
             Number of attention heads to use for multi-head attention.
         num_quantiles:
         output_size:
-        unroll_lstm:
-            not recommended.
-        use_cudnn_lstm:
-            When set to True, will use CuDNN implementation of LSTM cell.
         name:
         use_transformer_engine:
             When set to true, will use layer primitives from https://github.com/NVIDIA/TransformerEngine.
@@ -87,8 +98,6 @@ class TemporalFusionTransformer(tf.keras.Model):
         self.num_attention_heads = num_attention_heads
         self.dropout_rate = dropout_rate
         self.prng_seed = prng_seed
-        self.unroll_lstm = unroll_lstm
-        self.use_cudnn_lstm = use_cudnn_lstm
         self.num_stacks = num_stacks
 
         self.input_embeds = TFTInputEmbedding(
@@ -113,39 +122,24 @@ class TemporalFusionTransformer(tf.keras.Model):
             prng_seed=prng_seed,
             name="future_variable_selection",
         )
-        if use_cudnn_lstm:
-            self.historical_features_lstm = layers.CuDNNLSTM(
-                hidden_layer_size,
-                return_sequences=True,
-                return_state=True,
-                name="historical_features_lstm",
-            )
-            self.future_features_lstm = layers.CuDNNLSTM(
-                hidden_layer_size,
-                return_sequences=True,
-                name="future_features_lstm",
-            )
-            dtype = None
+
+        if self.dtype_policy.compute_dtype == "bfloat16":
+            dtype = tf.keras.mixed_precision.Policy("float32")
         else:
-            if self.dtype_policy.compute_dtype == "bfloat16":
-                dtype = tf.keras.mixed_precision.Policy("float32")
-            else:
-                dtype = None
-            self.historical_features_lstm = layers.LSTM(
-                hidden_layer_size,
-                return_sequences=True,
-                return_state=True,
-                name="historical_features_lstm",
-                unroll=unroll_lstm,
-                dtype=dtype,
-            )
-            self.future_features_lstm = layers.LSTM(
-                hidden_layer_size,
-                return_sequences=True,
-                name="future_features_lstm",
-                unroll=unroll_lstm,
-                dtype=dtype,
-            )
+            dtype = None
+        self.historical_features_lstm = LSTM(
+            hidden_layer_size,
+            return_sequences=True,
+            return_state=True,
+            name="historical_features_lstm",
+            dtype=dtype,
+        )
+        self.future_features_lstm = LSTM(
+            hidden_layer_size,
+            return_sequences=True,
+            name="future_features_lstm",
+            dtype=dtype,
+        )
 
         self.glu = GLU(
             hidden_layer_size,
@@ -159,7 +153,7 @@ class TemporalFusionTransformer(tf.keras.Model):
             prng_seed=prng_seed,
             use_time_distributed=True,
         )
-        self.grn_layer_norm = layers.LayerNormalization(dtype=dtype)
+        self.grn_layer_norm = LayerNorm(dtype=dtype)
         self.encoder_blocks = [
             EncoderBlock(
                 num_attention_heads=num_attention_heads,
@@ -170,11 +164,11 @@ class TemporalFusionTransformer(tf.keras.Model):
             for _ in range(num_stacks)
         ]
         self.post_encoder_layer_norm = [
-            layers.LayerNormalization(dtype=dtype) for _ in range(num_stacks)
+            LayerNorm(dtype=dtype) for _ in range(num_stacks)
         ]
 
         self.output_dense = layers.TimeDistributed(
-            layers.Dense(self.output_size * self.num_quantiles)
+            Dense(self.output_size * self.num_quantiles)
         )
 
     def call(
@@ -292,8 +286,6 @@ class TemporalFusionTransformer(tf.keras.Model):
                 "known_categories_sizes": self.known_categories_sizes,
                 "num_attention_heads": self.num_attention_heads,
                 "prng_seed": self.prng_seed,
-                "unroll_lstm": self.unroll_lstm,
-                "use_cudnn_lstm": self.use_cudnn_lstm,
                 "num_decoder_stacks": self.num_stacks,
             }
         )
@@ -433,11 +425,11 @@ class TFTInputEmbedding(layers.Layer):
             for size in self.known_categories_size
         ]
         self.known_real_dense = [
-            layers.TimeDistributed(layers.Dense(self.hidden_layer_size))
+            layers.TimeDistributed(Dense(self.hidden_layer_size))
             for _ in range(self.num_known_real_inputs)
         ]
         self.observed_dense = [
-            layers.TimeDistributed(layers.Dense(self.hidden_layer_size))
+            layers.TimeDistributed(Dense(self.hidden_layer_size))
             for _ in range(self.num_observed_inputs)
         ]
 
@@ -700,8 +692,8 @@ class GLU(layers.Layer):
         self.dropout = layers.Dropout(
             dropout_rate, seed=prng_seed, force_generator=True, dtype=tf.float32
         )
-        self.dense = layers.Dense(hidden_layer_size)
-        self.activation = layers.Dense(hidden_layer_size, activation="sigmoid")
+        self.dense = Dense(hidden_layer_size)
+        self.activation = Dense(hidden_layer_size, activation="sigmoid")
         # Apply time steps, if needed.
         if use_time_distributed:
             self.dense = layers.TimeDistributed(self.dense)
@@ -777,14 +769,14 @@ class GRN(layers.Layer):
             output_size = hidden_layer_size
             skip_connection = Identity()
         else:
-            skip_connection = layers.Dense(output_size)
+            skip_connection = Dense(output_size)
             if use_time_distributed:
                 skip_connection = layers.TimeDistributed(skip_connection)
         self.skip_connection = skip_connection
         # Setup feedforward network.
-        self.pre_elu_dense = layers.Dense(hidden_layer_size)
-        self.context_dense = layers.Dense(hidden_layer_size)
-        self.linear_dense = layers.Dense(hidden_layer_size)
+        self.pre_elu_dense = Dense(hidden_layer_size)
+        self.context_dense = Dense(hidden_layer_size)
+        self.linear_dense = Dense(hidden_layer_size)
         # Apply gating layer.
         self.gated_linear_unit = GLU(
             output_size or hidden_layer_size,
@@ -796,7 +788,7 @@ class GRN(layers.Layer):
             dtype = tf.keras.mixed_precision.Policy("float32")
         else:
             dtype = None
-        self.layer_norm = layers.LayerNormalization(dtype=dtype)
+        self.layer_norm = LayerNorm(dtype=dtype)
         if use_time_distributed:
             self.pre_elu_dense = layers.TimeDistributed(self.pre_elu_dense)
             self.context_dense = layers.TimeDistributed(self.context_dense)
@@ -1014,8 +1006,8 @@ class EncoderBlock(layers.Layer):
         self.use_transformer_engine = use_transformer_engine
         d_k = hidden_layer_size // num_attention_heads
         tf.debugging.assert_positive(d_k, "Key dim can't be 0")
-        if use_transformer_engine:
-            # TODO: check params
+
+        if transformer_engine_available:
             self.self_attn = MultiHeadAttention(
                 num_attention_heads=num_attention_heads,
                 kv_channels=d_k,
@@ -1023,10 +1015,12 @@ class EncoderBlock(layers.Layer):
                 hidden_size=hidden_layer_size,
                 attention_dropout=0,
             )
+
         else:
-            self.self_attn = layers.MultiHeadAttention(
+            self.self_attn = tf.keras.layers.MultiHeadAttention(
                 num_heads=num_attention_heads, key_dim=d_k
             )
+
         self.glu_1 = GLU(
             hidden_layer_size,
             dropout_rate,
@@ -1044,7 +1038,7 @@ class EncoderBlock(layers.Layer):
         else:
             dtype = None
 
-        self.layer_norm = layers.LayerNormalization(dtype=dtype)
+        self.layer_norm = LayerNorm(dtype=dtype)
         self.grn = GRN(
             hidden_layer_size,
             dropout_rate,
