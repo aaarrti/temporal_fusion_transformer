@@ -152,6 +152,7 @@ def main(_):
                 write_graph=False,
                 # Profile however, does provide some really helpfully details.
                 profile_batch=True,
+                write_steps_per_second=True
             ),
             TerminateOnNaN(),
             # No need really, unless running super large scale training.
