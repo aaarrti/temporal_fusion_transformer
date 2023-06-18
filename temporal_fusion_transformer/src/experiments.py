@@ -13,7 +13,7 @@ from typing import (
     Sequence,
     Mapping,
 )
-
+import pathlib
 import numpy as np
 import pandas
 import tensorflow as tf
@@ -280,6 +280,7 @@ class ElectricityExperiment(Experiment):
         and only outputs corresponding to future timestamps are saved. You would probably still want to create
         SquashFS image from it, e.g., with mksquashfs "data" "data.sqfs" -all-root -action 'chmod(o+rX)@!perm(o+rX)'.
         """
+        pathlib.Path(f"{save_path}/electricity").mkdir(exist_ok=True)
         logging.info(f"Loading electricity dataset from {csv_path}")
         # This code was copy pasted from original implementation, and I have very little idea
         # what is it doing.
