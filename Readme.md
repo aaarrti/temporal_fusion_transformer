@@ -5,8 +5,9 @@
 - TF2 eager execution ✅
 - `tf.data` APIs ✅
 - XLA compiler ✅
-- TPU ✅
-- mixed_precision ✅
+- mixed_precision 
+  - fp16 ✅
+  - fp8 🚧
 - [Nvidia Transformer Engine](https://github.com/NVIDIA/TransformerEngine) fused primitives 🚧
 
 The goal is to repeat the 4 experiments done in the original publication.
@@ -32,3 +33,7 @@ as well as to utilize performance improving features of TF2 (which is also not t
   If you need a local copy of it, run: `./scripts/clone_original_implementation.sh`
 
 ## TODO differences with original implementation
+
+## TODO: reference showing, that attention is useless as explanation
+
+## TODO: flax
