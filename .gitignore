@@ -160,8 +160,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 ##############################
-thrirdparty
-thridparty/google-research
 data
 *.sqfs
 checkpoints
@@ -176,3 +174,8 @@ terraform.tfstate.backup
 .vscode
 .DS_Store
 TODO.md
+raw_data
+logs
+weights
+datasets
+thrirdparty
