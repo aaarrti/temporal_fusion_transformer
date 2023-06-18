@@ -127,7 +127,7 @@ class TFTModelTest(chex.TestCase, parameterized.TestCase):
     def test_tft_model(self, num_stacks):
         x_batch = make_x_batch()
         model = self.variant(TemporalFusionTransformer)(
-            num_encoder_steps=25,
+            num_encoder_steps=hidden_layer_size**2,
             num_attention_heads=hidden_layer_size,
             hidden_layer_size=hidden_layer_size,
             static_categories_sizes=static_categories_sizes,
@@ -177,8 +177,8 @@ class TFTModelTest(chex.TestCase, parameterized.TestCase):
     )
     def test_input_is_missing(self, x_batch, _known_categories_sizes):
         model = self.variant(TemporalFusionTransformer)(
-            num_encoder_steps=25,
-            num_attention_heads=4,
+            num_encoder_steps=hidden_layer_size**2,
+            num_attention_heads=hidden_layer_size,
             hidden_layer_size=hidden_layer_size,
             static_categories_sizes=static_categories_sizes,
             known_categories_sizes=_known_categories_sizes,

@@ -169,12 +169,12 @@ def make_x_batch():
 class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
     def setUp(self):
         self.train_ds = (
-            tf.data.Dataset.load("tests/assets/electricity/test_data")
+            tf.data.Dataset.load("tests/test_data/electricity/mini_dataset")
             .take(1)
             .prefetch(tf.data.AUTOTUNE)
         )
         self.val_ds = (
-            tf.data.Dataset.load("tests/assets/electricity/test_data")
+            tf.data.Dataset.load("tests/test_data/electricity/mini_dataset")
             .skip(1)
             .take(1)
             .prefetch(tf.data.AUTOTUNE)

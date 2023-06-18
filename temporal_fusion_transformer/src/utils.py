@@ -220,9 +220,8 @@ def make_tft_model(experiment: Experiment, **kwargs) -> TF_TemporalFusionTransfo
             dropout_rate=experiment.default_params.dropout_rate,
         ),
     )
-    from modeling import TemporalFusionTransformer
-
-    return TemporalFusionTransformer(**kwargs)
+    from temporal_fusion_transformer.src.modeling import TemporalFusionTransformer as TF_TemporalFusionTransformer
+    return TF_TemporalFusionTransformer(**kwargs)
 
 
 def as_tensor(arr: TensorLike | tf.Tensor) -> tf.Tensor:
@@ -267,7 +266,7 @@ class NoOpStrategy:
 
 
 if util.find_spec("flax") is not None:
-    from temporal_fusion_transformer.flax_.modeling import (
+    from temporal_fusion_transformer.src.modeling_flax import (
         TemporalFusionTransformer as Flax_TemporalFusionTransformer,
     )
     import flax.linen as nn

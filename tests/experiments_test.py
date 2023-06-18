@@ -7,7 +7,7 @@ from temporal_fusion_transformer.src.experiments import electricity_experiment
 class ExperimentsTest(tf.test.TestCase):
     def test_electricity(self):  # noqa
         data, _ = electricity_experiment.read_raw_csv(
-            "tests/assets/electricity/LD2011_2014_mini.csv"
+            "tests/test_data/electricity/mini.csv"
         )
 
         def assert_electricity_data(data):
@@ -29,7 +29,3 @@ class ExperimentsTest(tf.test.TestCase):
         assert_electricity_data(data.train)
         assert_electricity_data(data.validation)
         assert_electricity_data(data.test)
-        # train_ds = map_dict(train_ds, value_mapper=lambda v: v[:8])
-        # val_ds = map_dict(val_ds, value_mapper=lambda v: v[:8])
-        # np.savez("tests/assets/electricity/train.npz", **train_ds)
-        # np.savez("tests/assets/electricity/validation.npz", **val_ds)
