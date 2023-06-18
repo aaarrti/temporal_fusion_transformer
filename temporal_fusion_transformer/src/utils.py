@@ -220,7 +220,10 @@ def make_tft_model(experiment: Experiment, **kwargs) -> TF_TemporalFusionTransfo
             dropout_rate=experiment.default_params.dropout_rate,
         ),
     )
-    from temporal_fusion_transformer.src.modeling import TemporalFusionTransformer as TF_TemporalFusionTransformer
+    from temporal_fusion_transformer.src.modeling import (
+        TemporalFusionTransformer as TF_TemporalFusionTransformer,
+    )
+
     return TF_TemporalFusionTransformer(**kwargs)
 
 
