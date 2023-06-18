@@ -19,10 +19,10 @@ apptainer exec --contain --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/" \
 # Actual script
 ##########################################################################
 apptainer exec --nv --env-file env --contain \
-  --bind data.sqfs:/data:image-src=/ \
+  --bind datasets.sqfs:/datasets:image-src=/ \
   --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/,ro" \
   --bind scripts/:/scripts \
   --bind logs/:/logs \
   "${IMAGE_DIR}/image.sif" /venv/bin/python /scripts/train_keras_model.py \
-  --experiment=electricity --data_dir=/data --logs_dir=/logs --batch_size=512 --epochs=5
+  --experiment=electricity --data_dir=/datasets --logs_dir=/logs --batch_size=512 --epochs=5
 ##########################################################################

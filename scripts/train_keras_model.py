@@ -64,7 +64,8 @@ def prepare_dataset(
         .prefetch(tf.data.experimental.AUTOTUNE)
     )
     return ds
-
+    
+    # I don't see how it will change much, data input pipeline is nowhere near being a bottleneck.
     # try:
     #    import nvidia.dali.plugin.tf as dali_tf
     #    from nvidia.dali import pipeline_def

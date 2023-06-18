@@ -31,7 +31,7 @@ except ModuleNotFoundError:
     logging.warning(
         "Transformer engine not installed. Falling back to Keras implementation."
     )
-    transformer_engine_available = True
+    transformer_engine_available = False
     Dense = tf.keras.layers.Dense
     LayerNorm = tf.keras.layers.LayerNormalization
 
@@ -1015,7 +1015,6 @@ class EncoderBlock(layers.Layer):
                 hidden_size=hidden_layer_size,
                 attention_dropout=0,
             )
-
         else:
             self.self_attn = tf.keras.layers.MultiHeadAttention(
                 num_heads=num_attention_heads, key_dim=d_k
