@@ -92,7 +92,7 @@ def quantile_loss(
     )
 
 
-@tf.function(jit_compile=can_jit_compile(True), reduce_retracing=True)
+@tf.function(jit_compile=can_jit_compile(), reduce_retracing=True)
 def quantile_rmse(
     y_true: tf.Tensor,
     y_pred: tf.Tensor,

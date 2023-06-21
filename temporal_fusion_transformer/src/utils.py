@@ -287,7 +287,6 @@ def setup_logging():
     absl.logging.set_verbosity(absl.logging.converter.ABSL_DEBUG)
 
 
-
 @lru_cache(maxsize=None)
 def supports_mixed_precision() -> bool:
     import tensorflow as tf
@@ -311,4 +310,3 @@ def can_jit_compile():
     from keras.utils import tf_utils
 
     return tf_utils.can_jit_compile(True)
-

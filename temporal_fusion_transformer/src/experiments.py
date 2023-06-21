@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import pickle
+import datetime
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import auto, IntEnum
@@ -629,12 +630,12 @@ class FavoritaExperiment(Experiment):
     def _read_raw_csv(self, path: str) -> pd.DataFrame:
         logging.info(f"Processing Favorita dataset from {path}...")
         # load temporal data
-        temporal = pd.read_csv(f"{path}/train.csv", index_col=0)
-        store_info = pd.read_csv(f"{path}/stores.csv", index_col=0)
-        oil = pd.read_csv(f"{path}/oil.csv", index_col=0).iloc[:, 0]
-        holidays = pd.read_csv(f"{path}/holidays_events.csv")
-        items = pd.read_csv(f"{path}/items.csv", index_col=0)
-        transactions = pd.read_csv(f"{path}/transactions.csv")
+        temporal = pd.read_csv(f"{path}/train.csv", index_col=0, engine="pyarrow")
+        store_info = pd.read_csv(f"{path}/stores.csv", index_col=0, engine="pyarrow")
+        oil = pd.read_csv(f"{path}/oil.csv", index_col=0, engine="pyarrow").iloc[:, 0]
+        holidays = pd.read_csv(f"{path}/holidays_events.csv", engine="pyarrow")
+        items = pd.read_csv(f"{path}/items.csv", index_col=0, engine="pyarrow")
+        transactions = pd.read_csv(f"{path}/transactions.csv", engine="pyarrow")
 
         # Take first 6 months of data
         temporal["date"] = pd.to_datetime(temporal["date"])
@@ -762,7 +763,7 @@ class FavoritaExperiment(Experiment):
     def _split_data(
         self, df: pd.DataFrame
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        valid_boundary = pd.datetime(2015, 12, 1)
+        valid_boundary = datetime.datetime(2015, 12, 1)
 
         time_steps = self.total_time_steps
         lookback = self.fixed_params.num_encoder_steps
