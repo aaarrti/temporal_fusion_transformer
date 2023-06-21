@@ -16,16 +16,17 @@ classifiers = [
 dependencies = [
     "tensorflow>=2.10.0; sys_platform == 'linux'",
     "tensorflow_macos>=2.10.0; sys_platform == 'darwin'",
-    "jaxtyping",
-    "keras_pbar",
-    "scikit_learn",
-    "pandas",
-    "matplotlib",
-    "matplotx",
     "absl_extra"
 ]
 [project.optional-dependencies]
+plotting = ["matplotlib"]
+experiments = [
+    "keras_pbar",
+    "scikit_learn",
+    "pandas",
+]
 tests = [
+    "temporal_fusion_transformer[experiments,plotting]",
     "pytest"
 ]
 [project.urls]
