@@ -18,6 +18,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from temporal_fusion_transformer.src.utils import filter_dict
 
+
 class DataTypes(IntEnum):
     REAL_VALUED = auto()
     CATEGORICAL = auto()

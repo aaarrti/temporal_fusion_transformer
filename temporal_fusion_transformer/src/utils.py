@@ -306,7 +306,18 @@ def supports_mixed_precision() -> bool:
 
 
 @lru_cache
-def can_jit_compile():
-    from keras.utils import tf_utils
+def can_jit_compile() -> bool:
+    """Returns True if TensorFlow XLA is available for the platform."""
+    if platform.system() == "Darwin" and "arm" in platform.processor().lower():
+        logging.warning(
+            "XLA (`jit_compile`) is not yet supported on Apple M1/M2 ARM "
+            "processors. Falling back to `jit_compile=False`."
+        )
+        return False
+    if pywrap_tfe.TF_ListPluggablePhysicalDevices():
+        logging.warning(
+            "XLA (`jit_compile`) is not supported on your system. "
+            "Falling back to `jit_compile=False`."
+        )
 
-    return tf_utils.can_jit_compile(True)
+    return True
