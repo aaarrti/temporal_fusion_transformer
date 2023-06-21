@@ -5,11 +5,9 @@ description = "TF2 and Flax re-write of Temporal Fusion Transformer model."
 readme = "Readme.md"
 requires-python = ">=3.8"
 authors = [
-    { name = "Artem Sereda", email = "a.sereda@sevensenders.com" },
     { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" },
 ]
 maintainers = [
-    { name = "Artem Sereda", email = "a.sereda@sevensenders.com" },
     { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" }
 ]
 classifiers = [
