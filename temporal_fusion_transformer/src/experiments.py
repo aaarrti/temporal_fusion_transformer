@@ -18,15 +18,6 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from temporal_fusion_transformer.src.utils import filter_dict
 
-try:
-    import cudf  # noqa
-
-    del pd
-    pd = cudf
-except ModuleNotFoundError:
-    logging.warning("CuDF not installed, falling back to pandas")
-
-
 class DataTypes(IntEnum):
     REAL_VALUED = auto()
     CATEGORICAL = auto()
