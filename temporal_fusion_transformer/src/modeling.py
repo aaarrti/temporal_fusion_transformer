@@ -20,8 +20,9 @@ else:
     )
 
 try:
-    from transformer_engine.tensorflow.module import Dense, LayerNorm # noqa
-    from transformer_engine.tensorflow.transformer import MultiHeadAttention # noqa
+    from transformer_engine.tensorflow.module import Dense, LayerNorm  # noqa
+    from transformer_engine.tensorflow.transformer import MultiHeadAttention  # noqa
+
     transformer_engine_available = True
 
     logging.info("Transformers engine check -> OK.")

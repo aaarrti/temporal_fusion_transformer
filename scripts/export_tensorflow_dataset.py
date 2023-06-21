@@ -1,4 +1,5 @@
-from absl import flags, app, logging
+from absl import flags
+from absl_extra import register_task, run
 
 from temporal_fusion_transformer.src.experiments import (
     electricity_experiment,
@@ -19,6 +20,7 @@ flags.DEFINE_string(
 flags.DEFINE_string("raw_data_path", default="raw_data", help="Path to raw data.")
 
 
+@register_task
 def main(_):
     if FLAGS.experiment == "electricity":
         electricity_experiment.process_raw_data(
@@ -31,4 +33,4 @@ def main(_):
 
 
 if __name__ == "__main__":
-    app.run(main)
+    run("tft_dataset")
