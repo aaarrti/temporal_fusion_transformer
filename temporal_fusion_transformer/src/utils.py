@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import logging
+from absl import logging
 import platform
 from functools import lru_cache
 from contextlib import contextmanager
-from importlib import util
 from typing import (
     Mapping,
     Dict,
@@ -24,7 +23,7 @@ from tensorflow.python.types.core import TensorLike
 
 if TYPE_CHECKING:
     from temporal_fusion_transformer.src.modeling import (
-        TemporalFusionTransformer as TF_TemporalFusionTransformer,
+        TemporalFusionTransformer as TemporalFusionTransformer,
     )
     from temporal_fusion_transformer.src.experiments import Experiment
 
@@ -156,7 +155,7 @@ def identity(x: T) -> T:
     return x
 
 
-def make_tft_model(experiment: Experiment, **kwargs) -> TF_TemporalFusionTransformer:
+def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransformer:
     """
     Create TFT model for experiment.
 
@@ -187,11 +186,9 @@ def make_tft_model(experiment: Experiment, **kwargs) -> TF_TemporalFusionTransfo
             dropout_rate=experiment.default_params.dropout_rate,
         ),
     )
-    from temporal_fusion_transformer.src.modeling import (
-        TemporalFusionTransformer as TF_TemporalFusionTransformer,
-    )
+    from temporal_fusion_transformer.src.modeling import TemporalFusionTransformer
 
-    return TF_TemporalFusionTransformer(**kwargs)
+    return TemporalFusionTransformer(**kwargs)
 
 
 def as_tensor(arr: TensorLike | tf.Tensor) -> tf.Tensor:
@@ -235,26 +232,6 @@ class NoOpStrategy:
         yield
 
 
-def can_jit_compile(warn=True):
-    # Was added only in 2.12.
-    """Returns True if TensorFlow XLA is available for the platform."""
-    if platform.system() == "Darwin" and "arm" in platform.processor().lower():
-        if warn:
-            logging.warning(
-                "XLA (`jit_compile`) is not yet supported on Apple M1/M2 ARM "
-                "processors. Falling back to `jit_compile=False`."
-            )
-        return False
-    if pywrap_tfe.TF_ListPluggablePhysicalDevices():
-        if warn:
-            logging.warning(
-                "XLA (`jit_compile`) is not supported on your system. "
-                "Falling back to `jit_compile=False`."
-            )
-        return False
-    return True
-
-
 def can_use_cudnn() -> bool:
     """
     We can use CuDNN if:
@@ -275,11 +252,10 @@ def can_use_cudnn() -> bool:
 
 
 def setup_logging():
-    import logging
-    import tensorflow as tf
-    import absl.logging
+    import logging as base_logging
+    import absl
 
-    logging.basicConfig(
+    base_logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s:[%(filename)s:%(lineno)s->%(funcName)s()]:%(levelname)s: %(message)s",
     )
@@ -296,7 +272,7 @@ def supports_mixed_precision() -> bool:
     if n_gpus == 0:
         return False
     if n_gpus >= 2:
-        absl.logging.error(
+        logging.error(
             f"supports_mixed_precision() check supports only 1 GPU, but found {n_gpus}"
         )
 
