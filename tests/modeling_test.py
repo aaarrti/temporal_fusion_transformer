@@ -187,7 +187,6 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
     @parameterized.parameters(
         [
             "float32",
-            "float16",
             "mixed_float16",
             "mixed_bfloat16",
             "float16",

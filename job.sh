@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#$ -binding linear:2  # request 2 cpus
+#$ -binding linear:4  # request 2 cpus
 #$ -l cuda=1          # request one GPU
 #$ -l h_vmem=14G
 #$ -l mem_free=14G
@@ -10,6 +10,7 @@
 #$ -o logs/out/
 set -ex
 IMAGE_DIR="/home/artem/apptainer_images/nv_tf_py38"
+apptainer exec --contain --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/" "${IMAGE_DIR}/image.sif" /venv/bin/python -m pip list
 ##########################################################################
 # Reinstall model source code
 ##########################################################################

@@ -1,4 +1,4 @@
-## TensorFlow2 reimplementation of Temporal Fusion Transformer (Work In Progress 🚧)
+## TensorFlow 2 reimplementation of Temporal Fusion Transformer
 
 ### It supports:
 

@@ -1,8 +1,10 @@
+#################################################################################
+# Just a simple GCS bucket to store datasets and weights in.
+#################################################################################
 provider "google" {
   project = "titanium-atlas-389220"
   region  = "europe-west4"
 }
-
 module "bucket" {
   source  = "terraform-google-modules/cloud-storage/google//modules/simple_bucket"
   version = "~> 4.0"

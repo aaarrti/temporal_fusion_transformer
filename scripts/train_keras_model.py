@@ -7,6 +7,7 @@ import platform
 
 import tensorflow as tf
 from absl import flags, app
+from absl_extra.tf_utils import requires_gpu
 from keras.api.keras.experimental import CosineDecay
 from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
 from keras.utils.tf_utils import set_random_seed
@@ -83,7 +84,7 @@ def prepare_dataset(
     )
     return ds
 
-
+@requires_gpu
 def main(_):
     """
     1. The parameters were picked out of the blue, this script's purpose is to demonstrate APIs.
