@@ -24,6 +24,7 @@ dependencies = [
     "pandas",
     "matplotlib",
     "matplotx",
+    "absl_extra"
 ]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"

@@ -20,11 +20,10 @@ else:
     )
 
 try:
-    from transformer_engine.tensorflow.module import Dense, LayerNorm
-    from transformer_engine.tensorflow.transformer import MultiHeadAttention
-    
+    from transformer_engine.tensorflow.module import Dense, LayerNorm # noqa
+    from transformer_engine.tensorflow.transformer import MultiHeadAttention # noqa
     transformer_engine_available = True
-    
+
     logging.info("Transformers engine check -> OK.")
 except ModuleNotFoundError:
     logging.warning(
@@ -43,22 +42,22 @@ class TemporalFusionTransformer(tf.keras.Model):
         - https://github.com/google-research/google-research/tree/master/tft
 
     """
-    
+
     def __init__(
-            self,
-            *,
-            static_categories_sizes: Sequence[int],  # dataset depended
-            known_categories_sizes: Sequence[int],  # dataset depended
-            num_encoder_steps: int,
-            hidden_layer_size: int,
-            num_attention_heads: int,
-            num_stacks: int = 1,
-            dropout_rate: float = 0.1,
-            output_size: int = 1,
-            quantiles: Sequence[float] = None,
-            prng_seed: int = 42,
-            name: str = "temporal_fusion_transformer",
-            **kwargs,
+        self,
+        *,
+        static_categories_sizes: Sequence[int],  # dataset depended
+        known_categories_sizes: Sequence[int],  # dataset depended
+        num_encoder_steps: int,
+        hidden_layer_size: int,
+        num_attention_heads: int,
+        num_stacks: int = 1,
+        dropout_rate: float = 0.1,
+        output_size: int = 1,
+        quantiles: Sequence[float] = None,
+        prng_seed: int = 42,
+        name: str = "temporal_fusion_transformer",
+        **kwargs,
     ):
         """
         Parameters
@@ -98,7 +97,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         self.dropout_rate = dropout_rate
         self.prng_seed = prng_seed
         self.num_stacks = num_stacks
-        
+
         self.input_embeds = TFTInputEmbedding(
             static_categories_size=self.static_categories_sizes,
             known_categories_size=known_categories_sizes,
@@ -121,7 +120,7 @@ class TemporalFusionTransformer(tf.keras.Model):
             prng_seed=prng_seed,
             name="future_variable_selection",
         )
-        
+
         if self.dtype_policy.compute_dtype == "bfloat16":
             dtype = tf.keras.mixed_precision.Policy("float32")
         else:
@@ -139,7 +138,7 @@ class TemporalFusionTransformer(tf.keras.Model):
             name="future_features_lstm",
             dtype=dtype,
         )
-        
+
         self.glu = GLU(
             hidden_layer_size,
             dropout_rate,
@@ -165,11 +164,11 @@ class TemporalFusionTransformer(tf.keras.Model):
         self.post_encoder_layer_norm = [
             LayerNorm(dtype=dtype) for _ in range(num_stacks)
         ]
-        
+
         self.output_dense = layers.TimeDistributed(
             Dense(self.output_size * self.num_quantiles)
         )
-    
+
     def call(self, inputs: Mapping[str, tf.Tensor], **kwargs) -> tf.Tensor:
         """
 
@@ -206,35 +205,35 @@ class TemporalFusionTransformer(tf.keras.Model):
             historical_inputs = tf.gather(
                 embeddings["known"], historical_indexes, axis=1
             )
-        
+
         static_context: Dict[str, tf.Tensor] = self.static_encoder(embeddings["static"])
         total_time_steps = tf.shape(embeddings["known"])[1]
-        
+
         # Isolate only known future inputs.
         future_inputs = embeddings["known"][
-                        :, self.num_encoder_steps: total_time_steps
-                        ]
+            :, self.num_encoder_steps : total_time_steps
+        ]
         historical_features, historical_flags, _ = self.historical_variable_selection(
             ContextInputs(
                 inputs=historical_inputs, context=static_context["enrichment"]
             )
         )
-        
+
         future_features, future_flags, _ = self.future_variable_selection(
             ContextInputs(inputs=future_inputs, context=static_context["enrichment"])
         )
-        
+
         if historical_features.dtype == tf.bfloat16:
             historical_features = tf.cast(historical_features, tf.float32)
-        
+
         state_h = static_context["state_h"]
         state_c = static_context["state_c"]
         if state_h.dtype == tf.bfloat16:
             state_h = tf.cast(state_h, tf.float32)
-        
+
         if state_c.dtype == tf.bfloat16:
             state_c = tf.cast(state_c, tf.float32)
-        
+
         history_lstm, state_h, state_c = self.historical_features_lstm(
             historical_features,
             initial_state=[state_h, state_c],
@@ -242,17 +241,17 @@ class TemporalFusionTransformer(tf.keras.Model):
         future_lstm = self.future_features_lstm(
             future_features, initial_state=[state_h, state_c]
         )
-        
+
         lstm_outputs = tf.concat([history_lstm, future_lstm], axis=1)
         historical_features = tf.cast(historical_features, future_features.dtype)
         input_embeddings = tf.concat([historical_features, future_features], axis=1)
         lstm_outputs, _ = self.glu(lstm_outputs)
         temporal_features = self.grn_layer_norm(lstm_outputs + input_embeddings)
         temporal_features = tf.cast(temporal_features, self.dtype_policy.compute_dtype)
-        
+
         # Static enrichment layers
         expanded_static_context = static_context["vector"][:, tf.newaxis]
-        
+
         enriched, _ = self.grn(
             ContextInputs(
                 inputs=temporal_features,
@@ -260,17 +259,17 @@ class TemporalFusionTransformer(tf.keras.Model):
             ),
         )
         encoder_in = enriched
-        
+
         for ln, block in zip(self.post_encoder_layer_norm, self.encoder_blocks):
             encoder_out = block(encoder_in)
             encoder_out = ln(encoder_out + temporal_features)
             encoder_in = encoder_out
-        
+
         outputs = self.output_dense(
-            encoder_in[:, self.num_encoder_steps: total_time_steps]
+            encoder_in[:, self.num_encoder_steps : total_time_steps]
         )
         return outputs
-    
+
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
         config.update(
@@ -287,16 +286,16 @@ class TemporalFusionTransformer(tf.keras.Model):
             }
         )
         return config
-    
+
     def compile(
-            self,
-            optimizer: Optimizer | str = "adam",
-            jit_compile: bool | None = None,
-            **kwargs,
+        self,
+        optimizer: Optimizer | str = "adam",
+        jit_compile: bool | None = None,
+        **kwargs,
     ) -> None:
         if jit_compile is None:
             jit_compile = can_jit_compile()
-        
+
         super().compile(
             optimizer=optimizer,
             loss=QuantileLoss(self.quantiles),
@@ -314,20 +313,20 @@ class ContextInputs(tf.experimental.BatchableExtensionType):
     context: tf.Tensor
     shape = property(lambda self: self.inputs.shape)
     dtype = property(lambda self: self.inputs.dtype)
-    
+
     def __repr__(self):
         return "<ContextInputs<inputs=(shape={}, dtype={}), context=(shape={}, dtype={})>>".format(
             self.shape, self.dtype, self.context.shape, self.context.dtype
         )
-    
+
     class Spec:
         shape = property(lambda self: self.values.shape)
         dtype = property(lambda self: self.values.dtype)
-        
+
         def __init__(self, shape, dtype=tf.float32):
             self.inputs = tf.TensorSpec(shape, dtype)
             self.context = tf.TensorSpec(shape, dtype)
-        
+
         def __repr__(self):
             return "<ContextInputs.Spec<inputs=(shape={}, dtype={}), context=(shape={}, dtype={})>>".format(
                 self.shape, self.dtype, self.context.shape, self.context.dtype
@@ -339,12 +338,12 @@ class ContextInputs(tf.experimental.BatchableExtensionType):
 
 class TFTInputEmbedding(layers.Layer):
     def __init__(
-            self,
-            static_categories_size: Sequence[int],
-            known_categories_size: Sequence[int],
-            hidden_layer_size: int,
-            name: str = "tft_input_embedding",
-            **kwargs,
+        self,
+        static_categories_size: Sequence[int],
+        known_categories_size: Sequence[int],
+        hidden_layer_size: int,
+        name: str = "tft_input_embedding",
+        **kwargs,
     ):
         """
         Parameters
@@ -373,13 +372,13 @@ class TFTInputEmbedding(layers.Layer):
         self.hidden_layer_size = hidden_layer_size
         self.num_static_inputs = len(self.static_categories_size)
         self.num_known_categorical_inputs = len(self.known_categories_size)
-    
+
     def build(self, input_shape: Mapping[str, tf.TensorShape]):
         static = input_shape["static"]
         known_categorical = input_shape.get("known_categorical")
         known_real = input_shape["known_real"]
         observed = input_shape.get("observed")
-        
+
         if len(static) != 2:
             raise ValueError(
                 f"inputs.static must be a 2D tensor, but found shape {static}"
@@ -396,15 +395,15 @@ class TFTInputEmbedding(layers.Layer):
             raise ValueError(
                 f"inputs.observed must be a 2D tensor, but found shape {observed}"
             )
-        
+
         self.num_known_real_inputs = known_real[-1]
         if observed is None:
             self.num_observed_inputs = 0
         else:
             self.num_observed_inputs = observed[-1]
-        
+
         num_time_steps = known_real[1]
-        
+
         self.static_inputs_embedding = [
             layers.Embedding(
                 size,
@@ -429,7 +428,7 @@ class TFTInputEmbedding(layers.Layer):
             layers.TimeDistributed(Dense(self.hidden_layer_size))
             for _ in range(self.num_observed_inputs)
         ]
-    
+
     def call(self, inputs: Mapping[str, tf.Tensor], **kwargs) -> Dict[str, tf.Tensor]:
         """
         This layer project all different inputs into the same latent space.
@@ -462,18 +461,18 @@ class TFTInputEmbedding(layers.Layer):
         known_real = inputs["known_real"]
         known_categorical = inputs.get("known_categorical")
         observed = inputs.get("observed")
-        
+
         static_input_embeddings = []
         known_real_inputs_embeddings = []
-        
+
         for i, layer in enumerate(self.static_inputs_embedding):
             static_input_embeddings.append(layer(static[:, i]))
-        
+
         static_input_embeddings = tf.stack(static_input_embeddings, axis=1)
-        
+
         for i, layer in enumerate(self.known_real_dense):
             known_real_inputs_embeddings.append(layer(known_real[..., i, tf.newaxis]))
-        
+
         if self.num_observed_inputs != 0:
             observed_input_embeddings = []
             for i, layer in enumerate(self.observed_dense):
@@ -481,7 +480,7 @@ class TFTInputEmbedding(layers.Layer):
             observed_input_embeddings = tf.stack(observed_input_embeddings, axis=-1)
         else:
             observed_input_embeddings = None
-        
+
         if self.num_known_categorical_inputs != 0:
             known_categorical_inputs_embeddings = []
             for i, layer in enumerate(self.known_categorical_embedding):
@@ -495,16 +494,16 @@ class TFTInputEmbedding(layers.Layer):
                 ],
                 axis=-1,
             )
-        
+
         else:
             known_inputs_embeddings = tf.stack(known_real_inputs_embeddings, axis=-1)
-        
+
         return dict(
             static=static_input_embeddings,
             observed=observed_input_embeddings,
             known=known_inputs_embeddings,
         )
-    
+
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
         config.update(
@@ -522,12 +521,12 @@ class TFTInputEmbedding(layers.Layer):
 
 class StaticCovariatesEncoder(layers.Layer):
     def __init__(
-            self,
-            hidden_layer_size: int,
-            dropout_rate: float,
-            prng_seed: int,
-            name: str = "static_covariates_encoder",
-            **kwargs,
+        self,
+        hidden_layer_size: int,
+        dropout_rate: float,
+        prng_seed: int,
+        name: str = "static_covariates_encoder",
+        **kwargs,
     ):
         """
         Parameters
@@ -576,7 +575,7 @@ class StaticCovariatesEncoder(layers.Layer):
             use_time_distributed=False,
         )
         self.flatten = layers.Flatten()
-    
+
     def build(self, input_shape: tf.TensorShape):
         self.num_static_inputs = input_shape[1]
         self.grn = GRN(
@@ -595,7 +594,7 @@ class StaticCovariatesEncoder(layers.Layer):
             )
             for _ in range(self.num_static_inputs)
         ]
-    
+
     def call(self, inputs: tf.Tensor, **kwargs) -> Dict[str, tf.Tensor]:
         """
         Create a static context out of static input embeddings.
@@ -622,18 +621,18 @@ class StaticCovariatesEncoder(layers.Layer):
                 - state_c: has shape (batch_size, hidden_layer_size) and must be used together with `state_h` as initial context for LSTM cells.
                 - state_h: has shape (batch_size, hidden_layer_size) and must be used together with `state_c` as initial context for LSTM cells.
         """
-        
+
         flat_x = self.flatten(inputs)
-        
+
         mlp_outputs, _ = self.grn(flat_x)
         sparse_weights = tf.nn.softmax(mlp_outputs)[..., tf.newaxis]
-        
+
         transformed_embeddings = []
-        
+
         for i, layer in enumerate(self.grn_blocks):
             embeds_i, _ = layer(inputs[:, i][:, tf.newaxis])
             transformed_embeddings.append(embeds_i)
-        
+
         transformed_embeddings = tf.concat(transformed_embeddings, axis=1)
         static_context_vector = tf.reduce_sum(
             sparse_weights * transformed_embeddings, axis=1
@@ -649,7 +648,7 @@ class StaticCovariatesEncoder(layers.Layer):
             vector=context_variable_selection,
             # weight=sparse_weights,
         )
-    
+
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
         config.update(
@@ -667,13 +666,13 @@ class StaticCovariatesEncoder(layers.Layer):
 
 class GLU(layers.Layer):
     def __init__(
-            self,
-            hidden_layer_size: int,
-            dropout_rate: float,
-            prng_seed: int,
-            use_time_distributed: bool,
-            name: str = "glu",
-            **kwargs,
+        self,
+        hidden_layer_size: int,
+        dropout_rate: float,
+        prng_seed: int,
+        use_time_distributed: bool,
+        name: str = "glu",
+        **kwargs,
     ):
         super().__init__(name=name, **kwargs)
         # Save configurations.
@@ -691,18 +690,18 @@ class GLU(layers.Layer):
         if use_time_distributed:
             self.dense = layers.TimeDistributed(self.dense)
             self.activation = layers.TimeDistributed(self.activation)
-    
+
     def call(
-            self,
-            inputs: tf.Tensor,
-            **kwargs,
+        self,
+        inputs: tf.Tensor,
+        **kwargs,
     ) -> Tuple[tf.Tensor, tf.Tensor,]:
         x = self.dropout(inputs)
         x_pre_activation = self.dense(x)
         x_gated = self.activation(x)
         x = x_pre_activation * x_gated
         return x, x_gated
-    
+
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
         config.update(
@@ -718,14 +717,14 @@ class GLU(layers.Layer):
 
 class GRN(layers.Layer):
     def __init__(
-            self,
-            hidden_layer_size: int,
-            dropout_rate: float,
-            use_time_distributed: bool,
-            prng_seed: int,
-            output_size: int | None = None,
-            name: str = "grn",
-            **kwargs,
+        self,
+        hidden_layer_size: int,
+        dropout_rate: float,
+        use_time_distributed: bool,
+        prng_seed: int,
+        output_size: int | None = None,
+        name: str = "grn",
+        **kwargs,
     ):
         """
 
@@ -783,7 +782,7 @@ class GRN(layers.Layer):
             self.pre_elu_dense = layers.TimeDistributed(self.pre_elu_dense)
             self.context_dense = layers.TimeDistributed(self.context_dense)
             self.linear_dense = layers.TimeDistributed(self.linear_dense)
-    
+
     def call(self, inputs: tf.Tensor | ContextInputs, **kwargs):
         """
         Applies the gated residual network (GRN) as defined in paper.
@@ -816,14 +815,14 @@ class GRN(layers.Layer):
         else:
             x_skip = self.skip_connection(inputs)
             x = self.pre_elu_dense(inputs)
-        
+
         x = tf.nn.elu(x)
         x = self.linear_dense(x)
         x, gate = self.gated_linear_unit(x)
         x = self.layer_norm(x + x_skip)
         x = tf.cast(x, self.dtype_policy.compute_dtype)
         return x, gate
-    
+
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
         config.update(
@@ -836,9 +835,9 @@ class GRN(layers.Layer):
             }
         )
         return config
-    
+
     def __call__(
-            self, inputs: tf.Tensor | ContextInputs, **kwargs
+        self, inputs: tf.Tensor | ContextInputs, **kwargs
     ) -> Tuple[tf.Tensor, tf.Tensor]:
         # Just to improve static code analysis.
         return super().__call__(inputs, **kwargs)
@@ -849,12 +848,12 @@ class GRN(layers.Layer):
 
 class VariableSelection(layers.Layer):
     def __init__(
-            self,
-            hidden_layer_size: int,
-            dropout_rate: float,
-            prng_seed: int,
-            name: str = "variable_selection",
-            **kwargs,
+        self,
+        hidden_layer_size: int,
+        dropout_rate: float,
+        prng_seed: int,
+        name: str = "variable_selection",
+        **kwargs,
     ):
         """
 
@@ -874,12 +873,12 @@ class VariableSelection(layers.Layer):
         self.hidden_layer_size = hidden_layer_size
         self.dropout_rate = dropout_rate
         self.prng_seed = prng_seed
-    
+
     def build(self, input_shape: tf.TensorShape):
         self.time_steps = input_shape[1]
         self.embedding_dim = input_shape[2]
         self.num_inputs = input_shape[3]
-        
+
         self.context_grn = GRN(
             hidden_layer_size=self.hidden_layer_size,
             dropout_rate=self.dropout_rate,
@@ -887,7 +886,7 @@ class VariableSelection(layers.Layer):
             prng_seed=self.prng_seed,
             use_time_distributed=True,
         )
-        
+
         self.grn_blocks = [
             GRN(
                 hidden_layer_size=self.hidden_layer_size,
@@ -897,7 +896,7 @@ class VariableSelection(layers.Layer):
             )
             for _ in range(self.num_inputs)
         ]
-    
+
     def call(self, inputs: ContextInputs, **kwargs):
         """
         Parameters
@@ -911,7 +910,7 @@ class VariableSelection(layers.Layer):
         """
         context: tf.Tensor = inputs.context
         inputs: tf.Tensor = inputs.inputs
-        
+
         mlp_outputs, static_gate = self.context_grn(
             ContextInputs(
                 inputs=tf.reshape(
@@ -922,19 +921,19 @@ class VariableSelection(layers.Layer):
         )
         sparse_weights = tf.nn.softmax(mlp_outputs)
         sparse_weights = sparse_weights[:, :, tf.newaxis]
-        
+
         # Non-linear Processing & weight application
         transformed_embeddings = []
         for i, layer in enumerate(self.grn_blocks):
             embeds_i, _ = layer(inputs[..., i])
             transformed_embeddings.append(embeds_i)
-        
+
         transformed_embeddings = tf.stack(transformed_embeddings, axis=-1)
         temporal_ctx = tf.math.reduce_sum(
             sparse_weights * transformed_embeddings, axis=-1
         )
         return temporal_ctx, sparse_weights, static_gate
-    
+
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
         config.update(
@@ -945,9 +944,9 @@ class VariableSelection(layers.Layer):
             }
         )
         return config
-    
+
     def __call__(
-            self, inputs: ContextInputs, **kwargs
+        self, inputs: ContextInputs, **kwargs
     ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor,]:
         # Just to improve static code analysis.
         return super().__call__(inputs, **kwargs)
@@ -955,14 +954,14 @@ class VariableSelection(layers.Layer):
 
 class EncoderBlock(layers.Layer):
     def __init__(
-            self,
-            num_attention_heads: int,
-            hidden_layer_size: int,
-            dropout_rate: float,
-            prng_seed: int,
-            name: str = "temporal_fusion_decoder",
-            use_transformer_engine: bool = False,
-            **kwargs,
+        self,
+        num_attention_heads: int,
+        hidden_layer_size: int,
+        dropout_rate: float,
+        prng_seed: int,
+        name: str = "temporal_fusion_decoder",
+        use_transformer_engine: bool = False,
+        **kwargs,
     ):
         """
         In the original implementation it is called decoder, however, because it uses self-attention
@@ -984,7 +983,7 @@ class EncoderBlock(layers.Layer):
             Standard keras layers' kwargs.
         """
         super().__init__(name=name, **kwargs)
-        
+
         self.num_attention_heads = num_attention_heads
         self.prng_seed = prng_seed
         self.dropout_rate = dropout_rate
@@ -992,7 +991,7 @@ class EncoderBlock(layers.Layer):
         self.use_transformer_engine = use_transformer_engine
         d_k = hidden_layer_size // num_attention_heads
         tf.debugging.assert_positive(d_k, "Key dim can't be 0")
-        
+
         if transformer_engine_available:
             self.self_attn = MultiHeadAttention(
                 num_attention_heads=num_attention_heads,
@@ -1004,7 +1003,7 @@ class EncoderBlock(layers.Layer):
             self.self_attn = tf.keras.layers.MultiHeadAttention(
                 num_heads=num_attention_heads, key_dim=d_k
             )
-        
+
         self.glu_1 = GLU(
             hidden_layer_size,
             dropout_rate,
@@ -1021,7 +1020,7 @@ class EncoderBlock(layers.Layer):
             dtype = tf.keras.mixed_precision.Policy("float32")
         else:
             dtype = None
-        
+
         self.layer_norm = LayerNorm(dtype=dtype)
         self.grn = GRN(
             hidden_layer_size,
@@ -1029,7 +1028,7 @@ class EncoderBlock(layers.Layer):
             prng_seed=prng_seed,
             use_time_distributed=True,
         )
-    
+
     def call(self, inputs: tf.Tensor, **kwargs) -> tf.Tensor:
         x = self.self_attn(inputs, inputs, inputs, use_causal_mask=True)
         x, _ = self.glu_1(x)
@@ -1039,7 +1038,7 @@ class EncoderBlock(layers.Layer):
         # Final skip connection
         decoded, _ = self.glu_2(decoded)
         return decoded
-    
+
     def get_config(self) -> Dict[str, ...]:
         config = super().get_config()
         config.update(

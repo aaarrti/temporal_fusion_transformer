@@ -226,12 +226,6 @@ def add_default_items(
     return copy
 
 
-class NoOpStrategy:
-    @contextmanager
-    def scope(self) -> ContextManager:
-        yield
-
-
 def can_use_cudnn() -> bool:
     """
     We can use CuDNN if:
@@ -249,36 +243,6 @@ def can_use_cudnn() -> bool:
         and sysconfig["is_cuda_build"]
         and "cudnn_version" in sysconfig
     )
-
-
-def setup_logging():
-    import logging as base_logging
-    import absl
-
-    base_logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s:[%(filename)s:%(lineno)s->%(funcName)s()]:%(levelname)s: %(message)s",
-    )
-    tf.get_logger().setLevel("DEBUG")
-    absl.logging.set_verbosity(absl.logging.converter.ABSL_DEBUG)
-
-
-@lru_cache(maxsize=None)
-def supports_mixed_precision() -> bool:
-    import tensorflow as tf
-
-    gpus = tf.config.list_physical_devices("GPU")
-    n_gpus = len(gpus)
-    if n_gpus == 0:
-        return False
-    if n_gpus >= 2:
-        logging.error(
-            f"supports_mixed_precision() check supports only 1 GPU, but found {n_gpus}"
-        )
-
-    details = tf.config.experimental.get_device_details(gpus[0])
-    cc = details.get("compute_capability")
-    return cc is not None and cc >= (7, 0)
 
 
 @lru_cache

@@ -1,23 +1,20 @@
 from __future__ import annotations
 
 import functools
+import logging
 from typing import Dict, Tuple, Callable
 import datetime
 import platform
 
 import tensorflow as tf
 from absl import flags, app
-from absl_extra.tf_utils import requires_gpu
+
+from absl_extra.tf_utils import requires_gpu, supports_mixed_precision
+from absl_extra.logging_utils import setup_logging
 from keras.api.keras.experimental import CosineDecay
-from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
+from keras.callbacks import TensorBoard, TerminateOnNaN
 from keras.utils.tf_utils import set_random_seed
-from temporal_fusion_transformer import (
-    setup_logging,
-    make_tft_model,
-    supports_mixed_precision,
-    experiments,
-    can_jit_compile,
-)
+from temporal_fusion_transformer import make_tft_model, experiments, can_jit_compile
 
 minor_tf_api_version = int(tf.__version__.split(".")[1])
 
@@ -43,7 +40,7 @@ if can_jit_compile():
 
 
 def electricity_map_fn(
-    arg: Dict[str, tf.Tensor], dtype
+        arg: Dict[str, tf.Tensor], dtype
 ) -> Tuple[Dict[str, tf.Tensor], tf.Tensor]:
     return (
         dict(
@@ -57,22 +54,22 @@ def electricity_map_fn(
 def make_optimizer(learning_rate) -> tf.keras.optimizers.Optimizer:
     if platform.system() == "Darwin" and "arm" in platform.processor().lower():
         from keras.optimizers.legacy.adam import Adam
-
+        
         return Adam(learning_rate)
-
+    
     if minor_tf_api_version >= 11:
         from keras.optimizers.adam import Adam
     else:
         from keras.optimizers.optimizer_experimental.adam import Adam  # noqa
-
+    
     return Adam(learning_rate, jit_compile=True)
 
 
 def prepare_dataset(
-    ds: tf.data.Dataset,
-    batch_size: int,
-    epochs: int,
-    map_fn: Callable[[Dict[str, tf.Tensor]], Tuple[Dict[str, tf.Tensor], tf.Tensor]],
+        ds: tf.data.Dataset,
+        batch_size: int,
+        epochs: int,
+        map_fn: Callable[[Dict[str, tf.Tensor]], Tuple[Dict[str, tf.Tensor], tf.Tensor]],
 ) -> tf.data.Dataset:
     ds = (
         ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
@@ -81,8 +78,10 @@ def prepare_dataset(
         .cache()
         .repeat(epochs)
         .prefetch(tf.data.experimental.AUTOTUNE)
+        # .apply(tf.data.experimental.prefetch_to_device("/gpu:0", tf.data.AUTOTUNE))
     )
     return ds
+
 
 @requires_gpu
 def main(_):
@@ -91,37 +90,38 @@ def main(_):
     2. The script was specifically designed to run in NVIDIA's TensorFlow container with tag 22.12-tf2-py3,
     more about it here https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tensorflow.
     """
+    logging.info(f"{tf.config.list_physical_devices() = }")
     experiment_name = FLAGS.experiment
     logs_dir = FLAGS.logs_dir
-
+    
     if experiment_name == "electricity":
         experiment = experiments.electricity_experiment
         map_fn = electricity_map_fn
-
+    
     batch_size = FLAGS.batch_size
     epochs = FLAGS.epochs
     data_dir = FLAGS.data_dir
-
+    
     training_split = tf.data.Dataset.load(f"{data_dir}/{experiment_name}/training/")
     validation_split = tf.data.Dataset.load(f"{data_dir}/{experiment_name}/validation/")
     num_train_samples = int(training_split.cardinality())
     num_validation_samples = int(validation_split.cardinality())
-
+    
     steps_per_epoch = num_train_samples // batch_size
     val_steps = num_validation_samples // batch_size
-
+    
     map_fn = functools.partial(
         map_fn, dtype=tf.keras.mixed_precision.global_policy().compute_dtype  # noqa
     )
-
+    
     training_split = prepare_dataset(training_split, batch_size, epochs, map_fn)
     validation_split = prepare_dataset(validation_split, batch_size, epochs, map_fn)
-
+    
     model = make_tft_model(
         experiment,  # noqa
         # Those were picked randomly tbh.
-        num_attention_heads=12,
-        hidden_layer_size=180,
+        num_attention_heads=4,
+        hidden_layer_size=60,
         num_stacks=4,
     )
     model.compile(
@@ -143,11 +143,11 @@ def main(_):
         callbacks=[
             TensorBoard(
                 f"{logs_dir}/{experiment_name}/tensorboard_logs/{datetime.datetime.now().strftime('%Y%m%d-%H%M')}",
-                update_freq=50,
+                update_freq=10,
                 # Graph is pretty useless, unless debugging NaN's.
                 write_graph=False,
                 # Profile however, does provide some really helpfully details.
-                profile_batch=True,
+                # profile_batch=True,
                 write_steps_per_second=True,
             ),
             TerminateOnNaN(),
@@ -158,8 +158,8 @@ def main(_):
         validation_steps=val_steps,
         # verbose=2,
     )
-
-    with tf.device("cpu"):
+    
+    with tf.device("/cpu:0"):
         model.save_weights(f"{logs_dir}/{experiment_name}/weights_v1")
 
 
