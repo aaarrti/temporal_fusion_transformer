@@ -7,12 +7,9 @@ import datetime
 import tensorflow as tf
 from absl import flags, app
 from keras.api.keras.experimental import CosineDecay
-from keras.callbacks import TensorBoard, TerminateOnNaN
+from keras.callbacks import TensorBoard, TerminateOnNaN, BackupAndRestore
 from keras.utils.tf_utils import set_random_seed
-
-from temporal_fusion_transformer import experiments
-from temporal_fusion_transformer import setup_logging, make_tft_model
-from temporal_fusion_transformer.src.utils import can_jit_compile
+from temporal_fusion_transformer import setup_logging, make_tft_model, supports_mixed_precision, can_jit_compile, experiments
 
 minor_tf_api_version = int(tf.__version__.split(".")[1])
 if minor_tf_api_version >= 11:
@@ -161,7 +158,7 @@ def main(_):
             ),
             TerminateOnNaN(),
             # No need really, unless running super large scale training.
-            # BackupAndRestore(f"{logs_dir}/{experiment_name}/checkpoints"),
+            BackupAndRestore(f"{logs_dir}/{experiment_name}/checkpoints"),
         ],
         steps_per_epoch=steps_per_epoch,
         validation_steps=val_steps,

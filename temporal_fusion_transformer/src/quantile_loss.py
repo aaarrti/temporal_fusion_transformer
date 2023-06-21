@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Sequence
 
 import tensorflow as tf
-from jaxtyping import Float
 from keras.losses import LossFunctionWrapper
 from keras.metrics import MeanMetricWrapper
 from temporal_fusion_transformer.src.utils import (
@@ -51,12 +50,12 @@ class QuantileRMSE(MeanMetricWrapper):
         )
 
 
-@tf.function(reduce_retracing=True, jit_compile=can_jit_compile(True))
+@tf.function(reduce_retracing=True, jit_compile=can_jit_compile())
 def quantile_loss(
-    y_true: Float[tf.Tensor, "batch time_steps n"],
-    y_pred: Float[tf.Tensor, "batch time_steps n*q"],
-    quantiles: Float[tf.Tensor, "q"],
-) -> Float[tf.Tensor, "batch"]:
+    y_true: tf.Tensor,
+    y_pred: tf.Tensor,
+    quantiles: tf.Tensor,
+) -> tf.Tensor:
     """
     Parameters
     ----------
@@ -95,10 +94,10 @@ def quantile_loss(
 
 @tf.function(jit_compile=can_jit_compile(True), reduce_retracing=True)
 def quantile_rmse(
-    y_true: Float[tf.Tensor, "batch time_steps n"],
-    y_pred: Float[tf.Tensor, "batch time_steps n*q"],
-    quantiles: Float[tf.Tensor, "q"],
-) -> Float[tf.Tensor, "batch"]:
+    y_true: tf.Tensor,
+    y_pred: tf.Tensor,
+    quantiles: tf.Tensor,
+) -> tf.Tensor:
     y_true = tf.cast(y_true, y_pred.dtype)
     quantiles = tf.cast(quantiles, y_pred.dtype)
     y_pred = unsqueze_quantiles(y_true, y_pred, quantiles)
@@ -113,12 +112,12 @@ def quantile_rmse(
     return rmse
 
 
-@tf.function(jit_compile=can_jit_compile(True), reduce_retracing=True)
+@tf.function(jit_compile=can_jit_compile(), reduce_retracing=True)
 def unsqueze_quantiles(
-    y_true: Float[tf.Tensor, "batch time_steps n"],
-    y_pred: Float[tf.Tensor, "batch time_steps n*q"],
-    quantiles: Float[tf.Tensor, "q"],
-) -> Float[tf.Tensor, "batch time_steps n q"]:
+    y_true: tf.Tensor,
+    y_pred: tf.Tensor,
+    quantiles: tf.Tensor,
+) -> tf.Tensor:
     tf.debugging.assert_rank(y_true, 3)
     tf.debugging.assert_rank(y_pred, 3)
     n_quantiles = len(quantiles)

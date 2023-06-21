@@ -5,7 +5,6 @@ from typing import Tuple, Dict, Sequence, Mapping
 from absl import logging
 import keras.layers as layers
 import tensorflow as tf
-from jaxtyping import Float
 from keras.optimizers import Optimizer
 
 from temporal_fusion_transformer.src.utils import can_jit_compile, can_use_cudnn
@@ -171,9 +170,7 @@ class TemporalFusionTransformer(tf.keras.Model):
             Dense(self.output_size * self.num_quantiles)
         )
 
-    def call(
-        self, inputs: Mapping[str, tf.Tensor], **kwargs
-    ) -> Float[tf.Tensor, "batch time k"]:
+    def call(self, inputs: Mapping[str, tf.Tensor], **kwargs) -> tf.Tensor:
         """
 
         Parameters
@@ -298,7 +295,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         **kwargs,
     ) -> None:
         if jit_compile is None:
-            jit_compile = (can_jit_compile(True),)
+            jit_compile = can_jit_compile()
 
         super().compile(
             optimizer=optimizer,
@@ -433,9 +430,7 @@ class TFTInputEmbedding(layers.Layer):
             for _ in range(self.num_observed_inputs)
         ]
 
-    def call(
-        self, inputs: Mapping[str, tf.Tensor], **kwargs
-    ) -> Dict[str, Float[tf.Tensor, "batch time n"]]:
+    def call(self, inputs: Mapping[str, tf.Tensor], **kwargs) -> Dict[str, tf.Tensor]:
         """
         This layer project all different inputs into the same latent space.
         Embedding is applied to categorical ones, and real-values ones are
@@ -601,9 +596,7 @@ class StaticCovariatesEncoder(layers.Layer):
             for _ in range(self.num_static_inputs)
         ]
 
-    def call(
-        self, inputs: Float[tf.Tensor, "batch k n"], **kwargs
-    ) -> Dict[str, Float[tf.Tensor, "batch n"]]:
+    def call(self, inputs: tf.Tensor, **kwargs) -> Dict[str, tf.Tensor]:
         """
         Create a static context out of static input embeddings.
         Static context is a (enrichment) vector, which must be added to other time varying inputs during
@@ -701,12 +694,9 @@ class GLU(layers.Layer):
 
     def call(
         self,
-        inputs: Float[tf.Tensor, "batch time_steps n"] | Float[tf.Tensor, "batch n"],
+        inputs: tf.Tensor,
         **kwargs,
-    ) -> Tuple[
-        Float[tf.Tensor, "batch time_steps n"] | Float[tf.Tensor, "batch m"],
-        Float[tf.Tensor, "batch time_steps n"] | Float[tf.Tensor, "batch m"],
-    ]:
+    ) -> Tuple[tf.Tensor, tf.Tensor,]:
         x = self.dropout(inputs)
         x_pre_activation = self.dense(x)
         x_gated = self.activation(x)
@@ -919,8 +909,8 @@ class VariableSelection(layers.Layer):
         -------
 
         """
-        context: Float[tf.Tensor, "batch n"] = inputs.context
-        inputs: Float[tf.Tensor, "batch n n k"] = inputs.inputs
+        context: tf.Tensor = inputs.context
+        inputs: tf.Tensor = inputs.inputs
 
         mlp_outputs, static_gate = self.context_grn(
             ContextInputs(
@@ -958,11 +948,7 @@ class VariableSelection(layers.Layer):
 
     def __call__(
         self, inputs: ContextInputs, **kwargs
-    ) -> Tuple[
-        Float[tf.Tensor, "batch k m"],
-        Float[tf.Tensor, "batch k c m"],
-        Float[tf.Tensor, "batch k m"],
-    ]:
+    ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor,]:
         # Just to improve static code analysis.
         return super().__call__(inputs, **kwargs)
 
@@ -1045,9 +1031,7 @@ class EncoderBlock(layers.Layer):
             use_time_distributed=True,
         )
 
-    def call(
-        self, inputs: Float[tf.Tensor, "batch time n"], **kwargs
-    ) -> Float[tf.Tensor, "batch time n"]:
+    def call(self, inputs: tf.Tensor, **kwargs) -> tf.Tensor:
         x = self.self_attn(inputs, inputs, inputs, use_causal_mask=True)
         x, _ = self.glu_1(x)
         x = self.layer_norm(x + inputs)
