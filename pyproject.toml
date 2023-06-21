@@ -26,6 +26,10 @@ dependencies = [
     "matplotx",
     "absl_extra"
 ]
+[project.optional-dependencies]
+tests = [
+    "pytest"
+]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"
 
