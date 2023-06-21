@@ -234,52 +234,6 @@ class NoOpStrategy:
         yield
 
 
-if util.find_spec("flax") is not None:
-    from temporal_fusion_transformer.src.modeling_flax import (
-        TemporalFusionTransformer as Flax_TemporalFusionTransformer,
-    )
-    import flax.linen as nn
-
-    def make_flax_tft_model(
-        experiment: Experiment, jit: bool = True, **kwargs
-    ) -> Flax_TemporalFusionTransformer:
-        """
-        Create TFT model for experiment.
-
-        Parameters
-        ----------
-        experiment:
-            Experiment instance used to fill fixed model parameters, as well as default ones.
-        jit:
-        kwargs:
-            Use this to override default hyperparameters from experiment instance, or to pass additional
-            __init__ kwargs to model.
-
-        Returns
-        -------
-
-        tft_model:
-            TF or Flax implementation of model. In both cases, the model is not traced!
-            It is users responsibility to provide representative input.
-
-        """
-        kwargs = add_default_items(
-            kwargs,
-            dict(
-                static_categories_sizes=experiment.fixed_params.static_categories_sizes,
-                known_categories_sizes=experiment.fixed_params.known_categories_sizes,
-                num_encoder_steps=experiment.fixed_params.num_encoder_steps,
-                hidden_layer_size=experiment.default_params.hidden_layer_size,
-                num_attention_heads=experiment.default_params.num_attention_heads,
-                dropout_rate=experiment.default_params.dropout_rate,
-            ),
-        )
-        clazz = Flax_TemporalFusionTransformer
-        if jit:
-            clazz = nn.jit(clazz)
-        return clazz(**kwargs)
-
-
 def can_jit_compile(warn=True):
     # Was added only in 2.12.
     """Returns True if TensorFlow XLA is available for the platform."""

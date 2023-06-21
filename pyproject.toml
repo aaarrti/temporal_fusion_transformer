@@ -1,6 +1,6 @@
 [project]
 name = "temporal_fusion_transformer"
-version = "0.0.1"
+version = "0.0.1dev1"
 description = "TF2 and Flax re-write of Temporal Fusion Transformer model."
 readme = "Readme.md"
 requires-python = ">=3.8"
@@ -24,24 +24,6 @@ dependencies = [
     "pandas",
     "matplotlib",
     "matplotx",
-]
-[project.optional-dependencies]
-flax = [
-    "jax",
-    "jaxlib",
-    "flax",
-    "tf2jax",
-    "optax",
-    "jmp",
-    "clu",
-    "msgpack",
-    "orbax",
-    "orbax_checkpoint"
-]
-tests = [
-    "temporal_fusion_transformer[flax]",
-    "pytest",
-    "chex"
 ]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"

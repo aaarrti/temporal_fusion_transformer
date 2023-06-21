@@ -16,9 +16,9 @@ from temporal_fusion_transformer.src.utils import can_jit_compile
 
 minor_tf_api_version = int(tf.__version__.split(".")[1])
 if minor_tf_api_version >= 11:
-    from keras.optimizers.adam import Adam
+    from keras.optimizers.adamax import Adamax
 else:
-    from keras.optimizers.optimizer_experimental.adam import Adam  # noqa
+    from keras.optimizers.optimizer_experimental.adamax import Adamax  # noqa
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -133,7 +133,7 @@ def main(_):
         num_stacks=4,
     )
     model.compile(
-        optimizer=Adam(
+        optimizer=Adamax(
             # Also picked randomly lol.
             CosineDecay(
                 5e-3,
