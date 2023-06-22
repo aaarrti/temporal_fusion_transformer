@@ -3,12 +3,8 @@
 # https://dvc.org/doc/user-guide/dvcignore
 # Those can always easily be downloaded.
 temporal_fusion_transformer
-nvidia
-raw_data
 tensorboard_logs
 notebooks
 tests
 thirdparty
-transformer_engine
-.tox
-.terraform
+scripts
