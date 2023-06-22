@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from absl import logging
 import platform
+from importlib import util
 from functools import lru_cache
-from contextlib import contextmanager
 from typing import (
     Mapping,
     Dict,
@@ -14,7 +14,7 @@ from typing import (
     Tuple,
     Any,
     TYPE_CHECKING,
-    ContextManager,
+    Iterable,
 )
 
 import tensorflow as tf
@@ -261,3 +261,16 @@ def can_jit_compile() -> bool:
         )
 
     return True
+
+
+def make_pbar(it: Iterable[T], **kwargs) -> Iterable[T]:
+    if util.find_spec("keras_pbar") is not None:
+        from keras_pbar import keras_pbar
+
+        return keras_pbar(**kwargs)
+    if util.find_spec("tqdm") is not None:
+        from tqdm.auto import tqdm
+
+        return tqdm(**kwargs)
+
+    return it

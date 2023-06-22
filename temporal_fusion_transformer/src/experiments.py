@@ -7,16 +7,19 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import auto, IntEnum
 from functools import cached_property
-from typing import NamedTuple, List, Dict, Sequence, Tuple, Any
+from typing import NamedTuple, List, Dict, Sequence, Tuple, Any, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from absl import logging
-from keras_pbar import keras_pbar
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-from temporal_fusion_transformer.src.utils import filter_dict
+
+from temporal_fusion_transformer.src.utils import filter_dict, make_pbar
+
+
+if TYPE_CHECKING:
+    from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 
 class DataTypes(IntEnum):
@@ -360,7 +363,7 @@ class Experiment(ABC):
         logging.info(f"Creating TF dataset to be saved.")
         tf_ds = None
         df.sort_values(by=[self._id_column, self._time_column], inplace=True)
-        for name, sliced in keras_pbar(df.groupby(self._id_column)):
+        for name, sliced in make_pbar(df.groupby(self._id_column)):
             data_map: OrderedDict = OrderedDict()
             for k in col_mapping:
                 cols = col_mapping[k]
@@ -468,7 +471,7 @@ class ElectricityExperiment(Experiment):
 
         df_list = []
 
-        for label in keras_pbar(df, n=369):
+        for label in make_pbar(df, n=369):
             column = df[label]
 
             start_date = min(column.fillna(method="ffill").dropna().index)
@@ -524,10 +527,12 @@ class ElectricityExperiment(Experiment):
         self, df: pd.DataFrame
     ) -> Tuple[Dict[str, StandardScaler], Dict[str, StandardScaler]]:
         # TODO: mb use tf.keras.FeatureSpace here instead?.
+        from sklearn.preprocessing import StandardScaler
+
         real_scalers = dict()
         target_scalers = dict()
         logging.debug("Fitting scalers.")
-        for identifier, sliced in keras_pbar(df.groupby(self._id_column)):
+        for identifier, sliced in make_pbar(df.groupby(self._id_column)):
             if len(sliced) >= self.total_time_steps:
                 data = sliced[self._real_inputs_columns].values
                 targets = sliced[[self._target_column]].values
@@ -542,7 +547,7 @@ class ElectricityExperiment(Experiment):
         real_scalers: Dict[str, StandardScaler],
     ) -> pd.DataFrame:
         df_list = []
-        for identifier, sliced in keras_pbar(df.groupby(self._id_column)):
+        for identifier, sliced in make_pbar(df.groupby(self._id_column)):
             if len(sliced) >= self.total_time_steps:
                 sliced_copy = sliced.copy()
                 sliced_copy[self._real_inputs_columns] = real_scalers[
@@ -553,9 +558,11 @@ class ElectricityExperiment(Experiment):
         return pd.concat(df_list)
 
     def _fit_label_encoders(self, df: pd.DataFrame) -> Dict[str, LabelEncoder]:
+        from sklearn.preprocessing import LabelEncoder
+
         num_classes = dict()
         categorical_scalers = dict()
-        for col in keras_pbar(self._categorical_inputs_columns):
+        for col in make_pbar(self._categorical_inputs_columns):
             # Set all to str so that we don't have mixed integer/string columns
             srs = df[col].apply(str)
             num_classes[col] = srs.nunique()
@@ -653,7 +660,7 @@ class FavoritaExperiment(Experiment):
         # Resampling
         logging.debug("Resampling to regular grid")
         resampled_dfs = []
-        for traj_id, raw_sub_df in keras_pbar(temporal.groupby("traj_id")):
+        for traj_id, raw_sub_df in make_pbar(temporal.groupby("traj_id")):
             sub_df = raw_sub_df.set_index("date", drop=True).copy()
             sub_df = sub_df.resample("1d").last()
             sub_df["date"] = sub_df.index
@@ -730,6 +737,8 @@ class FavoritaExperiment(Experiment):
         return temporal
 
     def _fit_label_encoders(self, df: pd.DataFrame) -> Dict[str, LabelEncoder]:
+        from sklearn.preprocessing import LabelEncoder
+
         categorical_scalers = {}
         num_classes = []
         id_set = set(list(df[self._id_column].unique()))
@@ -763,7 +772,7 @@ class FavoritaExperiment(Experiment):
 
         df["date"] = pd.to_datetime(df["date"])
         df_lists = {"train": [], "valid": [], "test": []}
-        for _, sliced in keras_pbar(df.groupby("traj_id")):
+        for _, sliced in make_pbar(df.groupby("traj_id")):
             index = sliced["date"]
             train = sliced.loc[index < valid_boundary]
             train_len = len(train)

@@ -7,8 +7,11 @@ import datetime
 import platform
 
 import tensorflow as tf
+from keras.api.keras.experimental import CosineDecay
+from keras.callbacks import TensorBoard, TerminateOnNaN
+from keras.utils.tf_utils import set_random_seed
+from temporal_fusion_transformer import make_tft_model, experiments, can_jit_compile
 from absl import flags
-
 from absl_extra import (
     register_task,
     run,
@@ -16,13 +19,8 @@ from absl_extra import (
     supports_mixed_precision,
     setup_logging,
 )
-from keras.api.keras.experimental import CosineDecay
-from keras.callbacks import TensorBoard, TerminateOnNaN
-from keras.utils.tf_utils import set_random_seed
-from temporal_fusion_transformer import make_tft_model, experiments, can_jit_compile
 
 minor_tf_api_version = int(tf.__version__.split(".")[1])
-
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
     "experiment",

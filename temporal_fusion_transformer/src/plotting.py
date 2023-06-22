@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from typing import Sequence, Callable, Protocol, runtime_checkable, TypeVar
-
-import matplotlib.pyplot as plt
+from typing import Sequence, Protocol, runtime_checkable, TypeVar, TYPE_CHECKING
 import numpy as np
 import tensorflow as tf
-from jaxtyping import Float
 
 T = TypeVar("T")
 K = TypeVar("K")
+
+if TYPE_CHECKING:
+    import matplotlib.pyplot as plt
 
 
 @runtime_checkable
@@ -18,19 +18,15 @@ class SupportGetItem(Protocol[T]):
 
 
 def plot_predictions(
-    predicted_outputs: Float[np.ndarray, "batch time_steps n*q"],
-    future_timestamps: Float[np.ndarray, "batch time_steps n"],
+    predicted_outputs: np.ndarray,
+    future_timestamps: np.ndarray,
     num_outputs: int,  # n
-    quantiles: Float[np.ndarray, "q"],
-    future_outputs: Float[np.ndarray, "batch time_steps n"],
-    past_time_stamps: Float[np.ndarray, "batch time_steps"],
-    past_outputs: Float[np.ndarray, "batch time_steps n"],
+    quantiles: np.ndarray,
+    future_outputs: np.ndarray,
+    past_time_stamps: np.ndarray,
+    past_outputs: np.ndarray,
     output_labels: Sequence[str] | None = None,
-    target_scaler: Callable[
-        [str, Float[np.ndarray, "batch*time_steps*n"]],
-        Float[np.ndarray, "batch*time_steps*n"],
-    ]
-    | None = None,
+    target_scaler=None,
 ) -> plt.Figure:
     """
 
@@ -54,6 +50,7 @@ def plot_predictions(
     -------
 
     """
+    import matplotlib.pyplot as plt
 
     tf.debugging.assert_rank(predicted_outputs, 3)
     tf.debugging.assert_rank(future_timestamps, 2)
