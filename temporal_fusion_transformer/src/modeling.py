@@ -99,7 +99,7 @@ class TemporalFusionTransformer(tf.keras.Model):
         self.prng_seed = prng_seed
         self.num_stacks = num_stacks
 
-        self.input_embeds = TFTInputEmbedding(
+        self.input_embeds = InputEmbedding(
             static_categories_size=self.static_categories_sizes,
             known_categories_size=known_categories_sizes,
             hidden_layer_size=hidden_layer_size,
@@ -177,10 +177,10 @@ class TemporalFusionTransformer(tf.keras.Model):
         ----------
         inputs:
             pre-processed TFT model inputs:
-                - static: (batch, num_static_categories)
-                - known_categorical: (batch, time_steps, num_known_categories)
-                - known_real: (batch, time_steps)
-                - observed: (batch, time_steps)
+                - static: (batch, num_static_categories), required.
+                - known_categorical: (batch, time_steps, num_known_categories), optional.
+                - known_real: (batch, time_steps), required.
+                - observed: (batch, time_steps), optional.
             Note, that categories are stacked over last axis. E.g., in case of 1 static input,
             static.shape must be (batch, 1).
 
@@ -337,7 +337,7 @@ class ContextInputs(tf.experimental.BatchableExtensionType):
 # ----------------------------------- input embedding ----------------------------------------
 
 
-class TFTInputEmbedding(layers.Layer):
+class InputEmbedding(layers.Layer):
     def __init__(
         self,
         static_categories_size: Sequence[int],
@@ -774,7 +774,7 @@ class GRN(layers.Layer):
             prng_seed=prng_seed,
             use_time_distributed=use_time_distributed,
         )
-        if self.dtype_policy.name == "mixed_bfloat16":
+        if self.dtype_policy._name == "mixed_bfloat16":
             dtype = tf.keras.mixed_precision.Policy("float32")
         else:
             dtype = None
@@ -1017,7 +1017,7 @@ class EncoderBlock(layers.Layer):
             prng_seed=prng_seed,
             use_time_distributed=True,
         )
-        if self.dtype_policy.name == "mixed_bfloat16":
+        if self.dtype_policy._name == "mixed_bfloat16":
             dtype = tf.keras.mixed_precision.Policy("float32")
         else:
             dtype = None
@@ -1054,6 +1054,12 @@ class EncoderBlock(layers.Layer):
         return config
 
 
-class Identity(layers.Layer):
-    def call(self, inputs, **kwargs):
-        return tf.identity(inputs)
+minor_tf_api_version = int(tf.__version__.split(".")[1])
+if minor_tf_api_version <= 10:
+
+    class Identity(layers.Layer):
+        def call(self, inputs: tf.Tensor, **kwargs) -> tf.Tensor:
+            return tf.identity(inputs)
+
+else:
+    Identity = tf.keras.layers.Identity

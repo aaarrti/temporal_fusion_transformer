@@ -1,11 +1,8 @@
 from absl import flags
-from absl_extra import register_task, run
+from absl_extra import register_task, run, setup_logging
+import temporal_fusion_transformer as tft
 
-from temporal_fusion_transformer.src.experiments import (
-    electricity_experiment,
-    favorita_experiment,
-)
-
+setup_logging()
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
     "experiment",
@@ -21,16 +18,16 @@ flags.DEFINE_string("raw_data_path", default="raw_data", help="Path to raw data.
 
 
 @register_task
-def main(_):
+def _main(_):
     if FLAGS.experiment == "electricity":
-        electricity_experiment.process_raw_data(
+        tft.experiments.electricity_experiment.process_raw_data(
             f"{FLAGS.raw_data_path}/electricity/LD2011_2014.txt", FLAGS.save_path
         )
     if FLAGS.experiment == "favorita":
-        favorita_experiment.process_raw_data(
+        tft.experiments.favorita_experiment.process_raw_data(
             f"{FLAGS.raw_data_path}/favorita", FLAGS.save_path
         )
 
 
-if __name__ == "__main__":
+def main():
     run("tft_dataset")

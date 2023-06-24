@@ -155,7 +155,14 @@ def identity(x: T) -> T:
     return x
 
 
-def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransformer:
+def make_tft_model(
+    experiment: Experiment,
+    hidden_layer_size,
+    num_attention_heads,
+    num_stacks: int = 1,
+    pretrained_weights_path: str | None = None,
+    **kwargs,
+) -> TemporalFusionTransformer:
     """
     Create TFT model for experiment.
 
@@ -181,14 +188,21 @@ def make_tft_model(experiment: Experiment, **kwargs) -> TemporalFusionTransforme
             static_categories_sizes=experiment.fixed_params.static_categories_sizes,
             known_categories_sizes=experiment.fixed_params.known_categories_sizes,
             num_encoder_steps=experiment.fixed_params.num_encoder_steps,
-            hidden_layer_size=experiment.default_params.hidden_layer_size,
-            num_attention_heads=experiment.default_params.num_attention_heads,
-            dropout_rate=experiment.default_params.dropout_rate,
         ),
     )
     from temporal_fusion_transformer.src.modeling import TemporalFusionTransformer
 
-    return TemporalFusionTransformer(**kwargs)
+    model = TemporalFusionTransformer(
+        num_attention_heads=num_attention_heads,
+        num_stacks=num_stacks,
+        hidden_layer_size=hidden_layer_size,
+        **kwargs,
+    )
+
+    if pretrained_weights_path is not None:
+        model.load_weights(pretrained_weights_path)
+
+    return model
 
 
 def as_tensor(arr: TensorLike | tf.Tensor) -> tf.Tensor:
@@ -261,16 +275,3 @@ def can_jit_compile() -> bool:
         )
 
     return True
-
-
-def make_pbar(it: Iterable[T], **kwargs) -> Iterable[T]:
-    if util.find_spec("keras_pbar") is not None:
-        from keras_pbar import keras_pbar
-
-        return keras_pbar(**kwargs)
-    if util.find_spec("tqdm") is not None:
-        from tqdm.auto import tqdm
-
-        return tqdm(**kwargs)
-
-    return it

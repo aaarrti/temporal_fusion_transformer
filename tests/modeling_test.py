@@ -6,7 +6,7 @@ from temporal_fusion_transformer.src.experiments import electricity_experiment
 from temporal_fusion_transformer.src.modeling import (
     TemporalFusionTransformer,
     StaticCovariatesEncoder,
-    TFTInputEmbedding,
+    InputEmbedding,
     VariableSelection,
     EncoderBlock,
     ContextInputs,
@@ -24,7 +24,7 @@ hidden_layer_size = 5
 class TFTLayersTest(tf.test.TestCase, parameterized.TestCase):
     def test_input_embedding(self):
         x_batch = make_x_batch()
-        layer = TFTInputEmbedding(
+        layer = InputEmbedding(
             static_categories_sizes,
             known_categories_sizes,
             hidden_layer_size,

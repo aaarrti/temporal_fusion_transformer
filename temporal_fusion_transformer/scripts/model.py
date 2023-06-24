@@ -10,7 +10,7 @@ import tensorflow as tf
 from keras.api.keras.experimental import CosineDecay
 from keras.callbacks import TensorBoard, TerminateOnNaN
 from keras.utils.tf_utils import set_random_seed
-from temporal_fusion_transformer import make_tft_model, experiments, can_jit_compile
+import temporal_fusion_transformer as tft
 from absl import flags
 from absl_extra import (
     register_task,
@@ -31,14 +31,24 @@ flags.DEFINE_enum(
 flags.DEFINE_integer("batch_size", default=64, help="Training batch size")
 flags.DEFINE_integer("epochs", default=1, help="Number of training epochs")
 flags.DEFINE_string("data_dir", help="Data directory", default="datasets")
-flags.DEFINE_string("logs_dir", help=None, default="logs")
+flags.DEFINE_string("logs_dir", help="Tensorboard logs directory", default="logs")
+flags.DEFINE_integer("num_attention_heads", default=4, help="Number of attention heads")
+flags.DEFINE_integer("hidden_size", default=60, help="Hidden layer size")
+flags.DEFINE_integer("num_stacks", default=2, help="Number of encoder stacks")
+flags.DEFINE_integer("prng_seed", default=42, help="Random number generator seed")
+flags.DEFINE_float("initial_learning_rate", default=5e-3, help="Initial learning rate")
+flags.DEFINE_float(
+    "decay_alpha",
+    default=0.02,
+    help="Minimal portion of inital learning rate until which decays.",
+)
+flags.DEFINE_integer("log_frequency", default=10, help="TensorBoard log frequency")
 
-PRNG_SEED = 42
-set_random_seed(PRNG_SEED)
+
 setup_logging()
 if supports_mixed_precision():
     tf.keras.mixed_precision.set_global_policy("mixed_float16")
-if can_jit_compile():
+if tft.can_jit_compile():
     tf.config.optimizer.set_jit("autoclustering")
 
 
@@ -87,23 +97,32 @@ def prepare_dataset(
 
 @register_task
 @requires_gpu
-def main():
+def _main(_):
     """
     1. The parameters were picked out of the blue, this script's purpose is to demonstrate APIs.
     2. The script was specifically designed to run in NVIDIA's TensorFlow container with tag 22.12-tf2-py3,
     more about it here https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tensorflow.
     """
     logging.info(f"{tf.config.list_physical_devices() = }")
+
     experiment_name = FLAGS.experiment
     logs_dir = FLAGS.logs_dir
-
-    if experiment_name == "electricity":
-        experiment = experiments.electricity_experiment
-        map_fn = electricity_map_fn
-
     batch_size = FLAGS.batch_size
     epochs = FLAGS.epochs
     data_dir = FLAGS.data_dir
+    num_attention_heads = FLAGS.num_attention_heads
+    num_stacks = FLAGS.num_stacks
+    hidden_layer_size = FLAGS.hidden_size
+    prng_seed = FLAGS.prng_seed
+    initial_learning_rate = FLAGS.initial_learning_rate
+    decay_alpha = FLAGS.decay_alpha
+    log_frequency = FLAGS.log_frequency
+
+    set_random_seed(prng_seed)
+
+    if experiment_name == "electricity":
+        experiment = tft.experiments.electricity_experiment
+        map_fn = electricity_map_fn
 
     training_split = tf.data.Dataset.load(f"{data_dir}/{experiment_name}/training/")
     validation_split = tf.data.Dataset.load(f"{data_dir}/{experiment_name}/validation/")
@@ -120,51 +139,52 @@ def main():
     training_split = prepare_dataset(training_split, batch_size, epochs, map_fn)
     validation_split = prepare_dataset(validation_split, batch_size, epochs, map_fn)
 
-    model = make_tft_model(
+    model = tft.make_tft_model(
         experiment,  # noqa
         # Those were picked randomly tbh.
-        num_attention_heads=4,
-        hidden_layer_size=60,
-        num_stacks=4,
+        num_attention_heads=num_attention_heads,
+        hidden_layer_size=hidden_layer_size,
+        num_stacks=num_stacks,
     )
     model.compile(
         optimizer=make_optimizer(
             # Also picked randomly lol.
             CosineDecay(
-                5e-3,
+                initial_learning_rate,
                 int(steps_per_epoch * epochs),
-                alpha=0.02,
+                alpha=decay_alpha,
             ),
         ),
         # We can't use XLA and CuDNN at the same time.
         jit_compile=False,
     )
+    model_tag = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    callbacks = [
+        TensorBoard(
+            f"{logs_dir}/{experiment_name}/{model_tag}/tensorboard_logs/",
+            update_freq=log_frequency,
+            # Graph is pretty useless, unless debugging NaN's.
+            write_graph=False,
+            # Profile however, does provide some really helpfully details.
+            # profile_batch=True,
+            write_steps_per_second=True,
+        ),
+        TerminateOnNaN(),
+    ]
     model.fit(
         training_split,
         epochs=epochs,
         validation_data=validation_split,
-        callbacks=[
-            TensorBoard(
-                f"{logs_dir}/{experiment_name}/tensorboard_logs/{datetime.datetime.now().strftime('%Y%m%d-%H%M')}",
-                update_freq=10,
-                # Graph is pretty useless, unless debugging NaN's.
-                write_graph=False,
-                # Profile however, does provide some really helpfully details.
-                # profile_batch=True,
-                write_steps_per_second=True,
-            ),
-            TerminateOnNaN(),
-            # No need really, unless running super large scale training.
-            # BackupAndRestore(f"{logs_dir}/{experiment_name}/checkpoints"),
-        ],
+        callbacks=callbacks,
         steps_per_epoch=steps_per_epoch,
         validation_steps=val_steps,
         verbose=2,
     )
 
     with tf.device("/cpu:0"):
-        model.save_weights(f"{logs_dir}/{experiment_name}/weights_v1")
+        # To avoid saving optimizer, we must use keras.
+        model.save_weights(f"{logs_dir}/{experiment_name}/{model_tag}/weights.keras")
 
 
-if __name__ == "__main__":
-    run("train_TFT")
+def main():
+    run("tft_main")

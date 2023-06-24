@@ -1,25 +1,36 @@
 from __future__ import annotations
 
+import datetime
 import gc
 import pickle
-import datetime
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import auto, IntEnum
 from functools import cached_property
-from typing import NamedTuple, List, Dict, Sequence, Tuple, Any, TYPE_CHECKING
+from typing import NamedTuple, List, Dict, Sequence, Tuple, Any, Callable, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from absl import logging
+from keras_pbar import keras_pbar
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
+from temporal_fusion_transformer.src.utils import filter_dict
 
-from temporal_fusion_transformer.src.utils import filter_dict, make_pbar
+try:
+    import cudf  # noqa
+
+    pd = cudf
+    logging.info("CuDF will be used for data pre-processing.")
+    cudf_available = True
+except ModuleNotFoundError:
+    logging.info("No CuDF installation found, falling back to pandas processing.")
+    cudf_available = False
 
 
 if TYPE_CHECKING:
-    from sklearn.preprocessing import LabelEncoder, StandardScaler
+    from temporal_fusion_transformer.src.inference import TargetScaler
 
 
 class DataTypes(IntEnum):
@@ -52,119 +63,20 @@ class FixedParams(NamedTuple):
     num_outputs: int
 
 
-class ModelParams(NamedTuple):
-    hidden_layer_size: int
-    num_attention_heads: int
-    learning_rate: float
-    max_gradient_norm: float
-    dropout_rate: float
-
-
 class Experiment(ABC):
-    """
-    Attributes:
-
-    name:
-        Name of the experiment, obviously.
-    data_params:
-        Data parameters are the one defined by dataset properties, they are static.
-    model_params:
-        Model parameters are subject to hyperparameter optimization.
-    column_schema:
-
-    """
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def default_params(self) -> ModelParams:
-        """
-        Model parameters, are the ones, which are model architecture parameters, which are subject to hyperparameter
-        fine-tuning, e.g, number of attention heads. Same goes for OptimizerParams.
-        Refer to  Deep Learning Tuning Playbook for step-by-step guide. For solved experiments,
-        this property will already contain the best ones.
-
-        References
-        -------
-        .. [1] https://github.com/google-research/tuning_playbook
-
-        Returns
-        -------
-
-        """
-        raise NotImplementedError
-
     @property
     @abstractmethod
     def fixed_params(self) -> FixedParams:
-        """
-        Fixed parameters, are the ones, caused by underlying datasets structure.
-        E.g., number of static inputs.
-
-        Returns
-        -------
-
-        retval:
-            DataParams instance.
-
-        """
+        """Fixed parameters, are the ones, caused by underlying datasets structure. E.g., number of static inputs."""
         raise NotImplementedError
 
-    @property
-    def total_time_steps(self) -> int:
-        return self.fixed_params.total_time_steps
-
-    @cached_property
-    def _id_column(self):
-        return self._get_single_col_by_input_type(InputTypes.ID)
-
-    @cached_property
-    def _target_column(self):
-        return self._get_single_col_by_input_type(InputTypes.TARGET)
-
-    @cached_property
-    def _real_inputs_columns(self):
-        return self._get_cols_by_data_type(
-            DataTypes.REAL_VALUED, {InputTypes.ID, InputTypes.TIME}
-        )
-
-    @cached_property
-    def _categorical_inputs_columns(self):
-        return self._get_cols_by_data_type(
-            DataTypes.CATEGORICAL, {InputTypes.ID, InputTypes.TIME}
-        )
-
-    @cached_property
-    def _time_column(self):
-        return self._get_single_col_by_input_type(InputTypes.TIME)
-
-    @cached_property
-    def _inputs_static_columns(self):
-        return self._get_cols_by_input_type(InputTypes.STATIC_INPUT)
-
-    @cached_property
-    def _inputs_observed_columns(self):
-        return self._get_cols_by_input_type(InputTypes.OBSERVED_INPUT)
-
-    @cached_property
-    def _inputs_known_real_columns(self):
-        return self._get_cols_by_input_type(
-            InputTypes.KNOWN_INPUT, {DataTypes.CATEGORICAL, DataTypes.DATE}
-        )
-
-    @cached_property
-    def _inputs_known_categorical_columns(self):
-        return self._get_cols_by_input_type(
-            InputTypes.KNOWN_INPUT, {DataTypes.REAL_VALUED, DataTypes.DATE}
-        )
-
-    @property
-    def _num_encoder_steps(self) -> int:
-        return self.fixed_params.num_encoder_steps
+    @abstractmethod
+    def make_target_scaler(self, save_path) -> TargetScaler:
+        """
+        Make object, to use dor scaling back the output(s) during inference.
+        Target scalers, takes 2 arguments, id of the entity and output.
+        """
+        raise NotImplementedError
 
     def process_raw_data(self, data_path: str, save_path: str):
         """
@@ -217,19 +129,75 @@ class Experiment(ABC):
                 "test",
                 test_df,
                 dict(
-                    save_identifier=True,
-                    save_time=True,
+                    save_identifier=True, save_time=True, save_only_future_outputs=False
                 ),
             ),
         ]:
             logging.info(f"Creating TF time-series dataset for {split_name} split.")
             tf_ds = self.make_time_series_dataset(df, **kw)
-            tf_ds.save(f"{save_path}/{self.name}/{split_name}")
+            tf_ds.save(f"{save_path}/{self._name}/{split_name}")
             del tf_ds
             gc.collect()
 
-        with open(f"{save_path}/{self.name}/target_scaler.pickle", "wb+") as file:
+        with open(f"{save_path}/{self._name}/target_scaler.pickle", "wb+") as file:
             pickle.dump(target_scalers, file, protocol=pickle.HIGHEST_PROTOCOL)
+
+    @property
+    @abstractmethod
+    def _name(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def _total_time_steps(self) -> int:
+        return self.fixed_params.total_time_steps
+
+    @cached_property
+    def _id_column(self):
+        return self._get_single_col_by_input_type(InputTypes.ID)
+
+    @cached_property
+    def _target_column(self):
+        return self._get_single_col_by_input_type(InputTypes.TARGET)
+
+    @cached_property
+    def _real_inputs_columns(self):
+        return self._get_cols_by_data_type(
+            DataTypes.REAL_VALUED, {InputTypes.ID, InputTypes.TIME}
+        )
+
+    @cached_property
+    def _categorical_inputs_columns(self):
+        return self._get_cols_by_data_type(
+            DataTypes.CATEGORICAL, {InputTypes.ID, InputTypes.TIME}
+        )
+
+    @cached_property
+    def _time_column(self):
+        return self._get_single_col_by_input_type(InputTypes.TIME)
+
+    @cached_property
+    def _inputs_static_columns(self):
+        return self._get_cols_by_input_type(InputTypes.STATIC_INPUT)
+
+    @cached_property
+    def _inputs_observed_columns(self):
+        return self._get_cols_by_input_type(InputTypes.OBSERVED_INPUT)
+
+    @cached_property
+    def _inputs_known_real_columns(self):
+        return self._get_cols_by_input_type(
+            InputTypes.KNOWN_INPUT, {DataTypes.CATEGORICAL, DataTypes.DATE}
+        )
+
+    @cached_property
+    def _inputs_known_categorical_columns(self):
+        return self._get_cols_by_input_type(
+            InputTypes.KNOWN_INPUT, {DataTypes.REAL_VALUED, DataTypes.DATE}
+        )
+
+    @property
+    def _num_encoder_steps(self) -> int:
+        return self.fixed_params.num_encoder_steps
 
     @abstractmethod
     def _read_raw_csv(self, path: str) -> pd.DataFrame:
@@ -248,49 +216,18 @@ class Experiment(ABC):
     def _split_data(
         self, df: pd.DataFrame
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """
-        Returns
-        -------
-
-        retval:
-            - training data
-            - validation data
-            - test data
-
-        """
+        """Split dataframe into training, validation and test dataframes."""
         raise NotImplementedError
 
     @abstractmethod
     def _fit_scalers(self, df: pd.DataFrame) -> Tuple[Any, Any]:
-        """
-        Returns
-        -------
-
-        retval:
-            - real scalers
-            - target scalers
-            where key is column name.
-
-        """
+        """Scalers, are the ones, applied to real inputs and targets respectivelly."""
         raise NotImplementedError
 
     def _get_single_col_by_input_type(self, input_type: InputTypes) -> str:
-        """
-        Returns name of single column.
-
-        Parameters
-        ----------
-        input_type:
-            Input type of column to extract
-
-        Returns
-        -------
-        """
         col = self._get_cols_by_input_type(input_type)
-
         if len(col) != 1:
             raise ValueError("Invalid number of columns for {}".format(input_type))
-
         return col[0]
 
     def _get_cols_by_input_type(
@@ -346,7 +283,7 @@ class Experiment(ABC):
         self,
         df: pd.DataFrame,
         *,
-        save_only_future_outputs=True,
+        save_only_future_outputs: bool = True,
         save_identifier: bool = False,
         save_time: bool = False,
     ) -> tf.data.Dataset:
@@ -363,7 +300,7 @@ class Experiment(ABC):
         logging.info(f"Creating TF dataset to be saved.")
         tf_ds = None
         df.sort_values(by=[self._id_column, self._time_column], inplace=True)
-        for name, sliced in make_pbar(df.groupby(self._id_column)):
+        for name, sliced in keras_pbar(df.groupby(self._id_column)):
             data_map: OrderedDict = OrderedDict()
             for k in col_mapping:
                 cols = col_mapping[k]
@@ -385,7 +322,7 @@ class Experiment(ABC):
                         tf.keras.utils.timeseries_dataset_from_array(
                             v,
                             targets=None,
-                            sequence_length=self.total_time_steps,
+                            sequence_length=self._total_time_steps,
                             batch_size=None,
                         ).as_numpy_iterator()
                     )
@@ -417,18 +354,8 @@ class Experiment(ABC):
 
 class ElectricityExperiment(Experiment):
     @property
-    def name(self) -> str:
+    def _name(self) -> str:
         return "electricity"
-
-    @property
-    def default_params(self) -> ModelParams:
-        return ModelParams(
-            hidden_layer_size=160,
-            num_attention_heads=4,
-            dropout_rate=0.1,
-            max_gradient_norm=0.01,
-            learning_rate=1e-3,
-        )
 
     @property
     def fixed_params(self) -> FixedParams:
@@ -460,7 +387,7 @@ class ElectricityExperiment(Experiment):
         logging.info(f"Loading electricity dataset from {path}")
         # This code was copy-pasted from original implementation, and I have very little idea
         # what is it doing.
-        df = pd.read_csv(path, index_col=0, sep=";", decimal=",")
+        df = read_csv(path, index_col=0, sep=";", decimal=",")
         df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
 
@@ -471,7 +398,7 @@ class ElectricityExperiment(Experiment):
 
         df_list = []
 
-        for label in make_pbar(df, n=369):
+        for label in keras_pbar(df, n=369):
             column = df[label]
 
             start_date = min(column.fillna(method="ffill").dropna().index)
@@ -526,14 +453,11 @@ class ElectricityExperiment(Experiment):
     def _fit_scalers(
         self, df: pd.DataFrame
     ) -> Tuple[Dict[str, StandardScaler], Dict[str, StandardScaler]]:
-        # TODO: mb use tf.keras.FeatureSpace here instead?.
-        from sklearn.preprocessing import StandardScaler
-
         real_scalers = dict()
         target_scalers = dict()
         logging.debug("Fitting scalers.")
-        for identifier, sliced in make_pbar(df.groupby(self._id_column)):
-            if len(sliced) >= self.total_time_steps:
+        for identifier, sliced in keras_pbar(df.groupby(self._id_column)):
+            if len(sliced) >= self._total_time_steps:
                 data = sliced[self._real_inputs_columns].values
                 targets = sliced[[self._target_column]].values
                 real_scalers[identifier] = StandardScaler().fit(data)
@@ -547,8 +471,8 @@ class ElectricityExperiment(Experiment):
         real_scalers: Dict[str, StandardScaler],
     ) -> pd.DataFrame:
         df_list = []
-        for identifier, sliced in make_pbar(df.groupby(self._id_column)):
-            if len(sliced) >= self.total_time_steps:
+        for identifier, sliced in keras_pbar(df.groupby(self._id_column)):
+            if len(sliced) >= self._total_time_steps:
                 sliced_copy = sliced.copy()
                 sliced_copy[self._real_inputs_columns] = real_scalers[
                     identifier
@@ -562,7 +486,7 @@ class ElectricityExperiment(Experiment):
 
         num_classes = dict()
         categorical_scalers = dict()
-        for col in make_pbar(self._categorical_inputs_columns):
+        for col in keras_pbar(self._categorical_inputs_columns):
             # Set all to str so that we don't have mixed integer/string columns
             srs = df[col].apply(str)
             num_classes[col] = srs.nunique()
@@ -571,22 +495,19 @@ class ElectricityExperiment(Experiment):
         logging.debug(f"{num_classes = }")
         return categorical_scalers
 
+    def make_target_scaler(self, save_path) -> TargetScaler:
+        with open(f"{save_path}/electricity/target_scaler.pickle", "rb") as file:
+            target_scalers: Dict[str, StandardScaler] = pickle.load(
+                file, fix_imports=True
+            )
+
+        def scale(entity_id: str, values: np.ndarray) -> np.ndarray:
+            return target_scalers[entity_id].inverse_transform(values)
+
+        return scale
+
 
 class FavoritaExperiment(Experiment):
-    @property
-    def name(self) -> str:
-        return "favorita"
-
-    @property
-    def default_params(self) -> ModelParams:
-        return ModelParams(
-            dropout_rate=0.1,
-            hidden_layer_size=240,
-            learning_rate=1e-3,
-            max_gradient_norm=100.0,
-            num_attention_heads=4,
-        )
-
     @property
     def fixed_params(self) -> FixedParams:
         return FixedParams(
@@ -596,6 +517,21 @@ class FavoritaExperiment(Experiment):
             static_categories_sizes=[],
             num_outputs=1,
         )
+
+    def make_target_scaler(self, save_path) -> TargetScaler:
+        with open(f"{save_path}/favorita/target_scaler.pickle", "rb") as file:
+            scaler: Tuple[float, float] = pickle.load(file, fix_imports=True)
+
+        mean, std = scaler
+
+        def scale(_, values: np.ndarray) -> np.ndarray:
+            return (values - mean) / std
+
+        return scale
+
+    @property
+    def _name(self) -> str:
+        return "favorita"
 
     @property
     def _column_schema(self) -> Dict[str, SchemaEntry | List[SchemaEntry]]:
@@ -607,7 +543,7 @@ class FavoritaExperiment(Experiment):
             "transactions": SchemaEntry(
                 DataTypes.REAL_VALUED, InputTypes.OBSERVED_INPUT
             ),
-            "oil": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.OBSERVED_INPUT),
+            # "oil": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.OBSERVED_INPUT),
             "day_of_week": SchemaEntry(DataTypes.CATEGORICAL, InputTypes.KNOWN_INPUT),
             "day_of_month": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
             "month": SchemaEntry(DataTypes.REAL_VALUED, InputTypes.KNOWN_INPUT),
@@ -627,17 +563,22 @@ class FavoritaExperiment(Experiment):
         }
 
     def _read_raw_csv(self, path: str) -> pd.DataFrame:
-        logging.info(f"Processing Favorita dataset from {path}...")
         # load temporal data
-        temporal = pd.read_csv(f"{path}/train.csv", index_col=0, engine="pyarrow")
-        store_info = pd.read_csv(f"{path}/stores.csv", index_col=0, engine="pyarrow")
-        oil = pd.read_csv(f"{path}/oil.csv", index_col=0, engine="pyarrow").iloc[:, 0]
-        holidays = pd.read_csv(f"{path}/holidays_events.csv", engine="pyarrow")
-        items = pd.read_csv(f"{path}/items.csv", index_col=0, engine="pyarrow")
-        transactions = pd.read_csv(f"{path}/transactions.csv", engine="pyarrow")
+        temporal = read_csv(f"{path}/train.csv", index_col=0)
+        store_info = read_csv(f"{path}/stores.csv", index_col=0)
+        # oil = read_csv(f"{path}/oil.csv", index_col=0).iloc[:, 0]
+        holidays = read_csv(f"{path}/holidays_events.csv")
+        items = read_csv(f"{path}/items.csv", index_col=0)
+        transactions = read_csv(f"{path}/transactions.csv")
 
         # Take first 6 months of data
         temporal["date"] = pd.to_datetime(temporal["date"])
+
+        # Extract only a subset of data to save/process for efficiency
+        start_date = datetime.datetime(2015, 1, 1)
+        end_date = datetime.datetime(2016, 6, 1)
+        temporal = temporal[(temporal["date"] >= start_date)]
+        temporal = temporal[(temporal["date"] <= end_date)]
         dates = temporal["date"].unique()
 
         # Add trajectory identifier
@@ -647,7 +588,7 @@ class FavoritaExperiment(Experiment):
         temporal["unique_id"] = temporal["traj_id"] + "_" + temporal["date"].apply(str)
 
         # Remove all IDs with negative returns
-        print("Removing returns data")
+        logging.debug("Removing returns data")
         min_returns = temporal["unit_sales"].groupby(temporal["traj_id"]).min()
         valid_ids = set(min_returns[min_returns >= 0].index)
         selector = temporal["traj_id"].apply(lambda i: i in valid_ids)
@@ -660,7 +601,7 @@ class FavoritaExperiment(Experiment):
         # Resampling
         logging.debug("Resampling to regular grid")
         resampled_dfs = []
-        for traj_id, raw_sub_df in make_pbar(temporal.groupby("traj_id")):
+        for traj_id, raw_sub_df in keras_pbar(temporal.groupby("traj_id")):
             sub_df = raw_sub_df.set_index("date", drop=True).copy()
             sub_df = sub_df.resample("1d").last()
             sub_df["date"] = sub_df.index
@@ -678,13 +619,17 @@ class FavoritaExperiment(Experiment):
         gc.collect()
         temporal = new_temporal
 
-        logging.debug("Adding oil")
-        oil.name = "oil"
-        oil.index = pd.to_datetime(oil.index)
-        temporal = temporal.join(
-            oil.loc[dates].fillna(method="ffill"), on="date", how="left"
-        )
-        temporal["oil"] = temporal["oil"].fillna(-1)
+        # logging.debug("Adding oil")
+        # oil.name = "oil"
+        # oil.index = pd.to_datetime(oil.index)
+        # logging.debug("-" * 100)
+        # logging.debug(f"{dates = }")
+        # logging.info(f"{oil.index = }")
+        # logging.debug("-" * 100)
+        # temporal = temporal.join(
+        #    oil.loc[dates].fillna(method="ffill"), on="date", how="left"
+        # )
+        # temporal["oil"] = temporal["oil"].fillna(-1)
 
         logging.debug("Adding store info")
         temporal = temporal.join(store_info, on="store_nbr", how="left")
@@ -737,8 +682,6 @@ class FavoritaExperiment(Experiment):
         return temporal
 
     def _fit_label_encoders(self, df: pd.DataFrame) -> Dict[str, LabelEncoder]:
-        from sklearn.preprocessing import LabelEncoder
-
         categorical_scalers = {}
         num_classes = []
         id_set = set(list(df[self._id_column].unique()))
@@ -756,7 +699,11 @@ class FavoritaExperiment(Experiment):
     ) -> Tuple[Dict[str, Tuple[float, float]], Tuple[float, float]]:
         # Format real scalers
         real_scalers = {}
-        for col in ["oil", "transactions", "log_sales"]:
+        for col in [
+            # "oil",
+            "transactions",
+            "log_sales",
+        ]:
             real_scalers[col] = (df[col].mean(), df[col].std())
         target_scaler = (df[self._target_column].mean(), df[self._target_column].std())
         return real_scalers, target_scaler
@@ -766,13 +713,13 @@ class FavoritaExperiment(Experiment):
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         valid_boundary = datetime.datetime(2015, 12, 1)
 
-        time_steps = self.total_time_steps
+        time_steps = self._total_time_steps
         lookback = self.fixed_params.num_encoder_steps
         forecast_horizon = time_steps - lookback
 
         df["date"] = pd.to_datetime(df["date"])
         df_lists = {"train": [], "valid": [], "test": []}
-        for _, sliced in make_pbar(df.groupby("traj_id")):
+        for _, sliced in keras_pbar(df.groupby("traj_id")):
             index = sliced["date"]
             train = sliced.loc[index < valid_boundary]
             train_len = len(train)
@@ -811,7 +758,11 @@ class FavoritaExperiment(Experiment):
     ) -> pd.DataFrame:
         output = df.copy()
 
-        for col in ["log_sales", "oil", "transactions"]:
+        for col in [
+            "log_sales",
+            # "oil",
+            "transactions",
+        ]:
             mean, std = real_scalers[col]
             output[col] = (df[col] - mean) / std
 
@@ -821,11 +772,21 @@ class FavoritaExperiment(Experiment):
         return output
 
 
-def concatenate_datasets(ds1: tf.data.Dataset | None, ds2: tf.data.Dataset):
+def concatenate_datasets(
+    ds1: tf.data.Dataset | None, ds2: tf.data.Dataset
+) -> tf.data.Dataset:
     if ds1 is None:
         return ds2
     else:
         return ds1.concatenate(ds2)
+
+
+def read_csv(path: str, **kwargs) -> pd.DataFrame:
+    logging.debug(f"Reading {path}")
+    if not cudf_available:
+        return pd.read_csv(path, **kwargs, engine="pyarrow")
+    else:
+        return pd.read_csv(path, **kwargs)
 
 
 electricity_experiment = ElectricityExperiment()

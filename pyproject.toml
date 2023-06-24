@@ -16,20 +16,20 @@ classifiers = [
 dependencies = [
     "tensorflow>=2.10.0; sys_platform == 'linux'",
     "tensorflow_macos>=2.10.0; sys_platform == 'darwin'",
+    "absl_extra",
+    "pandas",
+    "matplotlib",
+    "scikit_learn"
 ]
 [project.optional-dependencies]
-plotting = ["matplotlib"]
-experiments = [
-    "scikit_learn",
-    "pandas",
-]
 tests = [
-    "temporal_fusion_transformer[experiments,plotting]",
-    "pytest",
-    "absl_extra"
+    "pytest"
 ]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"
+[project.scripts]  # Optional
+tft_dataset = "temporal_fusion_transformer.scripts.dataset:main"
+tft_model = "temporal_fusion_transformer.scripts.model:main"
 
 
 [build-system]

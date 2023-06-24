@@ -26,6 +26,5 @@ apptainer exec --nv --env-file .env --contain \
   --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/,ro" \
   --bind scripts/:/scripts \
   --bind logs/:/logs \
-  "${IMAGE_DIR}/image.sif" /venv/bin/python /scripts/train_keras_model.py \
-  --experiment=electricity --data_dir=/datasets --logs_dir=/logs --batch_size=512 --epochs=10
+  "${IMAGE_DIR}/image.sif" /venv/bin/tft_model --experiment=electricity --data_dir=/datasets --logs_dir=/logs --batch_size=512 --epochs=10
 ##########################################################################
