@@ -207,6 +207,8 @@ class TrainStepTest(tf.test.TestCase, parameterized.TestCase):
         )
         model = make_tft_model(
             electricity_experiment,
+            hidden_layer_size,
+            5
         )
         model.compile(tf.keras.optimizers.Adam(jit_compile=can_jit_compile(True)))
         history = model.fit(train_ds, validation_data=val_ds).history

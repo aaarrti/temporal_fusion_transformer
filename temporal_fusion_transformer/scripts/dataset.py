@@ -31,3 +31,7 @@ def _main(_):
 
 def main():
     run("tft_dataset")
+
+
+if __name__ == "__main__":
+    main()

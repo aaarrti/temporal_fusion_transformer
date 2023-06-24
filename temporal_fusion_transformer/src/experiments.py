@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import auto, IntEnum
 from functools import cached_property
-from typing import NamedTuple, List, Dict, Sequence, Tuple, Any, Callable, TYPE_CHECKING
+from typing import NamedTuple, List, Dict, Sequence, Tuple, Any, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
