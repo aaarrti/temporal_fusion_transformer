@@ -87,7 +87,7 @@ def prepare_dataset(
     ds = (
         ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
         .map(map_fn, num_parallel_calls=tf.data.AUTOTUNE)
-        .shuffle(32, reshuffle_each_iteration=True, seed=PRNG_SEED)
+        .shuffle(32, reshuffle_each_iteration=True, seed=FLAGS.prng_seed)
         .cache()
         .repeat(epochs)
         .apply(tf.data.experimental.prefetch_to_device("/gpu:0", tf.data.AUTOTUNE))
@@ -168,6 +168,7 @@ def _main(_):
             # Profile however, does provide some really helpfully details.
             # profile_batch=True,
             write_steps_per_second=True,
+            profile_batch=True,
         ),
         TerminateOnNaN(),
     ]

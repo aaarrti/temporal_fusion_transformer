@@ -1,7 +1,7 @@
 [project]
 name = "temporal_fusion_transformer"
 version = "0.0.1dev1"
-description = "TF2 and Flax re-write of Temporal Fusion Transformer model."
+description = "TF2 re-write of Temporal Fusion Transformer model."
 readme = "Readme.md"
 requires-python = ">=3.8"
 authors = [
@@ -27,9 +27,6 @@ tests = [
 ]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"
-[project.scripts]  # Optional
-tft_dataset = "temporal_fusion_transformer.scripts.dataset:main"
-tft_model = "temporal_fusion_transformer.scripts.model:main"
 
 
 [build-system]

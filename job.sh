@@ -15,8 +15,6 @@ apptainer exec --contain --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/" "${IMA
 # Reinstall model source code
 ##########################################################################
 apptainer exec --contain --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/" \
-  "${IMAGE_DIR}/image.sif" /venv/bin/python -m pip install absl_extra --force-reinstall --no-deps
-apptainer exec --contain --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/" \
   "${IMAGE_DIR}/image.sif" /venv/bin/python -m pip install 'git+https://github.com/aaarrti/tf2_temporal_fusion_transformer.git@dev' --force-reinstall --no-deps
 ##########################################################################
 # Actual script
@@ -26,5 +24,6 @@ apptainer exec --nv --env-file .env --contain \
   --bind "${IMAGE_DIR}/venv.img:/venv:image-src=/,ro" \
   --bind scripts/:/scripts \
   --bind logs/:/logs \
-  "${IMAGE_DIR}/image.sif" /venv/bin/tft_model --experiment=electricity --data_dir=/datasets --logs_dir=/logs --batch_size=512 --epochs=10
+  "${IMAGE_DIR}/image.sif" /venv/bin/python scripts/train_model.py \
+  --experiment=electricity --data_dir=/datasets --logs_dir=/logs --batch_size=512 --epochs=5
 ##########################################################################
