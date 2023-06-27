@@ -19,7 +19,8 @@ dependencies = [
     "absl_extra",
     "pandas",
     "matplotlib",
-    "scikit_learn"
+    "scikit_learn",
+    "keras_pbar"
 ]
 [project.optional-dependencies]
 tests = [
