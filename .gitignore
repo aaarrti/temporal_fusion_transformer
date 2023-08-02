@@ -175,3 +175,4 @@ terraform.tfstate.backup
 weights
 thirdparty
 /tensoboard/
+scripts/favorita.sql

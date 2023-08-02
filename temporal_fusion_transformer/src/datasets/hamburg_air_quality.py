@@ -1,0 +1,2 @@
+class HamburgAirQuality:
+    pass
