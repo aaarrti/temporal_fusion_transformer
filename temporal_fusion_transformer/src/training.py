@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import functools
-import inspect
 from typing import Callable, Mapping, Protocol, Tuple
 
 import jax
-from clu.metrics import Average, Collection, _ReductionCounter
+from absl_extra import flax_utils
+from clu.metrics import Average
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import dataclass, field
 from flax.training.dynamic_scale import DynamicScale
@@ -17,47 +17,23 @@ from jaxtyping import Array, Float, PRNGKeyArray, jaxtyped
 from temporal_fusion_transformer.src.quantile_loss import QuantileLossFn
 from temporal_fusion_transformer.src.tft_layers import ComputeDtype, InputStruct
 
-ValidateFunc = Callable[[Float[Array, "batch time n"], Mapping[str, FrozenDict]], Float[Array, "batch time n"]]
-# TODO: jit module??
-
 
 class ApplyFunc(Protocol):
     def __call__(
         self,
         params: Mapping[str, FrozenDict],
         x: Float[Array, "batch time n"],
+        training: bool = False,
         *,
         rngs: Mapping[str, PRNGKeyArray] | None = None,
-        training: bool = False,
     ) -> Float[Array, "batch time n"]:
         ...
 
 
 @jaxtyped
 @dataclass
-class MetricContainer(Collection):
+class MetricContainer(flax_utils.AnnotationsCompatibleCollection):
     loss: Average.from_output("loss")
-
-    @classmethod
-    def empty(cls) -> MetricContainer:
-        return MetricContainer(
-            _reduction_counter=_ReductionCounter.empty(),
-            **{
-                metric_name: metric.empty()
-                for metric_name, metric in inspect.get_annotations(cls, eval_str=True).items()
-            },
-        )
-
-    @classmethod
-    def _from_model_output(cls, **kwargs) -> MetricContainer:
-        """Creates a `Collection` from model outputs."""
-        return MetricContainer(
-            _reduction_counter=_ReductionCounter.empty(),
-            **{
-                metric_name: metric.from_model_output(**kwargs)
-                for metric_name, metric in inspect.get_annotations(cls, eval_str=True).items()
-            },
-        )
 
 
 @jaxtyped
@@ -82,6 +58,24 @@ class TrainStateContainer(TrainState):
         )
 
 
+def make_training_hooks(
+    num_training_steps: int,
+    epochs: int,
+    logdir: str,
+    log_frequency: int = 10,
+) -> flax_utils.TrainingHooks:
+    # TODO: add checkpoint
+    # TODO: add early stopping
+    hooks = flax_utils.make_training_hooks(
+        num_training_steps=num_training_steps,
+        epochs=epochs,
+        write_metrics_frequency=log_frequency,
+        report_progress_frequency=log_frequency,
+        tensorboard_logdir=logdir,
+    )
+    return hooks
+
+
 @jaxtyped
 @jax.jit
 def single_device_train_step(
@@ -94,7 +88,8 @@ def single_device_train_step(
     dropout_train_key = jax.random.fold_in(key=state.dropout_key, data=state.step)
 
     def loss_fn(params: FrozenDict) -> float:
-        y = state.apply_fn({"params": params}, x_batch, training=True, rngs={"dropout": dropout_train_key})
+        # pass training=True as positional args, since flax.nn.jit does not support kwargs.
+        y = state.apply_fn({"params": params}, x_batch, True, rngs={"dropout": dropout_train_key})
         y_loss = state.loss_fn(y_batch, y).mean()
         return y_loss
 

@@ -250,11 +250,15 @@ class TemporalFusionTransformer(nn.Module):
             raise ValueError(f"Must provide either `num_observed_inputs` or input_observed_idx")
 
 
-def make_tft_model(config: ConfigDict, **kwargs) -> nn.Module:
+def make_tft_model(config: ConfigDict, jit_module: bool = False, dtype=jnp.float32) -> nn.Module:
     fixed_params = config.fixed_params
     hyperparams = config.hyperparams
 
-    model = TemporalFusionTransformer(
+    module = TemporalFusionTransformer
+    if jit_module:
+        module = nn.jit(module, static_argnums=2)
+
+    model = module(
         static_categories_sizes=fixed_params.static_categories_sizes,
         known_categories_sizes=fixed_params.known_categories_sizes,
         latent_dim=hyperparams.latent_dim,
@@ -269,7 +273,7 @@ def make_tft_model(config: ConfigDict, **kwargs) -> nn.Module:
         num_quantiles=len(hyperparams.quantiles),
         num_outputs=fixed_params.num_outputs,
         total_time_steps=fixed_params.total_time_steps,
-        **kwargs,
+        dtype=dtype,
     )
     return model
 

@@ -37,7 +37,7 @@ class MultiHorizonTimeSeriesDataset(abc.ABC):
     Attributes
     ----------
 
-    
+
 
     """
 
@@ -71,20 +71,18 @@ class MultiHorizonTimeSeriesDataset(abc.ABC):
 
         self.download_data(path)
         df = self.read_csv(path)
-        
+
         nulls = df.select([pl.col(i).null_count() for i in df.columns])
-        
+
         for col in df.columns:
             n_nulls = nulls[col][0]
             if n_nulls > 0:
                 logging.error(nulls)
                 raise ValueError(f"Column {col} has {n_nulls} nulls")
-        
+
         if "id" not in df.columns:
             raise ValueError(f"DataFrame must have `id` column.")
-        
-        
-        
+
         s1 = set(df.columns)
         s2 = set(self.feature_space.features.keys())
         if s1 != s2:

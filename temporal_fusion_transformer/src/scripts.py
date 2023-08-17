@@ -4,6 +4,7 @@ import functools
 import logging
 from datetime import datetime
 from typing import Generator, Literal, Tuple
+import platform
 
 import jax
 import optax
@@ -23,6 +24,7 @@ from temporal_fusion_transformer.src.training import (
     multi_device_validation_step,
     single_device_train_step,
     single_device_validation_step,
+    make_training_hooks,
 )
 
 _experiment_factories = {
@@ -63,11 +65,36 @@ def train_on_single_device(
     *,
     data_dir: str,
     batch_size: int,
-    epochs: int,
     experiment_name: Literal["electricity", "favorita"],
     config: ConfigDict,
+    epochs: int = 1,
     mixed_precision: bool = False,
+    jit_module: bool = False,
+    save_path: str = "models",
 ):
+    """
+
+    Parameters
+    ----------
+    data_dir
+    batch_size
+    epochs
+    experiment_name
+    config
+    mixed_precision:
+        If set to True, will use (b)float16 for computations.
+    jit_module:
+        If set to True, will nn.jit flax module.
+    save_path:
+        Prefix of directory, in which models weights must be saved.
+
+    Returns
+    -------
+
+    """
+
+    compute_dtype = jnp.float16 if mixed_precision else jnp.float32
+
     def load_dataset(split: str) -> tf.data.Dataset:
         return (
             tf.data.Dataset.load(f"{data_dir}/{experiment_name}/{split}")
@@ -75,19 +102,24 @@ def train_on_single_device(
             .shuffle(config.shuffle_buffer_size, seed=config.prng_seed)
             .cache()
             .prefetch(tf.data.AUTOTUNE)
-            .take(15)
         )
 
     def generate_dataset(ds: tf.data.Dataset) -> Generator[Tuple[InputStruct, jnp.ndarray], None, None]:
         for x, y in ds.as_numpy_iterator():
             x = make_input_struct_from_config(x, config.fixed_params)
-            yield x, y
+            yield x.cast_inexact(compute_dtype), jnp.asarray(y, compute_dtype)
 
     tag = make_timestamp_tag()
     log_dir = f"tensorboard/{experiment_name}/{tag}"
     logging.info(f"Writing tensorboard logs to {log_dir}")
+
     training_ds = load_dataset("training")
     validation_ds = load_dataset("validation")
+
+    if platform.system().lower() == "darwin":
+        logging.warning("Running on MacOS, will use 5 training and 2 validation batches for testing purposes.")
+        training_ds = training_ds.take(5)
+        validation_ds = validation_ds.take(2)
 
     num_training_steps = int(training_ds.cardinality())
     first_x = training_ds.as_numpy_iterator().next()[0]
@@ -95,7 +127,7 @@ def train_on_single_device(
     # --------------------------------------------------
 
     # We create 2 module, to avoid re-compilation. We use 1 set of parameters for both.
-    training_model = make_tft_model(config)
+    training_model = make_tft_model(config, jit_module=jit_module, dtype=compute_dtype)
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
     dropout_key, params_key = jax.random.split(prng_key, 2)
@@ -126,9 +158,7 @@ def train_on_single_device(
         compute_dtype=jnp.float16 if mixed_precision else jnp.float32,
     )
 
-    # TODO: add checkpoint
-    # TODO: add early stopping
-    hooks = flax_utils.make_training_hooks(
+    hooks = make_training_hooks(
         num_training_steps,
         epochs,
         log_frequency=2,
@@ -147,7 +177,7 @@ def train_on_single_device(
         num_training_steps=num_training_steps,
     )
     logging.info(f"Finished training with: {training_metrics = }, {validation_metrics = }")
-    flax_utils.save_as_msgpack(params, f"models/{experiment_name}/{tag}/model.msgpack")
+    flax_utils.save_as_msgpack(params, f"{save_path}/{experiment_name}/{tag}/model.msgpack")
 
 
 def train_on_multiple_devices(
@@ -193,7 +223,7 @@ def train_on_multiple_devices(
 
     training_model.tabulate(params_key, x)
     params = training_model.init(params_key, x)["params"]
-    
+
     # TODO: don't replicate large kernel.
 
     decay_steps = num_training_steps * epochs * config.optimizer.decay_steps

@@ -3,7 +3,7 @@ name = "temporal_fusion_transformer"
 version = "0.0.1dev1"
 description = "TF2 re-write of Temporal Fusion Transformer model."
 readme = "Readme.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10,<3.11"
 authors = [
     { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" },
 ]
@@ -15,36 +15,43 @@ classifiers = [
 ]
 dependencies = [
     "flax==0.7.1",
-    "jax==0.4.14",
-    "jaxlib==0.4.14",
+    "jax[cpu]==0.4.14;sys_platform=='darwin'",
+    "jaxlib==0.4.14;sys_platform=='darwin'",
+    "jaxlib==0.4.14+cuda12.cudnn89;sys_platform=='linux'",
     "jaxtyping==0.2.20",
-    "ml-collections==0.1.1"
 ]
 [project.optional-dependencies]
 training = [
-    "absl_extra",
+    "absl-py==1.4.0",
+    "ml-collections==0.1.1",
     "clu==0.0.9",
+    "msgpack==1.0.5",
     "optax==0.1.7",
-    "tensorflow==2.13.0; sys_platform == 'linux'",
+    "tensorflow_cpu==2.13.0; sys_platform == 'linux'",
     "tensorflow_macos==2.13.0; sys_platform == 'darwin'",
+    # No pinned version for my package, since I always want the lastest
+    "absl_extra",
 ]
 datasets = [
-    "tensorflow==2.13.0; sys_platform == 'linux'",
+    "tensorflow_cpu==2.13.0; sys_platform == 'linux'",
     "tensorflow_macos==2.13.0; sys_platform == 'darwin'",
     "toolz==0.12.0",
     "polars==0.18.5",
     "pyarrow>=12.0.1",
-    "py7zr",
-    "tqdm",
-    "kaggle",
+    "py7zr==0.20.5",
+    "tqdm==4.65.0",
+    "kaggle==1.5.16",
+    "ordered_set==4.1.0"
 ]
 tests = [
-    "pytest",
-    "chex"
+    "pytest==7.4.0",
+    "chex==0.1.7"
 ]
 dev = [
     "temporal_fusion_transformer[tests,datasets,training]",
-    "black",
+    "black[jupyter]==23.7.0",
+    "isort==5.12.0",
+    "jupyter==1.0.0"
 ]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"

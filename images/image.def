@@ -1,0 +1,12 @@
+Bootstrap: localimage
+From: images/base_image.sif
+
+%post -c /bin/bash
+    python3 -m pip install --upgrade absl_extra
+    python3 -m pip install -e .
+
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+
+%runscript
+    exec "$@"

@@ -8,11 +8,11 @@ from ml_collections import config_flags
 import temporal_fusion_transformer as tft
 
 # tft.GlobalConfig().update(jit_module=True)
-jax.config.update("jax_debug_nans", True)
-jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_debug_nans", True)
 # For debugging
 # jax.config.update("jax_log_compiles", True)
-jax.config.update("jax_disable_jit", True)
+# jax.config.update("jax_disable_jit", True)
 
 # fmt: off
 FLAGS = flags.FLAGS
