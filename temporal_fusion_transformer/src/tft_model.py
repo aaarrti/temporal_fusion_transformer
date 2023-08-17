@@ -5,11 +5,10 @@ from typing import Sequence
 
 import flax.linen as nn
 import jax.numpy as jnp
-from absl import logging
 from flax import struct
-from jaxtyping import AbstractDtype, Array, Float, jaxtyped
+from jaxtyping import Array, Float, jaxtyped
 
-from temporal_fusion_transformer.src.config_dict import ConfigDict, FixedParamsConfig
+from temporal_fusion_transformer.src.config_dict import ConfigDict
 from temporal_fusion_transformer.src.tft_layers import (
     ComputeDtype,
     DecoderBlock,
@@ -117,6 +116,8 @@ class TemporalFusionTransformer(nn.Module):
 
             if self.input_observed_idx is None:
                 raise ValueError(f"When providing inputs as arrays, must specify provide `input_observed_idx`")
+
+            from temporal_fusion_transformer.src.utils import make_input_struct_from_idx
 
             inputs = make_input_struct_from_idx(
                 inputs,
@@ -249,106 +250,30 @@ class TemporalFusionTransformer(nn.Module):
         else:
             raise ValueError(f"Must provide either `num_observed_inputs` or input_observed_idx")
 
+    @staticmethod
+    def from_config_dict(config: ConfigDict, jit_module: bool = False, dtype=jnp.float32) -> TemporalFusionTransformer:
+        fixed_params = config.fixed_params
+        hyperparams = config.hyperparams
 
-def make_tft_model(config: ConfigDict, jit_module: bool = False, dtype=jnp.float32) -> nn.Module:
-    fixed_params = config.fixed_params
-    hyperparams = config.hyperparams
+        module = TemporalFusionTransformer
+        if jit_module:
+            module = nn.jit(module, static_argnums=2)
 
-    module = TemporalFusionTransformer
-    if jit_module:
-        module = nn.jit(module, static_argnums=2)
-
-    model = module(
-        static_categories_sizes=fixed_params.static_categories_sizes,
-        known_categories_sizes=fixed_params.known_categories_sizes,
-        latent_dim=hyperparams.latent_dim,
-        num_encoder_steps=fixed_params.num_encoder_steps,
-        dropout_rate=hyperparams.dropout_rate,
-        input_observed_idx=fixed_params.input_observed_idx,
-        input_static_idx=fixed_params.input_static_idx,
-        input_known_real_idx=fixed_params.input_known_real_idx,
-        input_known_categorical_idx=fixed_params.input_known_categorical_idx,
-        num_attention_heads=hyperparams.num_attention_heads,
-        num_decoder_blocks=hyperparams.num_decoder_blocks,
-        num_quantiles=len(hyperparams.quantiles),
-        num_outputs=fixed_params.num_outputs,
-        total_time_steps=fixed_params.total_time_steps,
-        dtype=dtype,
-    )
-    return model
-
-
-def make_input_struct_from_config(
-    x_batch: jnp.ndarray, config: FixedParamsConfig, dtype: ComputeDtype = jnp.float32
-) -> InputStruct:
-    return make_input_struct_from_idx(
-        x_batch,
-        config.input_static_idx,
-        config.input_known_real_idx,
-        config.input_known_categorical_idx,
-        config.input_observed_idx,
-        dtype=dtype,
-    )
-
-
-def make_input_struct_from_idx(
-    x_batch: jnp.ndarray,
-    input_static_idx,
-    input_known_real_idx,
-    input_known_categorical_idx,
-    input_observed_idx,
-    dtype: ComputeDtype = jnp.float32,
-) -> InputStruct:
-    declared_num_features = (
-        len(input_static_idx) + len(input_known_real_idx) + len(input_known_categorical_idx) + len(input_observed_idx)
-    )
-    num_features = x_batch.shape[-1]
-
-    if num_features != declared_num_features:
-        unknown_indexes = sorted(
-            list(
-                set(
-                    input_static_idx + input_known_real_idx + input_known_categorical_idx + input_observed_idx
-                ).symmetric_difference(range(num_features))
-            )
+        model = module(
+            static_categories_sizes=fixed_params.static_categories_sizes,
+            known_categories_sizes=fixed_params.known_categories_sizes,
+            latent_dim=hyperparams.latent_dim,
+            num_encoder_steps=fixed_params.num_encoder_steps,
+            dropout_rate=hyperparams.dropout_rate,
+            input_observed_idx=fixed_params.input_observed_idx,
+            input_static_idx=fixed_params.input_static_idx,
+            input_known_real_idx=fixed_params.input_known_real_idx,
+            input_known_categorical_idx=fixed_params.input_known_categorical_idx,
+            num_attention_heads=hyperparams.num_attention_heads,
+            num_decoder_blocks=hyperparams.num_decoder_blocks,
+            num_quantiles=len(hyperparams.quantiles),
+            num_outputs=fixed_params.num_outputs,
+            total_time_steps=fixed_params.total_time_steps,
+            dtype=dtype,
         )
-        if num_features > declared_num_features:
-            logging.error(
-                f"Declared number of features does not match with the one seen in input, "
-                f"could not indentify inputs at {unknown_indexes}"
-            )
-            unknown_indexes = jnp.asarray(unknown_indexes, jnp.int32)
-            unknown_inputs = jnp.take(x_batch, unknown_indexes, axis=-1).astype(dtype)
-        else:
-            logging.error(
-                f"Declared number of features does not match with the one seen in input, "
-                f"no inputs at {unknown_indexes}"
-            )
-            unknown_inputs = None
-    else:
-        unknown_inputs = None
-
-    static = jnp.take(x_batch, jnp.asarray(input_static_idx), axis=-1).astype(jnp.int32)
-
-    if len(input_known_real_idx) > 0:
-        known_real = jnp.take(x_batch, jnp.asarray(input_known_real_idx), axis=-1).astype(dtype)
-    else:
-        known_real = None
-
-    if len(input_known_categorical_idx) > 0:
-        known_categorical = jnp.take(x_batch, jnp.asarray(input_known_categorical_idx), axis=-1).astype(jnp.int32)
-    else:
-        known_categorical = None
-
-    if len(input_observed_idx) > 0:
-        observed = jnp.take(x_batch, jnp.asarray(input_observed_idx), axis=-1).astype(dtype)
-    else:
-        observed = None
-
-    return InputStruct(
-        static=static,
-        known_real=known_real,
-        known_categorical=known_categorical,
-        observed=observed,
-        unknown=unknown_inputs,
-    )
+        return model

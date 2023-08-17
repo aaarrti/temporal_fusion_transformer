@@ -21,12 +21,12 @@ tf.config.set_visible_devices([], "GPU")
 
 # fmt: off
 FLAGS = flags.FLAGS
-flags.DEFINE_enum("experiment", enum_values=["electricity", "favorita"], help="Name of the experiment", default=None, required=True)
+flags.DEFINE_enum("experiment", enum_values=["electricity", "favorita"], help="Name of the experiment_name", default=None, required=True)
 flags.DEFINE_integer("batch_size", default=8, help="Training batch size")
 flags.DEFINE_string("data_dir", help="Data directory", default="data")
 flags.DEFINE_integer("epochs", default=1, help="Number of epochs to train.")
 flags.DEFINE_boolean("mixed_precision", default=False, help="Use mixed (b)float16 for computations.")
-flags.DEFINE_boolean("jit_module", default=True, help="Apply nn.jit to model")
+flags.DEFINE_boolean("jit_module", default=False, help="Apply nn.jit to model")
 CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
 logging_utils.setup_logging(log_level="INFO")
@@ -65,7 +65,7 @@ def train_model():
         FLAGS.jit_module,
     )
     config = CONFIG.value
-    tft.training.train_on_single_device(
+    tft.training_scripts.train_experiment_on_single_device(
         data_dir=data_dir,
         experiment_name=experiment,
         epochs=epochs,
