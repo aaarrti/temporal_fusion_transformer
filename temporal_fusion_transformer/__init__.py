@@ -1,4 +1,3 @@
 from temporal_fusion_transformer.src import scripts
 from temporal_fusion_transformer.src import datasets
 from temporal_fusion_transformer.src.config_dict import ConfigDict
-from temporal_fusion_transformer.src.global_config import GlobalConfig

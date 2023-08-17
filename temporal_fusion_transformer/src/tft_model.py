@@ -9,7 +9,6 @@ from absl import logging
 from flax import struct
 from jaxtyping import Array, Float, jaxtyped
 
-from temporal_fusion_transformer.src.global_config import GlobalConfig
 from temporal_fusion_transformer.src.config_dict import ConfigDict, FixedParamsConfig
 from temporal_fusion_transformer.src.tft_layers import (
     ComputeDtype,
@@ -21,7 +20,6 @@ from temporal_fusion_transformer.src.tft_layers import (
     StaticCovariatesEncoder,
     TimeDistributed,
     VariableSelectionNetwork,
-    nn_jit,
 )
 
 
@@ -128,7 +126,7 @@ class TemporalFusionTransformer(nn.Module):
                 self.input_observed_idx,
             ).cast_inexact(self.dtype)
 
-        embeddings = nn_jit(InputEmbedding)(
+        embeddings = InputEmbedding(
             static_categories_sizes=self.static_categories_sizes,
             known_categories_sizes=self.known_categories_sizes,
             num_known_real_inputs=self._num_known_real_inputs,
@@ -163,7 +161,6 @@ class TemporalFusionTransformer(nn.Module):
             dtype=self.dtype,
         )(historical_inputs, static_context.enrichment, training=training)
 
-        unroll = GlobalConfig().get().unroll_rnn
         future_features, future_flags, _ = VariableSelectionNetwork(
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,
@@ -171,13 +168,11 @@ class TemporalFusionTransformer(nn.Module):
             num_inputs=self._num_known_real_inputs + self._num_known_categorical_inputs,
             dtype=self.dtype,
         )(future_inputs, static_context.enrichment, training=training)
-        state_carry, history_lstm = nn.RNN(
-            nn.OptimizedLSTMCell(self.latent_dim, dtype=self.dtype), return_carry=True, unroll=unroll
-        )(
+        state_carry, history_lstm = nn.RNN(nn.OptimizedLSTMCell(self.latent_dim, dtype=self.dtype), return_carry=True)(
             historical_features,
             initial_carry=(static_context.state_h, static_context.state_c),
         )
-        future_lstm = nn.RNN(nn.OptimizedLSTMCell(self.latent_dim, dtype=self.dtype), unroll=unroll)(
+        future_lstm = nn.RNN(nn.OptimizedLSTMCell(self.latent_dim, dtype=self.dtype))(
             future_features, initial_carry=state_carry
         )
 
@@ -201,11 +196,11 @@ class TemporalFusionTransformer(nn.Module):
                 dropout_rate=self.dropout_rate,
                 dtype=self.dtype,
             )(decoder_in, training=training)
-            decoder_out = nn_jit(nn.LayerNorm)(dtype=self.dtype)(decoder_out + temporal_features)
+            decoder_out = nn.LayerNorm(dtype=self.dtype)(decoder_out + temporal_features)
             decoder_in = decoder_out
 
-        outputs = nn_jit(TimeDistributed)(
-            nn_jit(nn.Dense)(self.num_outputs * self.num_quantiles, dtype=self.dtype),
+        outputs = TimeDistributed(
+            nn.Dense(self.num_outputs * self.num_quantiles, dtype=self.dtype),
         )(decoder_in[:, self.num_encoder_steps : self.total_time_steps])
 
         if self.return_attention:

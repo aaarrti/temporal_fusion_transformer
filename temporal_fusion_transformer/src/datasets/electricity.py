@@ -146,6 +146,7 @@ def read_raw_csv(path: str) -> pl.DataFrame:
             .rename({label: "power_usage"})
             .with_columns(
                 [
+                    pl.col("power_usage").fill_null(value=0.0),
                     pl.col("timestamp").apply(make_hours_from_start).alias("hours_from_start"),
                     pl.col("timestamp").apply(lambda date: (date - earliest_time).days).alias("days_from_start"),
                     pl.col("timestamp").dt.hour().alias("hour"),

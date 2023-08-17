@@ -104,10 +104,11 @@ def train_on_single_device(
     # logging.info(f"Model -> {model_str}")
     params = training_model.init(params_key, first_x)["params"]
 
-    decay_steps = num_training_steps * epochs * config.optimizer.decay_steps
-    lr = optax.cosine_decay_schedule(config.optimizer.learning_rate, decay_steps, config.optimizer.decay_alpha)
-    tx = optax.adam(lr)
-
+    learning_rate = config.optimizer.learning_rate
+    if config.optimizer.decay_steps != 0:
+        decay_steps = num_training_steps * epochs * config.optimizer.decay_steps
+        learning_rate = optax.cosine_decay_schedule(learning_rate, decay_steps, config.optimizer.decay_alpha)
+    tx = optax.adam(learning_rate)
     if config.optimizer.clipnorm != 0:
         tx = optax.chain(optax.adaptive_grad_clip(config.optimizer.clipnorm), tx)
 
@@ -192,6 +193,8 @@ def train_on_multiple_devices(
 
     training_model.tabulate(params_key, x)
     params = training_model.init(params_key, x)["params"]
+    
+    # TODO: don't replicate large kernel.
 
     decay_steps = num_training_steps * epochs * config.optimizer.decay_steps
     lr = optax.cosine_decay_schedule(config.optimizer.learning_rate, decay_steps, config.optimizer.decay_alpha)

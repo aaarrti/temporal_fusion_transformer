@@ -5,6 +5,7 @@ from typing import Callable, Sequence, Tuple, TypeAlias
 
 import jax
 import jax.numpy as jnp
+from jax.tree_util import Partial
 from jaxtyping import Array, Float, jaxtyped
 
 QuantileLossFn: TypeAlias = Callable[
@@ -13,17 +14,11 @@ QuantileLossFn: TypeAlias = Callable[
 
 
 def make_quantile_loss_fn(quantiles: Sequence[float]) -> QuantileLossFn:
-    quantiles = tuple(quantiles)
-    quantile_loss_batched = jax.jit(jax.vmap(quantile_loss, in_axes=(0, 0, None)), static_argnums=[2])
-
-    @jax.jit
-    def fn(y_true, y_pred):
-        return quantile_loss_batched(y_true, y_pred, quantiles)
-
-    return fn
+    return jax.vmap(Partial(quantile_loss, quantiles=tuple(quantiles)))
 
 
 @jaxtyped
+@functools.partial(jax.jit, static_argnames=["quantiles"])
 def quantile_loss(
     y_true: Float[Array, "time n"],
     y_pred: Float[Array, "time n*quantiles"],

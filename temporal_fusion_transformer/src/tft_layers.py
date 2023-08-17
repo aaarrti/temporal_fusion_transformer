@@ -9,8 +9,6 @@ import jax.numpy as jnp
 from flax import struct
 from jaxtyping import Array, Float, Int, jaxtyped
 
-from temporal_fusion_transformer.src.global_config import GlobalConfig
-
 ComputeDtype = Union[jnp.float32, jnp.float16, jnp.bfloat16]
 T = TypeVar("T", bound=Type[nn.Module])
 
@@ -64,12 +62,12 @@ class GatedLinearUnit(nn.Module):
             rate=self.dropout_rate,
             deterministic=not training,
         )(inputs)
-        dense = nn_jit(nn.Dense)(self.latent_dim, dtype=self.dtype)
-        activation = nn_jit(nn.Sequential)([nn_jit(nn.Dense)(self.latent_dim, dtype=self.dtype), nn.sigmoid])
+        dense = nn.Dense(self.latent_dim, dtype=self.dtype)
+        activation = nn.Sequential([nn.Dense(self.latent_dim, dtype=self.dtype), nn.sigmoid])
 
         if self.time_distributed:
-            dense = nn_jit(TimeDistributed)(dense)
-            activation = nn_jit(TimeDistributed)(activation)
+            dense = TimeDistributed(dense)
+            activation = TimeDistributed(activation)
 
         x_pre_activation = dense(x)
         x_gated = activation(x)
@@ -114,27 +112,27 @@ class GatedResidualNetwork(nn.Module):
         if self.output_size is None:
             skip_connection = identity
         else:
-            skip_connection = nn_jit(nn.Dense)(self.output_size, dtype=self.dtype)
+            skip_connection = nn.Dense(self.output_size, dtype=self.dtype)
             if self.time_distributed:
-                skip_connection = nn_jit(TimeDistributed)(skip_connection)
+                skip_connection = TimeDistributed(skip_connection)
 
-        pre_elu_dense = nn_jit(nn.Dense)(
+        pre_elu_dense = nn.Dense(
             self.latent_dim,
             dtype=self.dtype,
         )
-        dense = nn_jit(nn.Dense)(self.latent_dim, dtype=self.dtype)
+        dense = nn.Dense(self.latent_dim, dtype=self.dtype)
 
         if self.time_distributed:
-            pre_elu_dense = nn_jit(TimeDistributed)(pre_elu_dense)
-            dense = nn_jit(TimeDistributed)(dense)
+            pre_elu_dense = TimeDistributed(pre_elu_dense)
+            dense = TimeDistributed(dense)
 
         x_skip = skip_connection(inputs)
         x = pre_elu_dense(inputs)
 
         if context is not None:
-            context_dense = nn_jit(nn.Dense)(self.latent_dim, dtype=self.dtype)
+            context_dense = nn.Dense(self.latent_dim, dtype=self.dtype)
             if self.time_distributed:
-                context_dense = nn_jit(TimeDistributed)(context_dense)
+                context_dense = TimeDistributed(context_dense)
             x = x + context_dense(context)
 
         x = nn.elu(x)
@@ -145,7 +143,7 @@ class GatedResidualNetwork(nn.Module):
             time_distributed=self.time_distributed,
             dtype=self.dtype,
         )(x, training=training)
-        x = nn_jit(nn.LayerNorm)(dtype=self.dtype)(x + x_skip)
+        x = nn.LayerNorm(dtype=self.dtype)(x + x_skip)
         return x, gate
 
 
@@ -195,18 +193,18 @@ class InputEmbedding(nn.Module):
 
         for i, size in enumerate(self.static_categories_sizes):
             # Static are not time-varying, so we just take 1st time-step.
-            embeds_i = nn_jit(nn.Embed)(size, self.latent_dim, dtype=self.dtype)(inputs.static[:, 0, i])
+            embeds_i = nn.Embed(size, self.latent_dim, dtype=self.dtype)(inputs.static[:, 0, i])
             static_input_embeddings.append(embeds_i)
 
         static_input_embeddings = jnp.stack(static_input_embeddings, axis=1)
         for i in range(self.num_known_real_inputs):
-            embeds_i = nn_jit(nn.Dense)(self.latent_dim, dtype=self.dtype)(inputs.known_real[..., i, jnp.newaxis])
+            embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.known_real[..., i, jnp.newaxis])
             known_real_inputs_embeddings.append(embeds_i)
 
         if self.num_observed_inputs != 0:
             observed_input_embeddings = []
             for i in range(self.num_observed_inputs):
-                embeds_i = nn_jit(nn.Dense)(self.latent_dim, dtype=self.dtype)(inputs.observed[..., i, jnp.newaxis])
+                embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.observed[..., i, jnp.newaxis])
                 observed_input_embeddings.append(embeds_i)
             observed_input_embeddings = jnp.stack(observed_input_embeddings, axis=-1)
         else:
@@ -231,7 +229,7 @@ class InputEmbedding(nn.Module):
         if self.num_unknown_inputs > 0:
             unknown = []
             for i in range(self.num_unknown_inputs):
-                embeds_i = nn_jit(nn.Dense)(self.latent_dim, dtype=self.dtype)(inputs.unknown[..., i, jnp.newaxis])
+                embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.unknown[..., i, jnp.newaxis])
                 unknown.append(embeds_i)
             unknown = jnp.stack(unknown, axis=-1)
         else:
@@ -393,13 +391,11 @@ class DecoderBlock(nn.Module):
     @nn.compact
     def __call__(self, inputs: jnp.ndarray, training: bool) -> jnp.ndarray:
         mask = make_causal_attention_mask(inputs, dtype=self.dtype)
-        x = nn_jit(nn.SelfAttention, static_argnums=3)(num_heads=self.num_attention_heads, dtype=self.dtype)(
-            inputs, mask, True
-        )
+        x = nn.SelfAttention(num_heads=self.num_attention_heads, dtype=self.dtype)(inputs, mask, True)
         x, _ = GatedLinearUnit(
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
         )(x, training=training)
-        x = nn_jit(nn.LayerNorm)(dtype=self.dtype)(x + inputs)
+        x = nn.LayerNorm(dtype=self.dtype)(x + inputs)
         # Nonlinear processing on outputs
         decoded, _ = GatedResidualNetwork(
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
@@ -515,11 +511,3 @@ def make_causal_attention_mask(x: jnp.ndarray, dtype=jnp.float32) -> jnp.ndarray
     seq_len = x.shape[1]
     attention_mask = jnp.tril(jnp.ones([seq_len, seq_len], dtype))
     return jnp.expand_dims(attention_mask, 0)
-
-
-def nn_jit(module: T, static_argnums: int | Sequence[int] = ()) -> T:
-    """Optionally do lifted jit based on global config."""
-    if GlobalConfig().get().jit_module:
-        return nn.jit(module, static_argnums=static_argnums)
-    else:
-        return module

@@ -79,11 +79,9 @@ class OptimizerConfig(Protocol):
     learning_rate:
         Initial learning rate
     decay_steps:
-        Fraction of total training steps over which to decay
+        Fraction of total training steps over which to decay. If set to 0, constant learning_rate will be used.
     decay_alpha:
         Fraction of initial learning rate, which will be reached after `decay_steps`
-    use_ema:
-        Use EMA yes/no
     ema:
         Only applies if `use_ema==True`
 

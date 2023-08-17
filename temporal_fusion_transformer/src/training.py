@@ -18,6 +18,7 @@ from temporal_fusion_transformer.src.quantile_loss import QuantileLossFn
 from temporal_fusion_transformer.src.tft_layers import ComputeDtype, InputStruct
 
 ValidateFunc = Callable[[Float[Array, "batch time n"], Mapping[str, FrozenDict]], Float[Array, "batch time n"]]
+# TODO: jit module??
 
 
 class ApplyFunc(Protocol):
