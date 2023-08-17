@@ -16,8 +16,7 @@ classifiers = [
 dependencies = [
     "flax==0.7.1",
     "jax[cpu]==0.4.14;sys_platform=='darwin'",
-    "jaxlib==0.4.14;sys_platform=='darwin'",
-    "jaxlib==0.4.14+cuda12.cudnn89;sys_platform=='linux'",
+    "jaxlib==0.4.14",
     "jaxtyping==0.2.20",
 ]
 [project.optional-dependencies]
