@@ -29,7 +29,7 @@ logging_utils.setup_logging(log_level="INFO")
 @tasks.register_task(name="data")
 def make_dataset_task():
     data_dir, experiment = FLAGS.data_dir, FLAGS.experiment
-    tft.scripts.make_dataset(data_dir, experiment)
+    tft.dataset_scripts.make_dataset(data_dir, experiment)
 
 
 @tasks.register_task(name="model")
@@ -42,7 +42,7 @@ def train_model():
         FLAGS.mixed_precision,
     )
     config = CONFIG.value
-    tft.scripts.train_on_single_device(
+    tft.training_scripts.train_on_single_device(
         data_dir=data_dir,
         experiment_name=experiment,
         epochs=epochs,
