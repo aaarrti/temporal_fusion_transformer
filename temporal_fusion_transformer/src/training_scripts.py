@@ -26,9 +26,6 @@ from temporal_fusion_transformer.src.training import (
 _EXPECTED_NUM_DEVICES = 8
 
 
-
-
-
 def train_on_single_device(
     *,
     data_dir: str,
@@ -65,7 +62,7 @@ def train_on_single_device(
 
     def load_dataset(split: str) -> tf.data.Dataset:
         return (
-            tf.data.Dataset.load(f"{data_dir}/{experiment_name}/{split}")
+            tf.data.Dataset.load(f"{data_dir}/{experiment_name}/{split}", compression="GZIP")
             .batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
             .shuffle(config.shuffle_buffer_size, seed=config.prng_seed)
             .cache()

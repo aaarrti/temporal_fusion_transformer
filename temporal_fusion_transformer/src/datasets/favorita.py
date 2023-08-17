@@ -110,6 +110,7 @@ class Favorita(MultiHorizonTimeSeriesDataset):
 
     def download_data(self, path: str):
         # For favorita we download data from kaggle, and upload it to GCS.
+        # importing kaggle at top, will cause error if no config file is found, event if never invoked.
         import kaggle
 
         csvs = glob.glob(f"{path}/*.csv")

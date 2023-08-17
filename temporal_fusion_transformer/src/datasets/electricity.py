@@ -94,6 +94,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             cache_dir=path,
             extract=True,
             archive_format="zip",
+            cache_subdir=".",
         )
         os.remove(f"{path}/LD2011_2014.txt.zip")
 

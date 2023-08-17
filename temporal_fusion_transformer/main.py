@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import jax
-from absl import flags
+from absl import flags, logging
 from absl_extra import tasks, logging_utils
 from ml_collections import config_flags
 
 import temporal_fusion_transformer as tft
+from temporal_fusion_transformer.src.datasets.base import MultiHorizonTimeSeriesDataset
+from temporal_fusion_transformer.src.datasets.electricity import Electricity
+from temporal_fusion_transformer.src.datasets.favorita import Favorita
 
 # tft.GlobalConfig().update(jit_module=True)
 # jax.config.update("jax_debug_nans", True)
@@ -26,10 +28,26 @@ CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_tran
 logging_utils.setup_logging(log_level="INFO")
 
 
+_experiment_factories = {
+    "electricity": Electricity,
+    "favorita": Favorita,
+}
+
+
 @tasks.register_task(name="data")
 def make_dataset_task():
-    data_dir, experiment = FLAGS.data_dir, FLAGS.experiment
-    tft.dataset_scripts.make_dataset(data_dir, experiment)
+    data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
+
+    data_dir = f"{data_dir}/{experiment_name}"
+    experiment: MultiHorizonTimeSeriesDataset = _experiment_factories[experiment_name]()
+    (train_ds, val_ds, test_ds), feature_space = experiment.make_dataset(data_dir)
+    logging.info(f"Saving training split")
+    train_ds.save(f"{data_dir}/training", compression="GZIP")
+    logging.info(f"Saving validation split")
+    val_ds.save(f"{data_dir}/validation", compression="GZIP")
+    logging.info(f"Saving test split")
+    test_ds.save(f"{data_dir}/test", compression="GZIP")
+    feature_space.save(f"{data_dir}/features_space.keras")
 
 
 @tasks.register_task(name="model")
