@@ -32,7 +32,7 @@ training = [
     "absl_extra",
 ]
 datasets = [
-    "tensorflow_cpu==2.13.0; sys_platform == 'linux'",
+    "tensorflow==2.13.0; sys_platform == 'linux'",
     "tensorflow_macos==2.13.0; sys_platform == 'darwin'",
     "toolz==0.12.0",
     "polars==0.18.15",
