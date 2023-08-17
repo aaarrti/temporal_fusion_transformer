@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import tensorflow as tf
+import jax
 from absl import flags, logging
 from absl_extra import tasks, logging_utils
 from ml_collections import config_flags
@@ -9,8 +11,10 @@ from temporal_fusion_transformer.src.datasets.base import MultiHorizonTimeSeries
 from temporal_fusion_transformer.src.datasets.electricity import Electricity
 from temporal_fusion_transformer.src.datasets.favorita import Favorita
 
+tf.config.set_visible_devices([], "GPU")
+
 # tft.GlobalConfig().update(jit_module=True)
-# jax.config.update("jax_debug_nans", True)
+jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_debug_nans", True)
 # For debugging
 # jax.config.update("jax_log_compiles", True)
@@ -23,6 +27,7 @@ flags.DEFINE_integer("batch_size", default=8, help="Training batch size")
 flags.DEFINE_string("data_dir", help="Data directory", default="data")
 flags.DEFINE_integer("epochs", default=1, help="Number of epochs to train.")
 flags.DEFINE_boolean("mixed_precision", default=False, help="Use mixed (b)float16 for computations.")
+flags.DEFINE_boolean("jit_module", default=True, help="Apply nn.jit to model")
 CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
 logging_utils.setup_logging(log_level="INFO")
@@ -52,21 +57,45 @@ def make_dataset_task():
 
 @tasks.register_task(name="model")
 def train_model():
-    data_dir, experiment, epochs, batch_size, mixed_precision = (
+    data_dir, experiment, epochs, batch_size, mixed_precision, jit_module = (
         FLAGS.data_dir,
         FLAGS.experiment,
         FLAGS.epochs,
         FLAGS.batch_size,
         FLAGS.mixed_precision,
+        FLAGS.jit_module,
     )
     config = CONFIG.value
-    tft.training_scripts.train_on_single_device(
+    tft.training.train_on_single_device(
         data_dir=data_dir,
         experiment_name=experiment,
         epochs=epochs,
         batch_size=batch_size,
         config=config,
         mixed_precision=mixed_precision,
+        jit_module=jit_module,
+    )
+
+
+@tasks.register_task(name="model_distributed")
+def train_model():
+    data_dir, experiment, epochs, batch_size, mixed_precision, jit_module = (
+        FLAGS.data_dir,
+        FLAGS.experiment,
+        FLAGS.epochs,
+        FLAGS.batch_size,
+        FLAGS.mixed_precision,
+        FLAGS.jit_module,
+    )
+    config = CONFIG.value
+    tft.training.train_on_multiple_devices(
+        data_dir=data_dir,
+        experiment_name=experiment,
+        epochs=epochs,
+        batch_size=batch_size,
+        config=config,
+        mixed_precision=mixed_precision,
+        jit_module=jit_module,
     )
 
 

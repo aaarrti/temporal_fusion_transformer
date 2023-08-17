@@ -7,7 +7,7 @@ import flax.linen as nn
 import jax.numpy as jnp
 from absl import logging
 from flax import struct
-from jaxtyping import Array, Float, jaxtyped
+from jaxtyping import Array, Float, jaxtyped, AbstractDtype
 
 from temporal_fusion_transformer.src.config_dict import ConfigDict, FixedParamsConfig
 from temporal_fusion_transformer.src.tft_layers import (
@@ -278,18 +278,26 @@ def make_tft_model(config: ConfigDict, jit_module: bool = False, dtype=jnp.float
     return model
 
 
-def make_input_struct_from_config(x_batch: jnp.ndarray, config: FixedParamsConfig) -> InputStruct:
+def make_input_struct_from_config(
+    x_batch: jnp.ndarray, config: FixedParamsConfig, dtype: ComputeDtype = jnp.float32
+) -> InputStruct:
     return make_input_struct_from_idx(
         x_batch,
         config.input_static_idx,
         config.input_known_real_idx,
         config.input_known_categorical_idx,
         config.input_observed_idx,
+        dtype=dtype,
     )
 
 
 def make_input_struct_from_idx(
-    x_batch: jnp.ndarray, input_static_idx, input_known_real_idx, input_known_categorical_idx, input_observed_idx
+    x_batch: jnp.ndarray,
+    input_static_idx,
+    input_known_real_idx,
+    input_known_categorical_idx,
+    input_observed_idx,
+    dtype: ComputeDtype = jnp.float32,
 ) -> InputStruct:
     declared_num_features = (
         len(input_static_idx) + len(input_known_real_idx) + len(input_known_categorical_idx) + len(input_observed_idx)
@@ -310,7 +318,7 @@ def make_input_struct_from_idx(
                 f"could not indentify inputs at {unknown_indexes}"
             )
             unknown_indexes = jnp.asarray(unknown_indexes, jnp.int32)
-            unknown_inputs = jnp.take(x_batch, unknown_indexes, axis=-1)
+            unknown_inputs = jnp.take(x_batch, unknown_indexes, axis=-1).astype(dtype)
         else:
             logging.error(
                 f"Declared number of features does not match with the one seen in input, "
@@ -320,27 +328,27 @@ def make_input_struct_from_idx(
     else:
         unknown_inputs = None
 
-    static = jnp.take(x_batch, jnp.asarray(input_static_idx), axis=-1)
+    static = jnp.take(x_batch, jnp.asarray(input_static_idx), axis=-1).astype(jnp.int32)
 
     if len(input_known_real_idx) > 0:
-        known_real = jnp.take(x_batch, jnp.asarray(input_known_real_idx), axis=-1)
+        known_real = jnp.take(x_batch, jnp.asarray(input_known_real_idx), axis=-1).astype(dtype)
     else:
         known_real = None
 
     if len(input_known_categorical_idx) > 0:
-        known_categorical = jnp.take(x_batch, jnp.asarray(input_known_categorical_idx), axis=-1)
+        known_categorical = jnp.take(x_batch, jnp.asarray(input_known_categorical_idx), axis=-1).astype(jnp.int32)
     else:
         known_categorical = None
 
     if len(input_observed_idx) > 0:
-        observed = jnp.take(x_batch, jnp.asarray(input_observed_idx), axis=-1)
+        observed = jnp.take(x_batch, jnp.asarray(input_observed_idx), axis=-1).astype(dtype)
     else:
         observed = None
 
     return InputStruct(
-        static=jnp.asarray(static, jnp.int32),
+        static=static,
         known_real=known_real,
-        known_categorical=jnp.asarray(known_categorical, jnp.int32),
+        known_categorical=known_categorical,
         observed=observed,
         unknown=unknown_inputs,
     )

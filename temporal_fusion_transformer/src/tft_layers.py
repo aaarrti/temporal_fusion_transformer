@@ -424,15 +424,15 @@ class InputStruct:
         unknown = self.unknown
 
         if observed is not None:
-            observed = jnp.asarray(observed, dtype)
+            observed = observed.astype(dtype)
 
         if unknown is not None:
-            unknown = jnp.asarray(unknown, dtype)
+            unknown = unknown.astype(dtype)
 
         return InputStruct(
             static=self.static,
-            known_real=jnp.asarray(self.known_real, dtype),
-            known_categorical=jnp.asarray(self.known_categorical),
+            known_real=self.known_real.astype(dtype),
+            known_categorical=self.known_categorical,
             unknown=unknown,
             observed=observed,
         )

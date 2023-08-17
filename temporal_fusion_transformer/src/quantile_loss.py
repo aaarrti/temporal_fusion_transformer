@@ -6,23 +6,24 @@ from typing import Callable, Sequence, Tuple, TypeAlias
 import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
-from jaxtyping import Array, Float, jaxtyped
+from jaxtyping import Array, Float, jaxtyped, AbstractDtype
 
 QuantileLossFn: TypeAlias = Callable[
     [Float[Array, "batch time n"], Float[Array, "batch time n*q"]], Float[Array, "batch"]
 ]
 
 
-def make_quantile_loss_fn(quantiles: Sequence[float]) -> QuantileLossFn:
-    return jax.vmap(Partial(quantile_loss, quantiles=tuple(quantiles)))
+def make_quantile_loss_fn(quantiles: Sequence[float], dtype=jnp.float32) -> QuantileLossFn:
+    return jax.vmap(Partial(quantile_loss, quantiles=tuple(quantiles), dtype=dtype))
 
 
 @jaxtyped
-@functools.partial(jax.jit, static_argnames=["quantiles"])
+@functools.partial(jax.jit, static_argnames=["quantiles", "dtype"])
 def quantile_loss(
     y_true: Float[Array, "time n"],
     y_pred: Float[Array, "time n*quantiles"],
     quantiles: Tuple[float],
+    dtype: AbstractDtype = jnp.float32,
 ) -> Float[Array, "batch"]:
     """
     Parameters
@@ -33,13 +34,17 @@ def quantile_loss(
         Predictions
     quantiles:
         Quantile to use for loss calculations (between 0 & 1)
+    dtype:
+        dtype of computation.
 
     Returns
     -------
     loss:
         Loss value.
     """
-    quantiles = jnp.asarray(quantiles)
+    quantiles = jnp.asarray(quantiles).astype(dtype)
+    y_true = y_true.astype(dtype)
+    y_pred = y_pred.astype(dtype)
     # jax.debug.print("y_true -> {}, y_pred -> {}", y_true, y_pred)
     prediction_underflow = y_true - y_pred
 

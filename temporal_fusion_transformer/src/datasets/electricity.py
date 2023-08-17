@@ -34,7 +34,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
     """
 
     total_time_steps = 8 * 24
-    target_feature_names = ["power_usage"]
+    target_feature_names = ("power_usage",)
     features = cached_property(
         lambda self: OrderedDict(
             [
