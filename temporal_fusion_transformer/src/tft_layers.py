@@ -12,6 +12,8 @@ from jaxtyping import Array, Float, Int, jaxtyped
 ComputeDtype = Union[jnp.float32, jnp.float16, jnp.bfloat16]
 T = TypeVar("T", bound=Type[nn.Module])
 
+# TODO: mb batch norm will fix overflow?
+
 
 class TimeDistributed(nn.Module):
     layer: nn.Module
@@ -197,6 +199,7 @@ class InputEmbedding(nn.Module):
             static_input_embeddings.append(embeds_i)
 
         static_input_embeddings = jnp.stack(static_input_embeddings, axis=1)
+        # static_input_embeddings = nn.LayerNorm(dtype=self.dtype)(static_input_embeddings)
         for i in range(self.num_known_real_inputs):
             embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.known_real[..., i, jnp.newaxis])
             known_real_inputs_embeddings.append(embeds_i)
@@ -207,6 +210,7 @@ class InputEmbedding(nn.Module):
                 embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.observed[..., i, jnp.newaxis])
                 observed_input_embeddings.append(embeds_i)
             observed_input_embeddings = jnp.stack(observed_input_embeddings, axis=-1)
+            # observed_input_embeddings = nn.LayerNorm(dtype=self.dtype)(observed_input_embeddings)
         else:
             observed_input_embeddings = None
 
@@ -226,12 +230,14 @@ class InputEmbedding(nn.Module):
         else:
             known_inputs_embeddings = jnp.stack(known_real_inputs_embeddings, axis=-1)
 
+        # known_inputs_embeddings = nn.LayerNorm(dtype=self.dtype)(known_inputs_embeddings)
         if self.num_unknown_inputs > 0:
             unknown = []
             for i in range(self.num_unknown_inputs):
                 embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.unknown[..., i, jnp.newaxis])
                 unknown.append(embeds_i)
             unknown = jnp.stack(unknown, axis=-1)
+            # unknown = nn.LayerNorm(dtype=self.dtype)(unknown)
         else:
             unknown = None
 

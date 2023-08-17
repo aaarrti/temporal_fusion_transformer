@@ -6,7 +6,7 @@ from typing import Callable, Sequence, Tuple, TypeAlias
 import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
-from jaxtyping import Array, Float, jaxtyped, AbstractDtype
+from jaxtyping import AbstractDtype, Array, Float, jaxtyped
 
 QuantileLossFn: TypeAlias = Callable[
     [Float[Array, "batch time n"], Float[Array, "batch time n*q"]], Float[Array, "batch"]
@@ -42,14 +42,14 @@ def quantile_loss(
     loss:
         Loss value.
     """
+
     quantiles = jnp.asarray(quantiles).astype(dtype)
     y_true = y_true.astype(dtype)
     y_pred = y_pred.astype(dtype)
-    # jax.debug.print("y_true -> {}, y_pred -> {}", y_true, y_pred)
     prediction_underflow = y_true - y_pred
 
-    over_estimation_error = quantiles * jnp.maximum(prediction_underflow, 0)
-    under_estimation_error = (1 - quantiles) * jnp.maximum(-prediction_underflow, 0)
+    over_estimation_error = quantiles * jnp.maximum(prediction_underflow, 0.0)
+    under_estimation_error = (1 - quantiles) * jnp.maximum(-prediction_underflow, 0.0)
 
     # Sum over quantiles and outputs * average over time-steps.
-    return jnp.mean(jnp.sum(over_estimation_error + under_estimation_error, axis=-1))
+    return jnp.sum(over_estimation_error + under_estimation_error)

@@ -7,7 +7,7 @@ import flax.linen as nn
 import jax.numpy as jnp
 from absl import logging
 from flax import struct
-from jaxtyping import Array, Float, jaxtyped, AbstractDtype
+from jaxtyping import AbstractDtype, Array, Float, jaxtyped
 
 from temporal_fusion_transformer.src.config_dict import ConfigDict, FixedParamsConfig
 from temporal_fusion_transformer.src.tft_layers import (

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import tensorflow as tf
-import jax
 from absl import flags, logging
 from absl_extra import tasks, logging_utils
 from ml_collections import config_flags
@@ -13,10 +12,10 @@ from temporal_fusion_transformer.src.datasets.favorita import Favorita
 
 tf.config.set_visible_devices([], "GPU")
 
-# tft.GlobalConfig().update(jit_module=True)
-jax.config.update("jax_debug_nans", True)
-# jax.config.update("jax_debug_nans", True)
 # For debugging
+# import jax
+# jax.config.update("jax_debug_nans", True)
+# jax.config.update("jax_debug_infs", True)
 # jax.config.update("jax_log_compiles", True)
 # jax.config.update("jax_disable_jit", True)
 
@@ -74,6 +73,7 @@ def train_model():
         config=config,
         mixed_precision=mixed_precision,
         jit_module=jit_module,
+        save_path="model.msgpack",
     )
 
 
@@ -88,6 +88,7 @@ def train_model():
         FLAGS.jit_module,
     )
     config = CONFIG.value
+
     tft.training.train_on_multiple_devices(
         data_dir=data_dir,
         experiment_name=experiment,
@@ -96,6 +97,8 @@ def train_model():
         config=config,
         mixed_precision=mixed_precision,
         jit_module=jit_module,
+        device_type="tpu",
+        save_path="model.msgpack",
     )
 
 

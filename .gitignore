@@ -177,3 +177,4 @@ thirdparty
 /tensoboard/
 scripts/favorita.sql
 models
+model.msgpack
