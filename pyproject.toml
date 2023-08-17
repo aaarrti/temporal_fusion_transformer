@@ -26,7 +26,7 @@ training = [
     "clu==0.0.9",
     "msgpack==1.0.5",
     "optax==0.1.7",
-    "tensorflow_cpu==2.13.0; sys_platform == 'linux'",
+    "tensorflow==2.13.0; sys_platform == 'linux'",
     "tensorflow_macos==2.13.0; sys_platform == 'darwin'",
     # No pinned version for my package, since I always want the lastest
     "absl_extra",
