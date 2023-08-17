@@ -6,7 +6,6 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import final
 
-import kaggle
 import polars as pl
 import py7zr
 from absl import logging
@@ -111,6 +110,7 @@ class Favorita(MultiHorizonTimeSeriesDataset):
 
     def download_data(self, path: str):
         # For favorita we download data from kaggle, and upload it to GCS.
+        import kaggle
 
         csvs = glob.glob(f"{path}/*.csv")
 
