@@ -64,7 +64,6 @@ def make_training_hooks(
     logdir: str,
     log_frequency: int = 10,
     add_early_stopping: bool = True,
-    add_checkpoint: bool = False,
     profile: bool = False,
     checkpoint_frequency: int = 3,
     checkpoint_directory: str = "checkpoints",
@@ -100,7 +99,9 @@ def make_training_hooks(
             hooks.on_step_begin.append(call_profiler)
         else:
             logging.warning("Profiling is only supported for linux hosts.")
-
+    
+    add_checkpoint = checkpoint_directory is not None
+    
     if add_checkpoint:
         pool = asynclib.Pool()
 
@@ -125,7 +126,6 @@ def make_training_hooks(
         def force_checkpoint_fn(step: int, *, training_metrics: MetricContainer, training_state: TrainStateContainer):
             mngr.save(step, training_state, metrics=training_metrics.compute(), force=True)
 
-        @pool
         def restore_checkpoint(*args, training_state: TrainStateContainer, **kwargs) -> TrainStateContainer | None:
             all_steps = mngr.all_steps(True)
             if len(all_steps) == 0:

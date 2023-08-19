@@ -48,8 +48,11 @@ def train_experiment_on_single_device(
     save_path: str | None = None,
     stop_early: bool = False,
     tensorboard_log_dir: str = "tensorboard",
-    checkpoint_dir: str | None = "checkpoints",
+    checkpoint_dir: str | None = None,
     log_frequency: int = 10,
+    profile: bool = False,
+    shuffle_buffer_size: int | None = 1024,
+    checkpoint_frequency: int = 3,
 ):
     train_on_single_device(
         data_dir=f"{data_dir}/{experiment_name}",
@@ -63,6 +66,9 @@ def train_experiment_on_single_device(
         tensorboard_log_dir=f"{tensorboard_log_dir}/{experiment_name}",
         checkpoint_dir=checkpoint_dir,
         log_frequency=log_frequency,
+        profile=profile,
+        shuffle_buffer_size=shuffle_buffer_size,
+        checkpoint_frequency=checkpoint_frequency
     )
 
 
@@ -77,11 +83,12 @@ def train_on_single_device(
     save_path: str | None = "model.msgpack",
     stop_early: bool = False,
     tensorboard_log_dir: str = "tensorboard",
-    checkpoint_dir: str | None = "checkpoints",
+    checkpoint_dir: str | None = None,
     profile: bool = False,
     log_frequency: int = 10,
     verbose: bool = True,
     shuffle_buffer_size: int | None = 1024,
+    checkpoint_frequency: int = 3
 ):
     compute_dtype = jnp.float16 if mixed_precision else jnp.float32
 
@@ -135,6 +142,8 @@ def train_on_single_device(
         logdir=tensorboard_log_dir,
         add_early_stopping=stop_early,
         profile=profile,
+        checkpoint_directory=checkpoint_dir,
+        checkpoint_frequency=checkpoint_frequency
     )
 
     (training_metrics, validation_metrics), params = flax_utils.fit_single_device(
