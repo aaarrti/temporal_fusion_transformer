@@ -52,7 +52,4 @@ def quantile_loss(
     under_estimation_error = (1 - quantiles) * jnp.maximum(-prediction_underflow, 0.0)
 
     # Sum over quantiles and outputs * average over time-steps.
-    return jnp.sum(over_estimation_error + under_estimation_error)
-
-
-# TODO: add RMSE
+    return jnp.maximum(jnp.sum(over_estimation_error + under_estimation_error), jnp.finfo(dtype).eps)

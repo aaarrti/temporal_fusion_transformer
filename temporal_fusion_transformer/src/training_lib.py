@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import platform
-from typing import Callable, Generator, Literal, Mapping, Protocol, Tuple
+from typing import Callable, Generator, Literal, Mapping, Protocol, Tuple, List, overload
 
 import clu.periodic_actions
 import jax
@@ -11,7 +11,8 @@ import tensorflow as tf
 from absl import logging
 from absl_extra import flax_utils
 from absl_extra.typing_utils import ParamSpec
-from clu.metrics import Average
+from clu.metrics import Average, CollectingMetric
+from clu import asynclib
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import dataclass, field
 from flax.training.dynamic_scale import DynamicScale
@@ -21,6 +22,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax.tree_util import Partial
 from jaxtyping import Array, Float, PRNGKeyArray, Scalar, jaxtyped
+from orbax.checkpoint import Checkpointer, CheckpointManagerOptions, CheckpointManager, PyTreeCheckpointHandler
 
 from temporal_fusion_transformer.src.config_dict import FixedParamsConfig, OptimizerConfig
 from temporal_fusion_transformer.src.quantile_loss import QuantileLossFn
@@ -46,7 +48,6 @@ class ApplyFunc(Protocol):
 @dataclass
 class MetricContainer(flax_utils.AnnotationsCompatibleCollection):
     loss: Average.from_output("loss")
-    # TODO: save learning_rate & loss_scale
 
 
 @jaxtyped
@@ -54,7 +55,7 @@ class TrainStateContainer(TrainState):
     apply_fn: ApplyFunc = field(pytree_node=False)
     loss_fn: QuantileLossFn = field(pytree_node=False)
     dropout_key: PRNGKeyArray
-    dynamic_scale: DynamicScale | None
+    dynamic_scale: DynamicScale | None = None
 
 
 def make_training_hooks(
@@ -66,6 +67,8 @@ def make_training_hooks(
     add_checkpoint: bool = False,
     profile: bool = False,
     checkpoint_frequency: int = 3,
+    checkpoint_directory: str = "checkpoints",
+    delete_checkpoints_after_training: bool = True,
 ) -> flax_utils.TrainingHooks:
     hooks = flax_utils.make_training_hooks(
         num_training_steps=num_training_steps,
@@ -99,8 +102,51 @@ def make_training_hooks(
             logging.warning("Profiling is only supported for linux hosts.")
 
     if add_checkpoint:
-        # TODO: add checkpoint
-        pass
+        pool = asynclib.Pool()
+
+        options = CheckpointManagerOptions(
+            save_interval_steps=checkpoint_frequency,
+            max_to_keep=5,
+            cleanup_tmp_directories=True,
+            best_mode="min",
+            best_fn=lambda metrics: metrics["loss"],
+        )
+        mngr = CheckpointManager(
+            checkpoint_directory,
+            Checkpointer(PyTreeCheckpointHandler(use_ocdbt=True)),
+            options,
+        )
+
+        @pool
+        def checkpoint_fn(step: int, *, training_metrics: MetricContainer, training_state: TrainStateContainer):
+            mngr.save(step, training_state, metrics=training_metrics.compute())
+
+        @pool
+        def force_checkpoint_fn(step: int, *, training_metrics: MetricContainer, training_state: TrainStateContainer):
+            mngr.save(step, training_state, metrics=training_metrics.compute(), force=True)
+
+        @pool
+        def restore_checkpoint(*args, training_state: TrainStateContainer, **kwargs) -> TrainStateContainer | None:
+            all_steps = mngr.all_steps(True)
+            if len(all_steps) == 0:
+                return None
+
+            latest_step = max(all_steps)
+            state = mngr.restore(latest_step, items=training_state)
+            return state
+
+        hooks.on_training_begin.append(restore_checkpoint)
+
+        hooks.on_step_end.append(checkpoint_fn)
+        hooks.on_epoch_end.append(force_checkpoint_fn)
+
+        if delete_checkpoints_after_training:
+
+            def delete_checkpoints(*args, **kwargs):
+                for step in mngr.all_steps():
+                    mngr.delete(step)
+
+            hooks.on_training_end.append(delete_checkpoints)
 
     return hooks
 
@@ -124,18 +170,21 @@ def single_device_train_step(
         # loss scaling logic is taken from https://github.com/google/flax/blob/main/examples/wmt/train.py#L177
         dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn)(state.params)
         state.replace(dynamic_scale=dynamic_scale)
-        new_state = state.apply_gradients(grads=grads)
-        select_fn = Partial(jnp.where, is_fin)
-        new_state = new_state.replace(
-            opt_state=jax.tree_util.tree_map(select_fn, new_state.opt_state, state.opt_state),
-            params=jax.tree_util.tree_map(select_fn, new_state.params, state.params),
-        )
+        state = state.apply_gradients(grads=grads)
     else:
+        dynamic_scale, is_fin = None, None
         loss, grads = jax.value_and_grad(loss_fn)(state.params)
-        new_state = state.apply_gradients(grads=grads)
+
+    state = state.apply_gradients(grads=grads)
+    if state.dynamic_scale is not None:
+        select_fn = Partial(jnp.where, is_fin)
+        state = state.replace(
+            opt_state=jax.tree_util.tree_map(select_fn, state.opt_state, state.opt_state),
+            params=jax.tree_util.tree_map(select_fn, state.params, state.params),
+        )
 
     metrics = MetricContainer.single_from_model_output(loss=loss)
-    return new_state, metrics
+    return state, metrics
 
 
 @jaxtyped
@@ -193,20 +242,43 @@ def multi_device_validation_step(
 def load_dataset(
     data_dir: str,
     batch_size: int,
-    shuffle_buffer_size: int,
     prng_seed: int,
+    shuffle_buffer_size: int | None = None,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
-    def load_fn(split: Literal["training", "validation"]) -> tf.data.Dataset:
+    """
+
+    Parameters
+    ----------
+    data_dir
+    batch_size
+    shuffle_buffer_size:
+        If set to None, will do a full-reshuffle.
+    prng_seed
+
+    Returns
+    -------
+
+    """
+
+    def load_fn(split: Literal["training", "validation"], buffer_size: int) -> tf.data.Dataset:
+        ds = tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
+
+        if buffer_size is None:
+            if platform.system().lower() == "darwin":
+                # avoid full reshuffle while debugging
+                buffer_size = 100
+            else:
+                buffer_size = int(ds.cardinality())
+
         return (
-            tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
+            ds.shuffle(buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
             .batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
-            .shuffle(shuffle_buffer_size, seed=prng_seed)
             .cache()
             .prefetch(tf.data.AUTOTUNE)
         )
 
-    training_ds = load_fn("training")
-    validation_ds = load_fn("validation")
+    training_ds = load_fn("training", shuffle_buffer_size)
+    validation_ds = load_fn("validation", shuffle_buffer_size)
 
     if platform.system().lower() == "darwin":
         logging.warning("Running on MacOS, will use 10 training and 2 validation batches for testing purposes.")

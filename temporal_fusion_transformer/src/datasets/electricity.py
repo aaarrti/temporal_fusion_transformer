@@ -39,12 +39,12 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         lambda self: OrderedDict(
             [
                 # target
-                ("power_usage", FeatureSpace.float()),
+                ("power_usage", FeatureSpace.float_normalized()),
                 # static
                 ("id", self.string_categorical()),
                 # known real
-                ("hours_from_start", FeatureSpace.float()),
-                ("days_from_start", FeatureSpace.float()),
+                ("hours_from_start", FeatureSpace.float_normalized()),
+                ("days_from_start", FeatureSpace.float_normalized()),
                 # known categorical
                 ("day", self.integer_categorical()),
                 ("hour", self.integer_categorical()),

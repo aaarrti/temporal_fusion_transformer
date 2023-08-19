@@ -86,9 +86,7 @@ def train_on_single_device(
 
     logging.info(f"Writing tensorboard logs to {tensorboard_log_dir}")
 
-    training_dataset, validation_dataset = load_dataset(
-        data_dir, batch_size, config.shuffle_buffer_size, config.prng_seed
-    )
+    training_dataset, validation_dataset = load_dataset(data_dir, batch_size, config.prng_seed)
 
     generator_func = make_dataset_generator_func(compute_dtype, config.fixed_params)
 
@@ -108,11 +106,11 @@ def train_on_single_device(
 
     loss_fn = make_quantile_loss_fn(config.hyperparams.quantiles, dtype=compute_dtype)
 
-    if mixed_precision:
-        # TODO allow low scale args to be passed
-        dynamic_scale = DynamicScale()
-    else:
-        dynamic_scale = None
+    # Dynamic scale cases overflow instead of preventing it.
+    # if mixed_precision:
+    #    dynamic_scale = DynamicScale()
+    # else:
+    #    dynamic_scale = None
 
     state = TrainStateContainer.create(
         params=params,
@@ -120,7 +118,7 @@ def train_on_single_device(
         apply_fn=model.apply,
         dropout_key=dropout_key,
         loss_fn=loss_fn,
-        dynamic_scale=dynamic_scale,
+        dynamic_scale=None,
     )
 
     hooks = make_training_hooks(
@@ -216,7 +214,7 @@ def train_on_multiple_devices(
     logging.info(f"Writing tensorboard logs to {log_dir}")
 
     training_dataset, validation_dataset = load_dataset(
-        data_dir, experiment_name, batch_size * num_devices, config.shuffle_buffer_size, config.prng_seed
+        data_dir, experiment_name, batch_size * num_devices, config.prng_seed
     )
 
     generator_func = make_dataset_generator_func(compute_dtype, config.fixed_params)

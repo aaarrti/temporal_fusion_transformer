@@ -30,6 +30,7 @@ training = [
     "clu==0.0.9",
     "msgpack==1.0.5",
     "optax==0.1.7",
+    "orbax_checkpoint==0.3.5",
     # No pinned version for my package, since I always want the lastest
     "absl_extra",
     "temporal_fusion_transformer[tensorflow]"
