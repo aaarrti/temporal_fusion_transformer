@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import functools
-from typing import Callable, Literal
+from typing import Callable, Literal, Tuple
 from datetime import datetime
 
+import tensorflow as tf
 import jax
 from absl import logging
 from absl_extra import flax_utils
@@ -20,7 +21,7 @@ from temporal_fusion_transformer.src.training_lib import (
     MetricContainer,
     TrainStateContainer,
     load_dataset,
-    make_dataset_generator_func,
+    generate_dataset,
     make_optimizer,
     make_training_hooks,
     multi_device_train_step,
@@ -45,62 +46,54 @@ def train_experiment_on_single_device(
     epochs: int = 1,
     mixed_precision: bool = False,
     jit_module: bool = False,
-    save_path: str | None = None,
-    stop_early: bool = False,
-    tensorboard_log_dir: str = "tensorboard",
-    checkpoint_dir: str | None = "checkpoints",
-    log_frequency: int = 10,
+    save_path: str | None = "model.msgpacl",
+    shuffle_buffer_size: int | None = 1024,
+    hooks: flax_utils.TrainingHooks | None = None,
+    prefetch_buffer_size: int = 2,
+    dynamic_scale: DynamicScale | None = None,
 ):
+    compute_dtype = jnp.float16 if mixed_precision else jnp.float32
+    data = load_dataset(
+        f"{data_dir}/{experiment_name}",
+        batch_size,
+        config.prng_seed,
+        dtype=compute_dtype,
+        shuffle_buffer_size=shuffle_buffer_size,
+    )
     train_on_single_device(
-        data_dir=f"{data_dir}/{experiment_name}",
-        batch_size=batch_size,
+        data=data,
         config=config,
         epochs=epochs,
         mixed_precision=mixed_precision,
         jit_module=jit_module,
         save_path=save_path,
-        stop_early=stop_early,
-        tensorboard_log_dir=f"{tensorboard_log_dir}/{experiment_name}",
-        checkpoint_dir=checkpoint_dir,
-        log_frequency=log_frequency,
+        hooks=hooks,
+        prefetch_buffer_size=prefetch_buffer_size,
+        dynamic_scale=dynamic_scale,
     )
 
 
 def train_on_single_device(
     *,
-    data_dir: str,
-    batch_size: int,
+    data: Tuple[tf.data.Dataset, tf.data.Dataset],
     config: ConfigDict,
     epochs: int = 1,
     mixed_precision: bool = False,
     jit_module: bool = False,
     save_path: str | None = "model.msgpack",
-    stop_early: bool = False,
-    tensorboard_log_dir: str = "tensorboard",
-    checkpoint_dir: str | None = "checkpoints",
-    profile: bool = False,
-    log_frequency: int = 10,
     verbose: bool = True,
-    shuffle_buffer_size: int | None = 1024,
+    prefetch_buffer_size: int = 2,
+    hooks: flax_utils.TrainingHooks = None,
+    dynamic_scale: DynamicScale | None = None,
 ):
     compute_dtype = jnp.float16 if mixed_precision else jnp.float32
 
-    tag = make_timestamp_tag()
-
-    tensorboard_log_dir = f"{tensorboard_log_dir}/{tag}"
-
-    logging.info(f"Writing tensorboard logs to {tensorboard_log_dir}")
-
-    training_dataset, validation_dataset = load_dataset(
-        data_dir, batch_size, config.prng_seed, shuffle_buffer_size=shuffle_buffer_size
-    )
+    training_dataset, validation_dataset = data
 
     model = TemporalFusionTransformer.from_config_dict(config, jit_module=jit_module, dtype=compute_dtype)
 
-    generator_func = make_dataset_generator_func(model)
-
     num_training_steps = int(training_dataset.cardinality())
-    first_x = next(generator_func(training_dataset))[0]
+    first_x = next(generate_dataset(training_dataset))[0]
 
     # --------------------------------------------------
 
@@ -125,22 +118,26 @@ def train_on_single_device(
         apply_fn=model.apply,
         dropout_key=dropout_key,
         loss_fn=loss_fn,
-        dynamic_scale=None,
+        dynamic_scale=dynamic_scale,
     )
 
-    hooks = make_training_hooks(
-        num_training_steps,
-        epochs,
-        log_frequency=log_frequency,
-        logdir=tensorboard_log_dir,
-        add_early_stopping=stop_early,
-        profile=profile,
-    )
+    if hooks is None:
+        tag = make_timestamp_tag()
+        tensorboard_log_dir = f"tensorboard/{tag}"
+        logging.info(f"Writing tensorboard logs to {tensorboard_log_dir}")
+
+        hooks = make_training_hooks(
+            num_training_steps,
+            epochs,
+            logdir=tensorboard_log_dir,
+            add_early_stopping=True,
+            checkpoint_directory=None,
+        )
 
     (training_metrics, validation_metrics), params = flax_utils.fit_single_device(
         training_state=state,
-        training_dataset_factory=functools.partial(generator_func, training_dataset),
-        validation_dataset_factory=functools.partial(generator_func, validation_dataset),
+        training_dataset_factory=lambda: generate_dataset(training_dataset),
+        validation_dataset_factory=lambda: generate_dataset(validation_dataset),
         metrics_container_type=MetricContainer,
         training_step_func=single_device_train_step,
         validation_step_func=single_device_validation_step,
@@ -148,6 +145,7 @@ def train_on_single_device(
         hooks=hooks,
         num_training_steps=num_training_steps,
         verbose=verbose,
+        prefetch_buffer_size=prefetch_buffer_size,
     )
     logging.info(f"Finished training with: {training_metrics = }, {validation_metrics = }")
 

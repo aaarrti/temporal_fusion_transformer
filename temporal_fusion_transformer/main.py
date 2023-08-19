@@ -72,8 +72,6 @@ def train_model():
         batch_size=batch_size,
         config=config,
         mixed_precision=mixed_precision,
-        jit_module=True,
-        save_path=None,
     )
 
 

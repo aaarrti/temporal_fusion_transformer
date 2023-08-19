@@ -1,9 +1,9 @@
-Bootstrap: localimage
-From: images/base_image.sif
+Bootstrap: docker
+From: nvcr.io/nvdlfwea/jax/jax:23.07-py3
 
 %post -c /bin/bash
-    python3 -m pip install --upgrade absl_extra
-    python3 -m pip install -e .
+    python3 -m pip install jaxtyping==0.2.20 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.13.0 absl_extra
+    python3 -m pip cache purge
 
 %environment
     export DEBIAN_FRONTEND=noninteractive

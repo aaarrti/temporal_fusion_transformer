@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import platform
-from typing import Callable, Generator, Literal, Mapping, Protocol, Tuple
+from typing import Generator, Literal, Mapping, Protocol, Tuple
 
 import clu.periodic_actions
 import jax
@@ -11,7 +11,6 @@ import tensorflow as tf
 from absl import logging
 from absl_extra import flax_utils
 from absl_extra.typing_utils import ParamSpec
-from clu import asynclib
 from clu.metrics import Average
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import dataclass, field
@@ -27,7 +26,6 @@ from orbax.checkpoint import Checkpointer, CheckpointManagerOptions, CheckpointM
 from temporal_fusion_transformer.src.config_dict import OptimizerConfig
 from temporal_fusion_transformer.src.quantile_loss import QuantileLossFn
 from temporal_fusion_transformer.src.tft_layers import InputStruct
-from temporal_fusion_transformer.src.tft_model import TemporalFusionTransformer
 
 P = ParamSpec("P")
 
@@ -64,7 +62,6 @@ def make_training_hooks(
     logdir: str,
     log_frequency: int = 10,
     add_early_stopping: bool = True,
-    add_checkpoint: bool = False,
     profile: bool = False,
     checkpoint_frequency: int = 3,
     checkpoint_directory: str = "checkpoints",
@@ -101,9 +98,9 @@ def make_training_hooks(
         else:
             logging.warning("Profiling is only supported for linux hosts.")
 
-    if add_checkpoint:
-        pool = asynclib.Pool()
+    add_checkpoint = checkpoint_directory is not None
 
+    if add_checkpoint:
         options = CheckpointManagerOptions(
             save_interval_steps=checkpoint_frequency,
             max_to_keep=5,
@@ -117,15 +114,12 @@ def make_training_hooks(
             options,
         )
 
-        @pool
         def checkpoint_fn(step: int, *, training_metrics: MetricContainer, training_state: TrainStateContainer):
             mngr.save(step, training_state, metrics=training_metrics.compute())
 
-        @pool
         def force_checkpoint_fn(step: int, *, training_metrics: MetricContainer, training_state: TrainStateContainer):
             mngr.save(step, training_state, metrics=training_metrics.compute(), force=True)
 
-        @pool
         def restore_checkpoint(*args, training_state: TrainStateContainer, **kwargs) -> TrainStateContainer | None:
             all_steps = mngr.all_steps(True)
             if len(all_steps) == 0:
@@ -240,10 +234,7 @@ def multi_device_validation_step(
 
 
 def load_dataset(
-    data_dir: str,
-    batch_size: int,
-    prng_seed: int,
-    shuffle_buffer_size: int | None = None,
+    data_dir: str, batch_size: int, prng_seed: int, shuffle_buffer_size: int | None = None, dtype=jnp.float32
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
 
@@ -254,50 +245,40 @@ def load_dataset(
     shuffle_buffer_size:
         If set to None, will do a full-reshuffle.
     prng_seed
+    dtype
 
     Returns
     -------
 
     """
 
+    tf_dtype = tf.dtypes.as_dtype(dtype)
+
+    def downcast_input(x, y):
+        return tf.cast(x, tf_dtype), tf.cast(y, tf_dtype)
+
     def load_fn(split: Literal["training", "validation"], buffer_size: int) -> tf.data.Dataset:
         ds = tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
 
         if buffer_size is None:
-            if platform.system().lower() == "darwin":
-                # avoid full reshuffle while debugging
-                buffer_size = 100
-            else:
-                buffer_size = int(ds.cardinality())
+            buffer_size = int(ds.cardinality())
 
         return (
             ds.shuffle(buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
             .batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+            .map(downcast_input)
             .cache()
             .prefetch(tf.data.AUTOTUNE)
         )
 
     training_ds = load_fn("training", shuffle_buffer_size)
     validation_ds = load_fn("validation", shuffle_buffer_size)
-
-    # if platform.system().lower() == "darwin":
-    #    logging.warning("Running on MacOS, will use 10 training and 2 validation batches for testing purposes.")
-    #    training_ds = training_ds.take(10)
-    #    validation_ds = validation_ds.take(2)
-
     return training_ds, validation_ds
 
 
-def make_dataset_generator_func(
-    model: TemporalFusionTransformer,
-) -> Callable[[tf.data.Dataset], Generator[Tuple[InputStruct, jnp.ndarray], None, None]]:
-    def generate_dataset(
-        ds: tf.data.Dataset,
-    ):
-        for x, y in ds.as_numpy_iterator():
-            yield model.make_input_struct(x), jnp.asarray(y, model.dtype)
-
-    return generate_dataset
+def generate_dataset(ds: tf.data.Dataset) -> Generator[Tuple[InputStruct, jnp.ndarray], None, None]:
+    for x, y in ds.as_numpy_iterator():
+        yield x, y
 
 
 def make_optimizer(config: OptimizerConfig, num_training_steps: int, epochs: int) -> optax.GradientTransformation:
