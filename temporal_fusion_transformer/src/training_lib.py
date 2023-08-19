@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import platform
-from typing import Callable, Generator, Literal, Mapping, Protocol, Tuple, List, overload
+from typing import Callable, Generator, Literal, Mapping, Protocol, Tuple
 
 import clu.periodic_actions
 import jax
@@ -11,8 +11,8 @@ import tensorflow as tf
 from absl import logging
 from absl_extra import flax_utils
 from absl_extra.typing_utils import ParamSpec
-from clu.metrics import Average, CollectingMetric
 from clu import asynclib
+from clu.metrics import Average
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import dataclass, field
 from flax.training.dynamic_scale import DynamicScale
@@ -24,10 +24,10 @@ from jax.tree_util import Partial
 from jaxtyping import Array, Float, PRNGKeyArray, Scalar, jaxtyped
 from orbax.checkpoint import Checkpointer, CheckpointManagerOptions, CheckpointManager, PyTreeCheckpointHandler
 
-from temporal_fusion_transformer.src.config_dict import FixedParamsConfig, OptimizerConfig
+from temporal_fusion_transformer.src.config_dict import OptimizerConfig
 from temporal_fusion_transformer.src.quantile_loss import QuantileLossFn
-from temporal_fusion_transformer.src.tft_layers import ComputeDtype, InputStruct
-from temporal_fusion_transformer.src.utils import make_input_struct_from_config
+from temporal_fusion_transformer.src.tft_layers import InputStruct
+from temporal_fusion_transformer.src.tft_model import TemporalFusionTransformer
 
 P = ParamSpec("P")
 
@@ -289,14 +289,13 @@ def load_dataset(
 
 
 def make_dataset_generator_func(
-    compute_dtype: ComputeDtype, config: FixedParamsConfig
+    model: TemporalFusionTransformer,
 ) -> Callable[[tf.data.Dataset], Generator[Tuple[InputStruct, jnp.ndarray], None, None]]:
     def generate_dataset(
         ds: tf.data.Dataset,
     ):
         for x, y in ds.as_numpy_iterator():
-            x = make_input_struct_from_config(x, config, dtype=compute_dtype)
-            yield x.cast_inexact(compute_dtype), jnp.asarray(y, compute_dtype)
+            yield model.make_input_struct(x), jnp.asarray(y, model.dtype)
 
     return generate_dataset
 

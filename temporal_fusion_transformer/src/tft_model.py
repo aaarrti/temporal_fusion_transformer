@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Sequence
 
+from absl import logging
 import flax.linen as nn
 import jax.numpy as jnp
 from flax import struct
@@ -105,27 +106,9 @@ class TemporalFusionTransformer(nn.Module):
         self, inputs: Float[Array, "batch time n"] | InputStruct, training: bool = False
     ) -> Float[Array, "batch time n*quantiles"] | TftOutputs:
         if not isinstance(inputs, InputStruct):
-            if self.input_static_idx is None:
-                raise ValueError(f"When providing inputs as arrays, must specify provide `input_static_idx`")
+            inputs = self.make_input_struct(inputs)
 
-            if self.input_known_real_idx is None:
-                raise ValueError(f"When providing inputs as arrays, must specify provide `input_known_real_idx`")
-
-            if self.input_known_categorical_idx is None:
-                raise ValueError(f"When providing inputs as arrays, must specify provide `input_known_categorical_idx`")
-
-            if self.input_observed_idx is None:
-                raise ValueError(f"When providing inputs as arrays, must specify provide `input_observed_idx`")
-
-            from temporal_fusion_transformer.src.utils import make_input_struct_from_idx
-
-            inputs = make_input_struct_from_idx(
-                inputs,
-                self.input_static_idx,
-                self.input_known_real_idx,
-                self.input_known_categorical_idx,
-                self.input_observed_idx,
-            ).cast_inexact(self.dtype)
+        inputs = inputs.cast_inexact(self.dtype)
 
         embeddings = InputEmbedding(
             static_categories_sizes=self.static_categories_sizes,
@@ -249,6 +232,83 @@ class TemporalFusionTransformer(nn.Module):
             return len(self.input_observed_idx)
         else:
             raise ValueError(f"Must provide either `num_observed_inputs` or input_observed_idx")
+
+    def make_input_struct(self, inputs: jnp.ndarray) -> InputStruct:
+        input_static_idx, input_known_real_idx, input_known_categorical_idx, input_observed_idx = (
+            self.input_static_idx,
+            self.input_known_real_idx,
+            self.input_known_categorical_idx,
+            self.input_observed_idx,
+        )
+
+        if input_static_idx is None:
+            raise ValueError(f"When providing inputs as arrays, must specify provide `input_static_idx`")
+
+        if input_known_real_idx is None:
+            raise ValueError(f"When providing inputs as arrays, must specify provide `input_known_real_idx`")
+
+        if input_known_categorical_idx is None:
+            raise ValueError(f"When providing inputs as arrays, must specify provide `input_known_categorical_idx`")
+
+        if input_observed_idx is None:
+            raise ValueError(f"When providing inputs as arrays, must specify provide `input_observed_idx`")
+
+        declared_num_features = (
+            len(input_static_idx)
+            + len(input_known_real_idx)
+            + len(input_known_categorical_idx)
+            + len(input_observed_idx)
+        )
+        num_features = inputs.shape[-1]
+
+        if num_features != declared_num_features:
+            unknown_indexes = sorted(
+                list(
+                    set(
+                        input_static_idx + input_known_real_idx + input_known_categorical_idx + input_observed_idx
+                    ).symmetric_difference(range(num_features))
+                )
+            )
+            if num_features > declared_num_features:
+                logging.error(
+                    f"Declared number of features does not match with the one seen in input, "
+                    f"could not indentify inputs at {unknown_indexes}"
+                )
+                unknown_indexes = jnp.asarray(unknown_indexes, jnp.int32)
+                unknown_inputs = jnp.take(inputs, unknown_indexes, axis=-1).astype(self.dtype)
+            else:
+                logging.error(
+                    f"Declared number of features does not match with the one seen in input, "
+                    f"no inputs at {unknown_indexes}"
+                )
+                unknown_inputs = None
+        else:
+            unknown_inputs = None
+
+        static = jnp.take(inputs, jnp.asarray(input_static_idx), axis=-1).astype(jnp.int32)
+
+        if len(input_known_real_idx) > 0:
+            known_real = jnp.take(inputs, jnp.asarray(input_known_real_idx), axis=-1).astype(self.dtype)
+        else:
+            known_real = None
+
+        if len(input_known_categorical_idx) > 0:
+            known_categorical = jnp.take(inputs, jnp.asarray(input_known_categorical_idx), axis=-1).astype(jnp.int32)
+        else:
+            known_categorical = None
+
+        if len(input_observed_idx) > 0:
+            observed = jnp.take(inputs, jnp.asarray(input_observed_idx), axis=-1).astype(self.dtype)
+        else:
+            observed = None
+
+        return InputStruct(
+            static=static,
+            known_real=known_real,
+            known_categorical=known_categorical,
+            observed=observed,
+            unknown=unknown_inputs,
+        )
 
     @staticmethod
     def from_config_dict(config: ConfigDict, jit_module: bool = False, dtype=jnp.float32) -> TemporalFusionTransformer:

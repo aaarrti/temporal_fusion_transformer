@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 from typing import Callable, Literal
+from datetime import datetime
 
 import jax
 from absl import logging
@@ -27,9 +28,12 @@ from temporal_fusion_transformer.src.training_lib import (
     single_device_train_step,
     single_device_validation_step,
 )
-from temporal_fusion_transformer.src.utils import make_timestamp_tag
 
 P = ParamSpec("P")
+
+
+def make_timestamp_tag() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M")
 
 
 def train_experiment_on_single_device(
@@ -91,14 +95,14 @@ def train_on_single_device(
         data_dir, batch_size, config.prng_seed, shuffle_buffer_size=shuffle_buffer_size
     )
 
-    generator_func = make_dataset_generator_func(compute_dtype, config.fixed_params)
+    model = TemporalFusionTransformer.from_config_dict(config, jit_module=jit_module, dtype=compute_dtype)
+
+    generator_func = make_dataset_generator_func(model)
 
     num_training_steps = int(training_dataset.cardinality())
     first_x = next(generator_func(training_dataset))[0]
 
     # --------------------------------------------------
-
-    model = TemporalFusionTransformer.from_config_dict(config, jit_module=jit_module, dtype=compute_dtype)
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
     dropout_key, params_key = jax.random.split(prng_key, 2)
