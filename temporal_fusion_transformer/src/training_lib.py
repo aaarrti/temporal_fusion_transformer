@@ -280,10 +280,10 @@ def load_dataset(
     training_ds = load_fn("training", shuffle_buffer_size)
     validation_ds = load_fn("validation", shuffle_buffer_size)
 
-    if platform.system().lower() == "darwin":
-        logging.warning("Running on MacOS, will use 10 training and 2 validation batches for testing purposes.")
-        training_ds = training_ds.take(10)
-        validation_ds = validation_ds.take(2)
+    # if platform.system().lower() == "darwin":
+    #    logging.warning("Running on MacOS, will use 10 training and 2 validation batches for testing purposes.")
+    #    training_ds = training_ds.take(10)
+    #    validation_ds = validation_ds.take(2)
 
     return training_ds, validation_ds
 

@@ -77,6 +77,7 @@ def train_on_single_device(
     profile: bool = False,
     log_frequency: int = 10,
     verbose: bool = True,
+    shuffle_buffer_size: int | None = 1024,
 ):
     compute_dtype = jnp.float16 if mixed_precision else jnp.float32
 
@@ -86,7 +87,9 @@ def train_on_single_device(
 
     logging.info(f"Writing tensorboard logs to {tensorboard_log_dir}")
 
-    training_dataset, validation_dataset = load_dataset(data_dir, batch_size, config.prng_seed)
+    training_dataset, validation_dataset = load_dataset(
+        data_dir, batch_size, config.prng_seed, shuffle_buffer_size=shuffle_buffer_size
+    )
 
     generator_func = make_dataset_generator_func(compute_dtype, config.fixed_params)
 
