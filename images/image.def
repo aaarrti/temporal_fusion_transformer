@@ -1,8 +1,13 @@
 Bootstrap: docker
 From: nvcr.io/nvdlfwea/jax/jax:23.07-py3
 
+%files
+    /home/artem/temporal_fusion_transformer
+
+
 %post -c /bin/bash
-    python3 -m pip install jaxtyping==0.2.20 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.13.0 absl_extra
+    python3 -m pip install jaxtyping==0.2.20 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.13.0 optuna==3.3.0 absl_extra
+    python3 -m pip install -e /home/artem/temporal_fusion_transformer
     python3 -m pip cache purge
 
 %environment

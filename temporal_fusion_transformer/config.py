@@ -66,9 +66,9 @@ def get_optimizer_config(choice: Choice = "electricity"):
     config = {
         "electricity": {
             "clipnorm": 0.0,
-            "decay_alpha": 0.05,
-            "decay_steps": 0.0,
-            "ema": 0.0,
+            "decay_alpha": 0.1,
+            "decay_steps": 0.8,
+            "ema": 0.99,
             "learning_rate": 5e-4,
         },
         "favorita": {},

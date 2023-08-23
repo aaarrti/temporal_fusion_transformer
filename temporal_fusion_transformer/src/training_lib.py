@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import functools
-import platform
-from typing import Generator, Literal, Mapping, Protocol, Tuple
+from typing import Literal, Mapping, Protocol, Tuple
 
 import clu.periodic_actions
 import jax
@@ -13,7 +12,7 @@ from absl_extra import flax_utils
 from absl_extra.typing_utils import ParamSpec
 from clu.metrics import Average
 from flax.core.frozen_dict import FrozenDict
-from flax.struct import dataclass, field
+from flax.struct import dataclass, field, PyTreeNode
 from flax.training.dynamic_scale import DynamicScale
 from flax.training.early_stopping import EarlyStopping
 from flax.training.train_state import TrainState
@@ -28,6 +27,18 @@ from temporal_fusion_transformer.src.quantile_loss import QuantileLossFn
 from temporal_fusion_transformer.src.tft_layers import InputStruct
 
 P = ParamSpec("P")
+
+
+class EarlyStoppingWrapper(PyTreeNode):
+    
+    early_stopping: EarlyStopping
+    
+    @property
+    def should_stop(self):
+        return self.early_stopping.should_stop
+    
+    def __call__(self, *args, training_metrics: MetricContainer, **kwargs):
+        self.early_stopping.update(training_metrics.compute()['loss'])
 
 
 class ApplyFunc(Protocol):
@@ -60,43 +71,39 @@ def make_training_hooks(
     num_training_steps: int,
     epochs: int,
     logdir: str,
-    log_frequency: int = 10,
+    log_frequency: int | Tuple[int, int] = 10,
     add_early_stopping: bool = True,
     profile: bool = False,
     checkpoint_frequency: int = 3,
     checkpoint_directory: str = "checkpoints",
     delete_checkpoints_after_training: bool = True,
 ) -> flax_utils.TrainingHooks:
+    logging.info(f"Writing tensorboard logs to {logdir}")
+    
+    if isinstance(log_frequency, Tuple):
+        write_metrics_frequency, report_progress_frequency = log_frequency
+    else:
+        write_metrics_frequency, report_progress_frequency = log_frequency, log_frequency
+
     hooks = flax_utils.make_training_hooks(
         num_training_steps=num_training_steps,
         epochs=epochs,
-        write_metrics_frequency=log_frequency,
-        report_progress_frequency=log_frequency,
+        write_metrics_frequency=write_metrics_frequency,
+        report_progress_frequency=report_progress_frequency,
         tensorboard_logdir=logdir,
     )
     if add_early_stopping:
-        early_stopping = EarlyStopping(patience=int(num_training_steps // 4), min_delta=0.1)
-
-        def update_early_stopping(*args, training_metrics: MetricContainer, **kwargs):
-            loss = training_metrics.compute()["loss"]
-            early_stopping.update(loss)
-
-        def reset_early_stopping(*args, **kwargs):
-            early_stopping.reset()
-
-        hooks.on_step_end.append(update_early_stopping)
-        hooks.on_epoch_end.append(reset_early_stopping)
+        early_stopping = EarlyStopping(patience=100, min_delta=0.1)
+        early_stopping = EarlyStoppingWrapper(early_stopping=early_stopping)
+        hooks.on_step_end.append(early_stopping)
 
     if profile:
-        if platform.system().lower() == "linux":
-            profiler = clu.periodic_actions.Profile(logdir=logdir, profile_duration_ms=None)
+        profiler = clu.periodic_actions.Profile(logdir=logdir, profile_duration_ms=None)
 
-            def call_profiler(step: int, **kwargs):
-                profiler(step)
+        def call_profiler(step: int, **kwargs):
+            profiler(step)
 
-            hooks.on_step_begin.append(call_profiler)
-        else:
-            logging.warning("Profiling is only supported for linux hosts.")
+        hooks.on_step_begin.append(call_profiler)
 
     add_checkpoint = checkpoint_directory is not None
 
@@ -209,13 +216,22 @@ def multi_device_train_step(
         return y_loss
 
     if state.dynamic_scale is not None:
-        _, _, loss, grads = state.dynamic_scale.value_and_grad(loss_fn, axis_name="i")(state.params)
+        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn, axis_name="i")(state.params)
+        state.replace(dynamic_scale=dynamic_scale)
     else:
+        dynamic_scale, is_fin = None, None
         loss, grads = jax.value_and_grad(loss_fn)(state.params)
         grads = lax.pmean(grads, axis_name="i")
 
-    metrics = MetricContainer.gather_from_model_output(loss=loss, axis_name="i")
     state = state.apply_gradients(grads=grads)
+    if state.dynamic_scale is not None:
+        select_fn = Partial(jnp.where, is_fin)
+        state = state.replace(
+            opt_state=jax.tree_util.tree_map(select_fn, state.opt_state, state.opt_state),
+            params=jax.tree_util.tree_map(select_fn, state.params, state.params),
+        )
+
+    metrics = MetricContainer.gather_from_model_output(loss=loss, axis_name="i")
     return state, metrics
 
 
@@ -234,7 +250,7 @@ def multi_device_validation_step(
 
 
 def load_dataset(
-    data_dir: str, batch_size: int, prng_seed: int, shuffle_buffer_size: int | None = None, dtype=jnp.float32
+    data_dir: str, batch_size: int, prng_seed: int, shuffle_buffer_size: int = 2048, dtype=jnp.float32
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
 
@@ -260,7 +276,7 @@ def load_dataset(
     def load_fn(split: Literal["training", "validation"], buffer_size: int) -> tf.data.Dataset:
         ds = tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
 
-        if buffer_size is None:
+        if buffer_size == -1:
             buffer_size = int(ds.cardinality())
 
         return (
@@ -274,11 +290,6 @@ def load_dataset(
     training_ds = load_fn("training", shuffle_buffer_size)
     validation_ds = load_fn("validation", shuffle_buffer_size)
     return training_ds, validation_ds
-
-
-def generate_dataset(ds: tf.data.Dataset) -> Generator[Tuple[InputStruct, jnp.ndarray], None, None]:
-    for x, y in ds.as_numpy_iterator():
-        yield x, y
 
 
 def make_optimizer(config: OptimizerConfig, num_training_steps: int, epochs: int) -> optax.GradientTransformation:
