@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import functools
-from typing import Callable, Sequence, Tuple, TypeAlias
+from typing import Callable, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
 from jaxtyping import AbstractDtype, Array, Float, jaxtyped
 
-QuantileLossFn: TypeAlias = Callable[
+QuantileLossFn = Callable[
     [Float[Array, "batch time n"], Float[Array, "batch time n*q"]], Float[Array, "batch"]
 ]
 
