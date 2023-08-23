@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import final
 
 import polars as pl
-import py7zr
 from absl import logging
 from absl_extra import keras_pbar
 from keras.utils.data_utils import _extract_archive
@@ -112,6 +111,7 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         # For favorita we download data from kaggle, and upload it to GCS.
         # importing kaggle at top, will cause error if no config file is found, event if never invoked.
         import kaggle
+        import py7zr
 
         csvs = glob.glob(f"{path}/*.csv")
 
