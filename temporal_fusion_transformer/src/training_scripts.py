@@ -92,7 +92,7 @@ def train(
     device_type: Literal["gpu", "tpu"] = "gpu",
     dynamic_scale: DynamicScale | None | Literal["auto"] = None,
     prefetch_buffer_size: int = 2,
-    hooks: flax_utils.TrainingHooks | None = None,
+    hooks: flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | None = None,
     verbose: bool = True,
 ) -> flax_utils.MetricsAndParams:
     """
@@ -164,8 +164,10 @@ def train(
         loss_fn=loss_fn,
         dynamic_scale=dynamic_scale,
     )
-
-    if hooks is None:
+    
+    if isinstance(hooks, Callable):
+        hooks = hooks(num_training_steps)
+    elif hooks is None:
         tag = make_timestamp_tag()
         tensorboard_log_dir = f"tensorboard/{tag}"
 
