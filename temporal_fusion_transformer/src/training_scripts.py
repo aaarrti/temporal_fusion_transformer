@@ -85,7 +85,7 @@ def train(
     data: Tuple[tf.data.Dataset, tf.data.Dataset],
     config: ConfigDict,
     epochs: int = 1,
-    batch_size: int,
+    batch_size: int | None = None,
     mixed_precision: bool = False,
     jit_module: bool = False,
     save_path: str | None = None,
@@ -140,7 +140,10 @@ def train(
     training_dataset, validation_dataset = data
 
     num_training_steps = int(training_dataset.cardinality())
-    first_x = training_dataset.as_numpy_iterator().next()[0][:batch_size]
+    first_x = training_dataset.as_numpy_iterator().next()[0]
+    
+    if batch_size is not None:
+        first_x = first_x[:batch_size]
 
     model = TemporalFusionTransformer.from_config_dict(config, jit_module=jit_module, dtype=compute_dtype)
 
