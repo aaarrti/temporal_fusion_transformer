@@ -3,7 +3,7 @@ name = "temporal_fusion_transformer"
 version = "0.0.1dev1"
 description = "TF2 re-write of Temporal Fusion Transformer model."
 readme = "Readme.md"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.8"
 authors = [
     { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" },
 ]
