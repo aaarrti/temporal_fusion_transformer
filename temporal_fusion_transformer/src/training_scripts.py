@@ -47,6 +47,7 @@ def train_experiment(
     prefetch_buffer_size: int = 2,
     dynamic_scale: DynamicScale | None = None,
     verbose: bool = True,
+    hooks: flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | None = None,
 ) -> flax_utils.MetricsAndParams:
     if mixed_precision:
         if device_type == "gpu":
@@ -77,6 +78,7 @@ def train_experiment(
         verbose=verbose,
         config=config,
         batch_size=batch_size,
+        hooks=hooks
     )
 
 
