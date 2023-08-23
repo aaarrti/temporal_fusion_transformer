@@ -8,7 +8,6 @@ from typing import final
 
 import polars as pl
 from absl import logging
-from absl_extra import keras_pbar
 from keras.utils.data_utils import _extract_archive
 from keras.utils import FeatureSpace
 from tqdm.auto import tqdm
