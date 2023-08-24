@@ -20,8 +20,8 @@ def get_config(choice: Choice = "electricity") -> ConfigDict:
 def get_hyperparams_config(choice: Choice = "electricity") -> ConfigDict:
     config = {
         "electricity": {
-            "num_attention_heads": 4,
-            "num_decoder_blocks": 1,
+            "num_attention_heads": 10,
+            "num_decoder_blocks": 5,
             "latent_dim": 160,
             "dropout_rate": 0.1,
             "quantiles": [0.1, 0.5, 0.9],

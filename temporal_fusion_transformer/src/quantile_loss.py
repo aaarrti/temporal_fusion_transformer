@@ -8,9 +8,7 @@ import jax.numpy as jnp
 from jax.tree_util import Partial
 from jaxtyping import AbstractDtype, Array, Float, jaxtyped
 
-QuantileLossFn = Callable[
-    [Float[Array, "batch time n"], Float[Array, "batch time n*q"]], Float[Array, "batch"]
-]
+QuantileLossFn = Callable[[Float[Array, "batch time n"], Float[Array, "batch time n*q"]], Float[Array, "batch"]]
 
 
 def make_quantile_loss_fn(quantiles: Sequence[float], dtype=jnp.float32) -> QuantileLossFn:

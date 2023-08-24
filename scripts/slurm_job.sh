@@ -8,5 +8,5 @@
 #SBATCH --output=logs/job-%j.out
 #SBATCH --mem-per-gpu=12G
 
-apptainer exec --nv images/image.sif python3 temporal_fusion_transformer/main.py \
+apptainer exec --nv --env-file .env images/image.sif python3 temporal_fusion_transformer/main.py \
   --batch_size=512 --mixed_precision=true --jit_module=true --task=model --experiment=electricity

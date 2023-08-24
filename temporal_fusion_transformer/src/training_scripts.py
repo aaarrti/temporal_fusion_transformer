@@ -48,6 +48,7 @@ def train_experiment(
     dynamic_scale: DynamicScale | None = None,
     verbose: bool = True,
     hooks: flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | None = None,
+    full_reshuffle: bool = False,
 ) -> flax_utils.MetricsAndParams:
     if mixed_precision:
         if device_type == "gpu":
@@ -65,6 +66,7 @@ def train_experiment(
         config.prng_seed,
         dtype=compute_dtype,
         shuffle_buffer_size=config.shuffle_buffer_size,
+        full_reshuffle=full_reshuffle,
     )
     return train(
         data=data,
@@ -78,7 +80,7 @@ def train_experiment(
         verbose=verbose,
         config=config,
         batch_size=batch_size,
-        hooks=hooks
+        hooks=hooks,
     )
 
 
@@ -143,7 +145,7 @@ def train(
 
     num_training_steps = int(training_dataset.cardinality())
     first_x = training_dataset.as_numpy_iterator().next()[0]
-    
+
     if batch_size is not None:
         first_x = first_x[:batch_size]
 
@@ -169,7 +171,7 @@ def train(
         loss_fn=loss_fn,
         dynamic_scale=dynamic_scale,
     )
-    
+
     if isinstance(hooks, Callable):
         hooks = hooks(num_training_steps)
     elif hooks is None:
@@ -177,20 +179,16 @@ def train(
         tensorboard_log_dir = f"tensorboard/{tag}"
 
         hooks = make_training_hooks(
-            num_training_steps,
-            epochs,
-            logdir=tensorboard_log_dir,
-            checkpoint_directory="checkpoints",
-            checkpoint_frequency=5,
-            log_frequency=(500, 100)
+            num_training_steps, epochs, logdir=tensorboard_log_dir, checkpoint_directory=None, log_frequency=(1000, 20)
         )
-    
-    def make_dataset_generator(ds: tf.data.Dataset) -> Callable[[], Generator[Tuple[InputStruct, jnp.ndarray], None, None]]:
-        
+
+    def make_dataset_generator(
+        ds: tf.data.Dataset,
+    ) -> Callable[[], Generator[Tuple[InputStruct, jnp.ndarray], None, None]]:
         def generator():
             for x, y in ds.as_numpy_iterator():
                 yield model.make_input_struct(x), jnp.asarray(y, dtype=compute_dtype)
-        
+
         return generator
 
     if multi_device:

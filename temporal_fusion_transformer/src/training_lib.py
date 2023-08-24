@@ -30,15 +30,14 @@ P = ParamSpec("P")
 
 
 class EarlyStoppingWrapper(PyTreeNode):
-    
     early_stopping: EarlyStopping
-    
+
     @property
     def should_stop(self):
         return self.early_stopping.should_stop
-    
+
     def __call__(self, *args, training_metrics: MetricContainer, **kwargs):
-        self.early_stopping.update(training_metrics.compute()['loss'])
+        self.early_stopping.update(training_metrics.compute()["loss"])
 
 
 class ApplyFunc(Protocol):
@@ -79,7 +78,7 @@ def make_training_hooks(
     delete_checkpoints_after_training: bool = True,
 ) -> flax_utils.TrainingHooks:
     logging.info(f"Writing tensorboard logs to {logdir}")
-    
+
     if isinstance(log_frequency, Tuple):
         write_metrics_frequency, report_progress_frequency = log_frequency
     else:
@@ -250,7 +249,12 @@ def multi_device_validation_step(
 
 
 def load_dataset(
-    data_dir: str, batch_size: int, prng_seed: int, shuffle_buffer_size: int = 2048, dtype=jnp.float32
+    data_dir: str,
+    batch_size: int,
+    prng_seed: int,
+    shuffle_buffer_size: int = 2048,
+    dtype=jnp.float32,
+    full_reshuffle: bool = False,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
 
@@ -262,6 +266,9 @@ def load_dataset(
         If set to None, will do a full-reshuffle.
     prng_seed
     dtype
+    full_reshuffle:
+        If set to true, will reshuffle complete dataset once before training.
+        Warning, this will need to load complete dataset into memory.
 
     Returns
     -------
@@ -273,22 +280,22 @@ def load_dataset(
     def downcast_input(x, y):
         return tf.cast(x, tf_dtype), tf.cast(y, tf_dtype)
 
-    def load_fn(split: Literal["training", "validation"], buffer_size: int) -> tf.data.Dataset:
+    def load_fn(split: Literal["training", "validation"]) -> tf.data.Dataset:
         ds = tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
 
-        if buffer_size == -1:
-            buffer_size = int(ds.cardinality())
+        if full_reshuffle:
+            ds = ds.shuffle(int(ds.cardinality()), seed=prng_seed, reshuffle_each_iteration=False)
 
         return (
-            ds.shuffle(buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
-            .batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+            ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+            .shuffle(shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
             .map(downcast_input)
             .cache()
             .prefetch(tf.data.AUTOTUNE)
         )
 
-    training_ds = load_fn("training", shuffle_buffer_size)
-    validation_ds = load_fn("validation", shuffle_buffer_size)
+    training_ds = load_fn("training")
+    validation_ds = load_fn("validation")
     return training_ds, validation_ds
 
 
