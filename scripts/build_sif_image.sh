@@ -6,4 +6,4 @@
 
 set -ex
 rm -f images/image.sif
-apptainer build images/image.sif images/image.def
+apptainer build --fakeroot images/image.sif images/image.def

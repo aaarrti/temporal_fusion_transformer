@@ -13,7 +13,7 @@ import jax
 import optax
 import orbax.checkpoint.checkpoint_utils
 import tensorflow as tf
-from absl import logging
+from absl import logging, app
 from absl_extra import flax_utils, clu_utils
 from absl_extra.typing_utils import ParamSpec
 from clu.metric_writers import SummaryWriter, AsyncMultiWriter, create_default_writer
@@ -266,7 +266,7 @@ def make_training_hooks(
                     "step_type": step_type,
                 }
                 flax_utils.save_as_msgpack(data, "fp_error.msgpack")
-            raise exception
+            raise
 
         hooks.on_error.append(persist_nan_causing_args)
 

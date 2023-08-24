@@ -2,13 +2,15 @@ Bootstrap: docker
 From: nvcr.io/nvdlfwea/jax/jax:23.07-py3
 
 %post -c /bin/bash
-    python3 -m pip install jaxtyping==0.2.20 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.13.0 optuna==3.3.0 slack_sdk==3.21.3
-    python3 -m pip cache purge
+    /usr/bin/python -m pip install \
+        jaxtyping==0.2.20 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.13.0 \
+        optuna==3.3.0 slack_sdk==3.21.3 orbax-checkpoint==0.3.5
 
 %environment
     export DEBIAN_FRONTEND=noninteractive
 
 %runscript
-    python3 -m pip install --upgrade absl_extra --user
-    python3 -m pip install -e . --user
+    #!/bin/bash
+    /usr/bin/python -m pip install --upgrade absl_extra
+    /usr/bin/python -m pip install .
     exec "$@"

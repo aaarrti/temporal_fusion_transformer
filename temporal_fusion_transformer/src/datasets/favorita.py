@@ -23,7 +23,7 @@ class Favorita(MultiHorizonTimeSeriesDataset):
     features = property(
         lambda self: OrderedDict(
             [
-                ("log_sales", FeatureSpace.float()),
+                ("log_sales", FeatureSpace.float_normalized()),
                 # static
                 ("item_nbr", self.integer_categorical()),
                 ("store_nbr", self.integer_categorical()),
@@ -35,7 +35,7 @@ class Favorita(MultiHorizonTimeSeriesDataset):
                 ("class", self.integer_categorical()),  # mb real?
                 ("perishable", self.integer_categorical()),
                 # known real
-                ("date", FeatureSpace.float()),
+                ("date", FeatureSpace.float_normalized()),
                 # known categorical
                 ("day_of_month", self.integer_categorical()),
                 ("month", self.integer_categorical()),
@@ -66,8 +66,6 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         return read_raw_csv(path, self.start_date, self.end_date)
 
     def split_data(self, df: pl.LazyFrame) -> Triple[pl.LazyFrame]:
-        from absl_extra.keras_pbar import keras_pbar
-
         time_steps = self.fixed_parameters.total_time_steps
         lookback = self.fixed_parameters.num_encoder_steps
         forecast_horizon = time_steps - lookback
@@ -120,7 +118,7 @@ class Favorita(MultiHorizonTimeSeriesDataset):
             if _extract_archive(f"{path}/favorita-grocery-sales-forecasting.zip", path):
                 os.remove(f"{path}/favorita-grocery-sales-forecasting.zip")
 
-            for i in keras_pbar(glob.glob(f"{path}/*.7z")):
+            for i in tqdm(glob.glob(f"{path}/*.7z")):
                 with py7zr.SevenZipFile(i, mode="r") as archive:
                     archive.extractall(path=path)
                 os.remove(i)
@@ -134,20 +132,20 @@ def read_raw_csv(
     end_date: datetime | None = None,
 ) -> pl.LazyFrame:
     temporal = make_temporal_dataframe(data_folder, start_date, end_date)
-    store_info = pl.scan_csv(f"{data_folder}/stores.csv")
-    items = pl.scan_csv(f"{data_folder}/items.csv")
-    transactions = pl.scan_csv(f"{data_folder}/transactions.csv", try_parse_dates=True)
+    store_info = pl.read_csv(f"{data_folder}/stores.csv")
+    items = pl.read_csv(f"{data_folder}/items.csv")
+    transactions = pl.read_csv(f"{data_folder}/transactions.csv", try_parse_dates=True)
 
     oil = (
-        pl.scan_csv(f"{data_folder}/oil.csv", try_parse_dates=True)
+        pl.read_csv(f"{data_folder}/oil.csv", try_parse_dates=True)
         .with_columns(pl.col("dcoilwtico").forward_fill())
         .filter(pl.col("dcoilwtico").is_not_null())
     )
 
-    holidays = pl.scan_csv(f"{data_folder}/holidays_events.csv", try_parse_dates=True)
+    holidays = pl.read_csv(f"{data_folder}/holidays_events.csv", try_parse_dates=True)
 
-    national_holidays = holidays.filter(pl.col("Locale") == "National")
-    regional_holidays = holidays.filter(pl.col("Locale") == "Regional").rename({"locale_name": "state"})
+    national_holidays = holidays.filter(pl.col("locale") == "National")
+    regional_holidays = holidays.filter(pl.col("locale") == "Regional").rename({"locale_name": "state"})
     local_holidays = holidays.filter(pl.col("locale") == "Local").rename({"locale_name": "city"})
 
     temporal = (
@@ -194,15 +192,16 @@ def make_temporal_dataframe(
     lazy_df = lazy_df.with_columns(open=pl.lit(1))
 
     df = lazy_df.collect()
-    columns_to_resample = [i for i in df.columns if i != "traj_id"]
+    columns_to_resample = [i for i in df.columns if i not in ("traj_id", "date")]
 
     # Resampling
     resampled_dfs = []
-    for traj_id, sub_df in (pbar := tqdm(df.groupby("traj_id"))):
-        pbar.desc = f"Resampling to {traj_id}"
-        lazy_sub_df: pl.LazyFrame = sub_df.lazy()
+    for traj_id, sub_df in tqdm(df.groupby("traj_id"), total=len(list(df.groupby("traj_id"))), desc="Resampling"):
+        sub_df: pl.DataFrame
         lazy_sub_df = (
-            lazy_sub_df.groupby_dynamic("traj_id", every="1d")
+            sub_df.lazy()
+            .sort(by="date")
+            .groupby_dynamic("date", every="1d")
             .agg([pl.col(i).mean() for i in columns_to_resample])
             .with_columns(
                 [
@@ -210,7 +209,7 @@ def make_temporal_dataframe(
                     pl.col("item_nbr").forward_fill(),
                     pl.col("onpromotion").forward_fill(),
                     pl.col("open").fill_null(0),
-                    pl.col("log_sales").log().alias("log_sales"),
+                    pl.col("unit_sales").log().alias("log_sales"),
                 ]
             )
             .drop(["unit_sales"])
@@ -218,5 +217,5 @@ def make_temporal_dataframe(
 
         resampled_dfs.append(lazy_sub_df)
 
-    lazy_df = pl.concat(resampled_dfs)
+    lazy_df = pl.concat(resampled_dfs).fetch()
     return lazy_df
