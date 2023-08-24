@@ -4,7 +4,7 @@ import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
 from absl import flags, logging
-from absl_extra import tasks, logging_utils, notifier
+from absl_extra import tasks, logging_utils, notifier, flax_utils
 from ml_collections import config_flags
 import platform
 import os
@@ -75,6 +75,7 @@ def train_model():
         FLAGS.full_reshuffle,
     )
     config = CONFIG.value
+
     tft.training_scripts.train_experiment(
         data_dir=data_dir,
         experiment_name=experiment,
@@ -87,6 +88,7 @@ def train_model():
         device_type="gpu",
         save_path="model.msgpack",
         full_reshuffle=full_reshuffle,
+        profile=True,
     )
 
 

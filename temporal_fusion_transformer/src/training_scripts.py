@@ -49,6 +49,7 @@ def train_experiment(
     verbose: bool = True,
     hooks: flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | None = None,
     full_reshuffle: bool = False,
+    profile: bool = False,
 ) -> flax_utils.MetricsAndParams:
     if mixed_precision:
         if device_type == "gpu":
@@ -68,6 +69,7 @@ def train_experiment(
         shuffle_buffer_size=config.shuffle_buffer_size,
         full_reshuffle=full_reshuffle,
     )
+    tensorboard_logdir = f"tensorboard/{experiment_name}"
     return train(
         data=data,
         device_type=device_type,
@@ -81,6 +83,8 @@ def train_experiment(
         config=config,
         batch_size=batch_size,
         hooks=hooks,
+        profile=profile,
+        tensorboard_logdir=tensorboard_logdir,
     )
 
 
@@ -98,6 +102,8 @@ def train(
     prefetch_buffer_size: int = 2,
     hooks: flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | None = None,
     verbose: bool = True,
+    tensorboard_logdir: str = None,
+    profile: bool = False,
 ) -> flax_utils.MetricsAndParams:
     """
 
@@ -126,6 +132,9 @@ def train(
         Custom loss scale to use for mixed float16 training.
     device_type:
         Relevant only for multi-device setting.
+    tensorboard_logdir:
+    profile
+
 
     Returns
     -------
@@ -172,14 +181,17 @@ def train(
         dynamic_scale=dynamic_scale,
     )
 
+    if tensorboard_logdir is None:
+        tensorboard_logdir = "tensorboard"
+
     if isinstance(hooks, Callable):
         hooks = hooks(num_training_steps)
     elif hooks is None:
         tag = make_timestamp_tag()
-        tensorboard_log_dir = f"tensorboard/{tag}"
+        tensorboard_logdir = f"{tensorboard_logdir}/{tag}"
 
         hooks = make_training_hooks(
-            num_training_steps, epochs, logdir=tensorboard_log_dir, checkpoint_directory=None, log_frequency=(1000, 20)
+            num_training_steps, epochs, logdir=tensorboard_logdir, profile=profile, save_path=save_path
         )
 
     def make_dataset_generator(
@@ -193,7 +205,7 @@ def train(
 
     if multi_device:
         (training_metrics, validation_metrics), params = flax_utils.fit_multi_device(
-            training_state=state,
+            state=state,
             training_dataset_factory=make_dataset_generator(training_dataset),
             validation_dataset_factory=make_dataset_generator(validation_dataset),
             metrics_container_type=MetricContainer,
@@ -207,7 +219,7 @@ def train(
         )
     else:
         (training_metrics, validation_metrics), params = flax_utils.fit_single_device(
-            training_state=state,
+            state=state,
             training_dataset_factory=make_dataset_generator(training_dataset),
             validation_dataset_factory=make_dataset_generator(validation_dataset),
             metrics_container_type=MetricContainer,
