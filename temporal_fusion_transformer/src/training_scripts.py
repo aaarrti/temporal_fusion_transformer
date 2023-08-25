@@ -9,6 +9,7 @@ from absl import logging
 from absl_extra import flax_utils
 from absl_extra.typing_utils import ParamSpec
 from flax.training.dynamic_scale import DynamicScale
+from flax.training.early_stopping import EarlyStopping
 from jax import numpy as jnp
 
 from temporal_fusion_transformer.src.config_dict import ConfigDict
@@ -179,6 +180,7 @@ def train(
         dropout_key=dropout_key,
         loss_fn=loss_fn,
         dynamic_scale=dynamic_scale,
+        early_stopping=EarlyStopping(),
     )
 
     if tensorboard_logdir is None:
@@ -233,8 +235,4 @@ def train(
         )
 
     logging.info(f"Finished training with: {training_metrics = }, {validation_metrics = }")
-
-    if save_path is None:
-        flax_utils.save_as_msgpack(params, save_path)
-
     return (training_metrics, validation_metrics), params

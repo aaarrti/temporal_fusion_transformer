@@ -7,7 +7,7 @@ import polars as pl
 import tensorflow as tf
 from functools import cached_property
 from keras.utils import FeatureSpace, timeseries_dataset_from_array
-from toolz.functoolz import reduce
+from toolz import functoolz
 from absl import logging
 from ordered_set import OrderedSet
 from tqdm.auto import tqdm
@@ -19,15 +19,6 @@ In the end, wee want n time series stacked over batch axis.
 """
 
 Triple = Tuple[T, T, T]
-# TODO: dynamically infer {
-#  num_outputs": ,
-#  "known_categories_sizes": ,
-#  "static_categories_sizes": ,
-#  "input_observed_idx": ,
-#  "input_static_idx": ,
-#  "input_known_real_idx": ,
-#  "input_known_categorical_idx": ,
-#  }
 
 
 class MultiHorizonTimeSeriesDataset(abc.ABC):
@@ -116,7 +107,7 @@ class MultiHorizonTimeSeriesDataset(abc.ABC):
         input_features = features_from_feature_space.symmetric_difference(OrderedSet(list(self.target_feature_names)))
         return list(input_features)
 
-    def _unpack_x_y(self, data: Dict[str, np.ndarray]) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+    def _unpack_x_y(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         data = tf.nest.map_structure(np.squeeze, data)
 
         y = [data.pop(i) for i in self.target_feature_names]
@@ -140,15 +131,24 @@ class MultiHorizonTimeSeriesDataset(abc.ABC):
             data_dict_i = {k: list(v.to_numpy()) for k, v in df_i.to_dict().items()}
             data_dict_i = feature_space(data_dict_i)
             x_i, y_i = self._unpack_x_y(data_dict_i)
-            time_series = timeseries_dataset_from_array(
-                x_i,
-                targets=y_i,
-                sequence_length=self.total_time_steps,
+            # for some reason, keras would generate targets of shape [1, n] and inputs [time_steps, n],
+            # but we need time-steps for y_batch also
+            num_inputs = x_i.shape[-1]
+            ts = tf.concat([tf.cast(x_i, tf.float32), y_i], axis=-1)
+            time_series: tf.data.Dataset = timeseries_dataset_from_array(
+                ts,
+                None,
+                self.total_time_steps,
                 batch_size=None,
+            )
+            time_series = time_series.map(
+                lambda x: (x[..., :num_inputs], x[..., num_inputs:]),
+                num_parallel_calls=tf.data.AUTOTUNE,
+                deterministic=False,
             )
             time_series_list.append(time_series)
 
-        return reduce(lambda a, b: a.concatenate(b), time_series_list)
+        return functoolz.reduce(lambda a, b: a.concatenate(b), time_series_list)
 
     @abc.abstractmethod
     def download_data(self, path: str):

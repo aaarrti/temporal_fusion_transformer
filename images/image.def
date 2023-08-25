@@ -3,7 +3,7 @@ From: nvcr.io/nvdlfwea/jax/jax:23.07-py3
 
 %post -c /bin/bash
     /usr/bin/python -m pip install \
-        jaxtyping==0.2.20 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.13.0 \
+        flax==0.7.2 jaxtyping==0.2.20 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.13.0 \
         optuna==3.3.0 slack_sdk==3.21.3 orbax-checkpoint==0.3.5
 
 %environment

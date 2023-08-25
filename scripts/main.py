@@ -4,7 +4,7 @@ import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
 from absl import flags, logging
-from absl_extra import tasks, logging_utils, notifier, flax_utils
+from absl_extra import tasks, logging_utils, notifier
 from ml_collections import config_flags
 import platform
 import os

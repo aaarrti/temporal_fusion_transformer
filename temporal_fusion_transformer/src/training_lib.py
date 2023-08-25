@@ -13,14 +13,14 @@ import jax
 import optax
 import orbax.checkpoint.checkpoint_utils
 import tensorflow as tf
-from absl import logging, app
+from absl import logging
 from absl_extra import flax_utils, clu_utils
 from absl_extra.typing_utils import ParamSpec
 from clu.metric_writers import SummaryWriter, AsyncMultiWriter, create_default_writer
 from clu.metrics import Average
 from etils import epath
 from flax.core.frozen_dict import FrozenDict
-from flax.struct import dataclass, field, PyTreeNode
+from flax.struct import dataclass, field
 from flax.training.dynamic_scale import DynamicScale
 from flax.training.early_stopping import EarlyStopping
 from flax.training.train_state import TrainState
@@ -38,15 +38,12 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-class EarlyStoppingWrapper(PyTreeNode):
-    early_stopping: EarlyStopping
+class EarlyStoppingAdapter:
+    should_stop: bool = False
 
-    @property
-    def should_stop(self):
-        return self.early_stopping.should_stop
-
-    def __call__(self, *args, training_metrics: MetricContainer, **kwargs):
-        self.early_stopping.update(training_metrics.compute()["loss"])
+    def __call__(self, *args, training_state: TrainStateContainer, **kwargs):
+        if training_state.early_stopping is not None:
+            self.should_stop = training_state.early_stopping.should_stop
 
 
 class ApplyFunc(Protocol):
@@ -81,6 +78,7 @@ class TrainStateContainer(TrainState):
     loss_fn: QuantileLossFn = field(pytree_node=False)
     dropout_key: PRNGKeyArray
     dynamic_scale: DynamicScale | None = None
+    early_stopping: EarlyStopping | None = None
 
 
 def create_writer(logdir: str, collection: str) -> AsyncMultiWriter:
@@ -94,7 +92,6 @@ def make_training_hooks(
     num_training_steps: int,
     epochs: int,
     logdir: str,
-    add_early_stopping: bool = True,
     profile: bool = False,
     checkpoint_directory: str = "checkpoints",
     delete_checkpoints_after_training: bool = True,
@@ -139,7 +136,7 @@ def make_training_hooks(
 
     write_validation_metrics = flax_utils.UncheckedPeriodicCallback(
         # I am not sure if the range is inclusive or exclusive
-        every_steps=[num_training_steps - 1, num_training_steps, num_training_steps + 1],
+        every_steps=1,
         callback_fn=write_validation_metrics_fn,
         execute_async=True,
     )
@@ -165,12 +162,7 @@ def make_training_hooks(
         report_progress(step)
 
     hooks.on_step_end.append(report_progress_func)
-
-    if add_early_stopping:
-        early_stopping = EarlyStopping(patience=50, min_delta=0.1)
-        early_stopping = EarlyStoppingWrapper(early_stopping=early_stopping)
-
-        hooks.on_step_end.append(early_stopping)
+    hooks.on_step_end.append(EarlyStoppingAdapter())
 
     if profile:
         if not_running_on_linux:
@@ -215,9 +207,7 @@ def make_training_hooks(
             restore_args = orbax.checkpoint.checkpoint_utils.construct_restore_args(training_state)
             restored_dict = mngr.restore(latest_step, restore_kwargs={"restore_args": restore_args})
 
-            restored_optimizer = tree_util.tree_unflatten(
-                tree_util.tree_flatten(training_state.opt_state)[1], tree_util.tree_leaves(restored_dict["opt_state"])
-            )
+            restored_optimizer = restore_optimizer_state(training_state.opt_state, restored_dict["opt_state"])
             return training_state.replace(
                 dropout_key=restored_dict["dropout_key"],
                 params=restored_dict["params"],
@@ -305,6 +295,9 @@ def single_device_train_step(
             params=jax.tree_util.tree_map(select_fn, state.params, state.params),
         )
 
+    if state.early_stopping is not None:
+        state = state.replace(early_stopping=state.early_stopping.update(loss)[1])
+
     metrics = MetricContainer.single_from_model_output(loss=loss)
     return state, metrics
 
@@ -351,6 +344,10 @@ def multi_device_train_step(
             opt_state=jax.tree_util.tree_map(select_fn, state.opt_state, state.opt_state),
             params=jax.tree_util.tree_map(select_fn, state.params, state.params),
         )
+
+    if state.early_stopping is not None:
+        loss = lax.pmean(loss, axis_name="i")
+        state = state.replace(early_stopping=state.early_stopping.update(loss)[1])
 
     metrics = MetricContainer.gather_from_model_output(loss=loss, axis_name="i")
     return state, metrics
@@ -434,3 +431,7 @@ def make_optimizer(config: OptimizerConfig, num_training_steps: int, epochs: int
         tx = optax.chain(tx, optax.ema(config.ema))
 
     return tx
+
+
+def restore_optimizer_state(opt_state, restored):
+    return tree_util.tree_unflatten(tree_util.tree_flatten(opt_state)[1], tree_util.tree_leaves(restored))
