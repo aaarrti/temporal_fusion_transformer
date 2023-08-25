@@ -88,7 +88,6 @@ def train_model():
         device_type="gpu",
         save_path="model.msgpack",
         full_reshuffle=full_reshuffle,
-        profile=True,
     )
 
 

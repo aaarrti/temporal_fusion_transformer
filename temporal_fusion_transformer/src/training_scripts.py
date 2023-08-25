@@ -25,6 +25,8 @@ from temporal_fusion_transformer.src.training_lib import (
     multi_device_validation_step,
     single_device_train_step,
     single_device_validation_step,
+    early_stopping_wrapper,
+    early_stopping_wrapper_distributed,
 )
 
 P = ParamSpec("P")
@@ -69,6 +71,7 @@ def train_experiment(
         dtype=compute_dtype,
         shuffle_buffer_size=config.shuffle_buffer_size,
         full_reshuffle=full_reshuffle,
+        num_encoder_steps=config.fixed_params.num_encoder_steps,
     )
     tensorboard_logdir = f"tensorboard/{experiment_name}"
     return train(
@@ -142,6 +145,8 @@ def train(
 
     """
 
+    raise RuntimeError("bla")
+
     if mixed_precision:
         if device_type == "gpu":
             compute_dtype = jnp.float16
@@ -180,7 +185,7 @@ def train(
         dropout_key=dropout_key,
         loss_fn=loss_fn,
         dynamic_scale=dynamic_scale,
-        early_stopping=EarlyStopping(),
+        early_stopping=EarlyStopping(best_metric=999, min_delta=0.1, patience=100),
     )
 
     if tensorboard_logdir is None:
@@ -211,7 +216,7 @@ def train(
             training_dataset_factory=make_dataset_generator(training_dataset),
             validation_dataset_factory=make_dataset_generator(validation_dataset),
             metrics_container_type=MetricContainer,
-            training_step_func=multi_device_train_step,
+            training_step_func=early_stopping_wrapper_distributed(multi_device_train_step),
             validation_step_func=multi_device_validation_step,
             epochs=epochs,
             hooks=hooks,
@@ -225,7 +230,7 @@ def train(
             training_dataset_factory=make_dataset_generator(training_dataset),
             validation_dataset_factory=make_dataset_generator(validation_dataset),
             metrics_container_type=MetricContainer,
-            training_step_func=single_device_train_step,
+            training_step_func=early_stopping_wrapper(single_device_train_step),
             validation_step_func=single_device_validation_step,
             epochs=epochs,
             hooks=hooks,

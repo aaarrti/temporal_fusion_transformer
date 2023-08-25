@@ -5,7 +5,7 @@ import os
 import platform
 from pathlib import Path
 from traceback import format_exception
-from typing import Literal, Mapping, Protocol, Tuple, TypeVar
+from typing import Literal, Mapping, Protocol, Tuple, TypeVar, Callable
 
 import clu.metric_writers
 import clu.periodic_actions
@@ -24,11 +24,13 @@ from flax.struct import dataclass, field
 from flax.training.dynamic_scale import DynamicScale
 from flax.training.early_stopping import EarlyStopping
 from flax.training.train_state import TrainState
+from flax import jax_utils
 from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 from jaxtyping import Array, Float, PRNGKeyArray, Scalar, jaxtyped
-from orbax.checkpoint import CheckpointManagerOptions, CheckpointManager, PyTreeCheckpointHandler, AsyncCheckpointer
+from orbax.checkpoint import CheckpointManagerOptions, PyTreeCheckpointHandler, AsyncCheckpointer, CheckpointManager
+import orbax.checkpoint
 
 from temporal_fusion_transformer.src.config_dict import OptimizerConfig
 from temporal_fusion_transformer.src.quantile_loss import QuantileLossFn
@@ -36,14 +38,6 @@ from temporal_fusion_transformer.src.tft_layers import InputStruct
 
 P = ParamSpec("P")
 R = TypeVar("R")
-
-
-class EarlyStoppingAdapter:
-    should_stop: bool = False
-
-    def __call__(self, *args, training_state: TrainStateContainer, **kwargs):
-        if training_state.early_stopping is not None:
-            self.should_stop = training_state.early_stopping.should_stop
 
 
 class ApplyFunc(Protocol):
@@ -162,7 +156,6 @@ def make_training_hooks(
         report_progress(step)
 
     hooks.on_step_end.append(report_progress_func)
-    hooks.on_step_end.append(EarlyStoppingAdapter())
 
     if profile:
         if not_running_on_linux:
@@ -183,7 +176,7 @@ def make_training_hooks(
         checkpoint_directory = Path(checkpoint_directory).absolute().as_posix()
 
         options = CheckpointManagerOptions(
-            save_interval_steps=50,
+            save_interval_steps=200,
             max_to_keep=5,
             cleanup_tmp_directories=True,
             best_mode="min",
@@ -229,7 +222,7 @@ def make_training_hooks(
 
         if save_path is not None:
 
-            def save_weight_fn(*args, training_state: TrainStateContainer, **kwargs):
+            def save_weight_fn(training_state: TrainStateContainer):
                 flax_utils.save_as_msgpack(training_state.params, save_path)
 
             hooks.on_training_end.append(save_weight_fn)
@@ -263,13 +256,46 @@ def make_training_hooks(
     return hooks
 
 
+StateAndMetrics = Tuple[TrainStateContainer, MetricContainer]
+StepFn = Callable[[TrainStateContainer, InputStruct, Float[Array, "batch time n"]], StateAndMetrics]
+
+
+def early_stopping_wrapper(func: StepFn) -> StepFn:
+    @functools.wraps(func)
+    def wrapper(
+        state: TrainStateContainer, x_batch: InputStruct, y_batch: Float[Array, "batch time n"]
+    ) -> StateAndMetrics:
+        state, metrics = func(state, x_batch, y_batch)
+        if state.early_stopping is not None:
+            state = state.replace(early_stopping=state.early_stopping.update(metrics.compute()["loss"])[1])
+        return state, metrics
+
+    return wrapper
+
+
+def early_stopping_wrapper_distributed(func: StepFn) -> StepFn:
+    @functools.wraps(func)
+    def wrapper(
+        state: TrainStateContainer, x_batch: InputStruct, y_batch: Float[Array, "batch time n"]
+    ) -> StateAndMetrics:
+        state, metrics = func(state, x_batch, y_batch)
+        if state.early_stopping is not None:
+            loss = metrics.unreplicate().compute()["loss"]
+            early_stopping: EarlyStopping = jax_utils.unreplicate(state.early_stopping)
+            early_stopping = jax_utils.replicate(early_stopping.update(loss)[1])
+            state = state.replace(early_stopping=early_stopping)
+        return state, metrics
+
+    return wrapper
+
+
 @jaxtyped
 @jax.jit
 def single_device_train_step(
     state: TrainStateContainer,
     x_batch: InputStruct,
     y_batch: Float[Array, "batch time n"],
-) -> Tuple[TrainStateContainer, MetricContainer]:
+) -> StateAndMetrics:
     dropout_train_key = jax.random.fold_in(key=state.dropout_key, data=state.step)
 
     def loss_fn(params: FrozenDict) -> Float[Scalar]:
@@ -295,9 +321,6 @@ def single_device_train_step(
             params=jax.tree_util.tree_map(select_fn, state.params, state.params),
         )
 
-    if state.early_stopping is not None:
-        state = state.replace(early_stopping=state.early_stopping.update(loss)[1])
-
     metrics = MetricContainer.single_from_model_output(loss=loss)
     return state, metrics
 
@@ -308,7 +331,7 @@ def single_device_validation_step(
     state: TrainStateContainer,
     x_batch: InputStruct,
     y_batch: Float[Array, "batch time n"],
-) -> MetricContainer:
+) -> StateAndMetrics:
     y = state.apply_fn({"params": state.params}, x_batch)
     loss = state.loss_fn(y_batch, y).mean()
     metrics = MetricContainer.single_from_model_output(loss=loss)
@@ -345,10 +368,6 @@ def multi_device_train_step(
             params=jax.tree_util.tree_map(select_fn, state.params, state.params),
         )
 
-    if state.early_stopping is not None:
-        loss = lax.pmean(loss, axis_name="i")
-        state = state.replace(early_stopping=state.early_stopping.update(loss)[1])
-
     metrics = MetricContainer.gather_from_model_output(loss=loss, axis_name="i")
     return state, metrics
 
@@ -371,6 +390,7 @@ def load_dataset(
     data_dir: str,
     batch_size: int,
     prng_seed: int,
+    num_encoder_steps: int,
     shuffle_buffer_size: int = 2048,
     dtype=jnp.float32,
     full_reshuffle: bool = False,
@@ -385,6 +405,8 @@ def load_dataset(
         If set to None, will do a full-reshuffle.
     prng_seed
     dtype
+    num_encoder_steps:
+        Number of time steps to consider as past. Those steps will be discarded from y_batch.
     full_reshuffle:
         If set to true, will reshuffle complete dataset once before training.
         Warning, this will need to load complete dataset into memory.
@@ -409,6 +431,7 @@ def load_dataset(
             ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
             .shuffle(shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
             .map(downcast_input)
+            .map(lambda x, y: (x, y[:, num_encoder_steps:]))
             .cache()
             .prefetch(tf.data.AUTOTUNE)
         )

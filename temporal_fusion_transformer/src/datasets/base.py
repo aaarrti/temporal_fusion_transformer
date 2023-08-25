@@ -132,7 +132,8 @@ class MultiHorizonTimeSeriesDataset(abc.ABC):
             data_dict_i = feature_space(data_dict_i)
             x_i, y_i = self._unpack_x_y(data_dict_i)
             # for some reason, keras would generate targets of shape [1, n] and inputs [time_steps, n],
-            # but we need time-steps for y_batch also
+            # but we need time-steps for y_batch also, we need is [time_steps, m]. We don't need `sequence_stride`,
+            # since we don't want any synthetic repetitions.
             num_inputs = x_i.shape[-1]
             ts = tf.concat([tf.cast(x_i, tf.float32), y_i], axis=-1)
             time_series: tf.data.Dataset = timeseries_dataset_from_array(
