@@ -82,14 +82,14 @@ class TemporalFusionTransformer(nn.Module):
     known_categories_sizes: Sequence[int]
     num_encoder_steps: int
     total_time_steps: int
+    num_outputs: int
     # hyperparameters
     latent_dim: int
     num_attention_heads: int
     num_decoder_blocks: int = 1
     dropout_rate: float = 0.1
+    attention_dropout_rate: float = 0.1
     num_quantiles: int = 3
-    # cause by data
-    num_outputs: int = 1
     # optional, as sometimes can be deduced from input.
     input_observed_idx: Sequence[int] | None = None
     input_static_idx: Sequence[int] | None = None
@@ -99,6 +99,7 @@ class TemporalFusionTransformer(nn.Module):
     num_known_real_inputs: int | None = None
     num_known_categorical_inputs: int | None = None
     num_static_inputs: int | None = None
+    # ...
     return_attention: bool = False
     dtype: ComputeDtype = jnp.float32
 
@@ -192,7 +193,7 @@ class TemporalFusionTransformer(nn.Module):
 
         outputs = TimeDistributed(
             nn.Dense(self.num_outputs * self.num_quantiles, dtype=self.dtype),
-        )(decoder_in[:, self.num_encoder_steps : self.total_time_steps])
+        )(decoder_in[:, self.num_encoder_steps: self.total_time_steps])
 
         if self.return_attention:
             return TftOutputs(
@@ -259,6 +260,11 @@ class TemporalFusionTransformer(nn.Module):
 
         if input_observed_idx is None:
             raise ValueError(f"When providing inputs as arrays, must specify provide `input_observed_idx`")
+
+        input_static_idx = list(input_static_idx)
+        input_known_real_idx = list(input_known_real_idx)
+        input_known_categorical_idx = list(input_known_categorical_idx)
+        input_observed_idx = list(input_observed_idx)
 
         declared_num_features = (
             len(input_static_idx)
@@ -343,6 +349,7 @@ class TemporalFusionTransformer(nn.Module):
             num_quantiles=len(hyperparams.quantiles),
             num_outputs=fixed_params.num_outputs,
             total_time_steps=fixed_params.total_time_steps,
+            attention_dropout_rate=hyperparams.attention_dropout_rate,
             dtype=dtype,
         )
         return model

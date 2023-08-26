@@ -31,6 +31,7 @@ class HyperParamsConfig(Protocol):
     latent_dim: int
     dropout_rate: int
     quantiles: Sequence[float]
+    attention_dropout_rate: float
 
 
 class FixedParamsConfig(Protocol):

@@ -384,12 +384,13 @@ class DecoderBlock(nn.Module):
     num_attention_heads: int
     latent_dim: int
     dropout_rate: float
+    attention_dropout_rate: float = 0.1
     dtype: ComputeDtype = jnp.float32
 
     @nn.compact
     def __call__(self, inputs: jnp.ndarray, training: bool, mask: jnp.ndarray | None = None) -> jnp.ndarray:
         x = nn.SelfAttention(num_heads=self.num_attention_heads, dtype=self.dtype)(
-            inputs, mask=mask, deterministic=True
+            inputs, mask=mask, deterministic=not training, dropout_rate=self.attention_dropout_rate
         )
         x, _ = GatedLinearUnit(
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
