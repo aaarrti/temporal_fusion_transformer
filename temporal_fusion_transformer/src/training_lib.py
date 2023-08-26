@@ -6,6 +6,7 @@ import platform
 from pathlib import Path
 from traceback import format_exception
 from typing import Literal, Mapping, Protocol, Tuple, TypeVar, Callable
+import gc
 
 import clu.metric_writers
 import clu.periodic_actions
@@ -28,8 +29,9 @@ from flax.training.train_state import TrainState
 from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
-from jaxtyping import Array, Float, PRNGKeyArray, Scalar, jaxtyped
+from jaxtyping import Array, Float, PRNGKeyArray, Scalar
 from orbax.checkpoint import CheckpointManagerOptions, PyTreeCheckpointHandler, AsyncCheckpointer
+from absl_extra.slurm_utils import JobCanceledException
 
 from temporal_fusion_transformer.src.config_dict import OptimizerConfig
 from temporal_fusion_transformer.src.metrics import MetricContainer
@@ -39,12 +41,6 @@ from temporal_fusion_transformer.src.tft_layers import InputStruct
 P = ParamSpec("P")
 R = TypeVar("R")
 T = TypeVar("T")
-
-
-class CheckpointManager(orbax.checkpoint.CheckpointManager):
-    
-    def should_save(self, step: int) -> bool:
-        return step % self._options.save_interval_steps == 0 or step in self._options.save_on_steps
 
 
 class ApplyFunc(Protocol):
@@ -57,7 +53,12 @@ class ApplyFunc(Protocol):
         rngs: Mapping[str, PRNGKeyArray] | None = None,
     ) -> Float[Array, "batch time n"]:
         ...
+    
 
+class CheckpointManager(orbax.checkpoint.CheckpointManager):
+    def should_save(self, step: int) -> bool:
+        return step % self._options.save_interval_steps == 0 or step in self._options.save_on_steps
+    
 
 class NoOpWriter:
     def flush(self):
@@ -67,7 +68,6 @@ class NoOpWriter:
         pass
 
 
-@jaxtyped
 class TrainStateContainer(TrainState):
     apply_fn: ApplyFunc = field(pytree_node=False)
     loss_fn: QuantileLossFn = field(pytree_node=False)
@@ -94,6 +94,7 @@ def make_training_hooks(
     log_metrics_frequency: bool = 100,
     monitor_exception: bool = True,
     save_path: str | None = None,
+    save_checkpoint_on_sigterm: bool = True,
 ) -> flax_utils.TrainingHooks:
     logging.info(f"Writing tensorboard logs to {logdir}")
 
@@ -130,7 +131,6 @@ def make_training_hooks(
     )
 
     write_validation_metrics = flax_utils.UncheckedPeriodicCallback(
-        # I am not sure if the range is inclusive or exclusive
         every_steps=1,
         callback_fn=write_validation_metrics_fn,
         execute_async=True,
@@ -155,12 +155,14 @@ def make_training_hooks(
 
     def report_progress_func(step: int, *args, **kwargs):
         report_progress(step)
-    
-    def maybe_replace_early_stopping(*args, training_state: TrainStateContainer, training_metrics: MetricContainer, **kwargs):
+
+    def maybe_replace_early_stopping(
+        *args, training_state: TrainStateContainer, training_metrics: MetricContainer, **kwargs
+    ):
         if training_state.early_stopping is not None:
             early_stopping = training_state.early_stopping.update(training_metrics.compute()["loss"])[1]
             return {"training_state": training_state.replace(early_stopping=early_stopping)}
-        
+
     hooks.on_step_end.append(report_progress_func)
     hooks.on_step_end.append(maybe_replace_early_stopping)
 
@@ -169,7 +171,11 @@ def make_training_hooks(
             logging.warning("Profiling is only supported for linux hosts.")
         else:
             profiler = clu.periodic_actions.Profile(
-                logdir=logdir, profile_duration_ms=None, every_secs=None, first_profile=5
+                logdir=logdir,
+                profile_duration_ms=None,
+                every_secs=None,
+                first_profile=5,
+                every_steps=200,
             )
 
             def call_profiler(step: int, **kwargs):
@@ -236,6 +242,20 @@ def make_training_hooks(
 
             hooks.on_training_end.append(save_weight_fn)
 
+        if save_checkpoint_on_sigterm:
+
+            def save_checkpoint_on_preemption(
+                state: TrainStateContainer,
+                x_batch,
+                y_batch,
+                step_type,
+                exception: Exception,
+            ):
+                if isinstance(exception, JobCanceledException):
+                    mngr.save(int(state.step), state, force=True)
+
+            hooks.on_error.append(save_checkpoint_on_preemption)
+
     if monitor_exception:
 
         def persist_nan_causing_args(
@@ -261,7 +281,11 @@ def make_training_hooks(
             raise
 
         hooks.on_error.append(persist_nan_causing_args)
-
+    
+    def run_gc(*args, **kwargs):
+        gc.collect()
+    
+    hooks.on_step_end.append(run_gc)
     return hooks
 
 
@@ -269,7 +293,6 @@ StateAndMetrics = Tuple[TrainStateContainer, MetricContainer]
 StepFn = Callable[[TrainStateContainer, InputStruct, Float[Array, "batch time n"]], StateAndMetrics]
 
 
-@jaxtyped
 @jax.jit
 def single_device_train_step(
     state: TrainStateContainer,
@@ -305,7 +328,6 @@ def single_device_train_step(
     return state, metrics
 
 
-@jaxtyped
 @jax.jit
 def single_device_validation_step(
     state: TrainStateContainer,
@@ -318,7 +340,6 @@ def single_device_validation_step(
     return metrics
 
 
-@jaxtyped
 @functools.partial(jax.pmap, axis_name="i")
 def multi_device_train_step(
     state: TrainStateContainer,
@@ -352,7 +373,6 @@ def multi_device_train_step(
     return state, metrics
 
 
-@jaxtyped
 @functools.partial(jax.pmap, axis_name="i")
 def multi_device_validation_step(
     state: TrainStateContainer,
@@ -405,12 +425,18 @@ def load_dataset(
         ds = tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
 
         if full_reshuffle:
-            ds = ds.shuffle(int(ds.cardinality()), seed=prng_seed, reshuffle_each_iteration=False)
-
-        return (
-            ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+            ds = (
+                ds.shuffle(int(ds.cardinality()), seed=prng_seed, reshuffle_each_iteration=False)
+                .batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+            )
+        else:
+            ds = (
+                ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
             .shuffle(shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
-            .map(downcast_input)
+            )
+            
+        return (
+            ds.map(downcast_input)
             .map(lambda x, y: (x, y[:, num_encoder_steps:]))
             .cache()
             .prefetch(tf.data.AUTOTUNE)

@@ -181,7 +181,7 @@ def train(
         dropout_key=dropout_key,
         loss_fn=loss_fn,
         dynamic_scale=dynamic_scale,
-        # early_stopping=EarlyStopping(best_metric=999, min_delta=0.1, patience=50),
+        early_stopping=EarlyStopping(best_metric=999, min_delta=0.1, patience=100),
     )
 
     if tensorboard_logdir is None:

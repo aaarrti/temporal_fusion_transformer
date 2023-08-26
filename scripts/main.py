@@ -3,7 +3,7 @@ from __future__ import annotations
 import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
-from absl import flags, logging
+from absl import flags
 from absl_extra import tasks, logging_utils, notifier
 from ml_collections import config_flags
 import platform
@@ -33,27 +33,6 @@ CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_tran
 logging_utils.setup_logging(log_level="INFO")
 
 
-@tasks.register_task(name="data")
-def make_dataset_task():
-    experiment_factories = {
-        "electricity": tft.datasets.Electricity,
-        "favorita": tft.datasets.Favorita,
-    }
-
-    data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
-
-    data_dir = f"{data_dir}/{experiment_name}"
-    experiment: tft.datasets.MultiHorizonTimeSeriesDataset = experiment_factories[experiment_name]()
-    (train_ds, val_ds, test_ds), feature_space = experiment.make_dataset(data_dir)
-    logging.info(f"Saving training split")
-    train_ds.save(f"{data_dir}/training", compression="GZIP")
-    logging.info(f"Saving validation split")
-    val_ds.save(f"{data_dir}/validation", compression="GZIP")
-    logging.info(f"Saving test split")
-    test_ds.save(f"{data_dir}/test", compression="GZIP")
-    feature_space.save(f"{data_dir}/features_space.keras")
-
-
 def make_notifier():
     if platform.system().lower() == "linux":
         return notifier.SlackNotifier(
@@ -63,7 +42,7 @@ def make_notifier():
         return notifier.NoOpNotifier()
 
 
-@tasks.register_task(name="model", notifier=make_notifier)
+@tasks.register_task(notifier=make_notifier)
 def train_model():
     data_dir, experiment, epochs, batch_size, mixed_precision, jit_module, full_reshuffle = (
         FLAGS.data_dir,

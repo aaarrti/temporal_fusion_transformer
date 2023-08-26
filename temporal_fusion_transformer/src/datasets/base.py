@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import abc
+from abc import ABC, abstractmethod
 from typing import TypeVar, Tuple, Dict, List, ClassVar, OrderedDict, Sequence
 import numpy as np
 import polars as pl
@@ -21,7 +21,7 @@ In the end, wee want n time series stacked over batch axis.
 Triple = Tuple[T, T, T]
 
 
-class MultiHorizonTimeSeriesDataset(abc.ABC):
+class MultiHorizonTimeSeriesDataset(ABC):
 
     """
 
@@ -59,8 +59,8 @@ class MultiHorizonTimeSeriesDataset(abc.ABC):
         -------
 
         """
-
-        self.download_data(path)
+        if self.needs_download(path):
+            self.download_data(path)
         df = self.read_csv(path)
 
         nulls = df.select([pl.col(i).null_count() for i in df.columns])
@@ -151,17 +151,17 @@ class MultiHorizonTimeSeriesDataset(abc.ABC):
 
         return functoolz.reduce(lambda a, b: a.concatenate(b), time_series_list)
 
-    @abc.abstractmethod
+    @abstractmethod
     def download_data(self, path: str):
         """Download raw data into `path` directory."""
         raise NotImplementedError
 
-    @abc.abstractmethod
+    @abstractmethod
     def read_csv(self, path: str) -> pl.DataFrame | pl.LazyFrame:
         """Read raw data from `path` directory, do necessary preprocessing."""
         raise NotImplementedError
 
-    @abc.abstractmethod
+    @abstractmethod
     def split_data(self, df: pl.DataFrame | pl.LazyFrame) -> Triple[pl.DataFrame | pl.LazyFrame]:
         """Split data into training/validation/test."""
         raise NotImplementedError
@@ -175,3 +175,7 @@ class MultiHorizonTimeSeriesDataset(abc.ABC):
     def string_categorical() -> FeatureSpace.Feature:
         """Just a shortcut to avoid typing the same long types."""
         return FeatureSpace.string_categorical(num_oov_indices=0, output_mode="int")
+    
+    @abstractmethod
+    def needs_download(self, path: str) -> bool:
+        raise NotImplementedError

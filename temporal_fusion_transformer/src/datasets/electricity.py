@@ -5,6 +5,7 @@ import pathlib
 from collections import OrderedDict
 from functools import cached_property
 from typing import final, NamedTuple
+from pathlib import Path
 
 import polars as pl
 from absl import logging
@@ -81,35 +82,43 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         )
         test_df = df.filter(pl.col("days_from_start") >= self.test_boundary - SPLIT_OVERLAP_DAYS)
         return train_df, validation_df, test_df
+    
+    def needs_download(self, path: str) -> bool:
+        if Path(f"{path}/LD2011_2014.csv").exists():
+            logging.info(f"Found {path}/LD2011_2014.csv locally, will skip download.")
+            return False
+        else:
+            return True
 
     def download_data(self, path: str):
-        if pathlib.Path(f"{path}/LD2011_2014.txt").exists():
-            logging.info(f"Found dataset in {path}/LD2011_2014.txt, will skip download.")
-            return
-
         pathlib.Path(path).mkdir(exist_ok=True)
         logging.info(f"Downloading LD2011_2014.txt.zip")
         get_file(
-            origin=f"https://archive.ics.uci.edu/ml/machine-learning-databases/00321/LD2011_2014.txt.zip",
-            cache_dir=path,
-            extract=True,
-            archive_format="zip",
-            cache_subdir=".",
-        )
+                origin=f"https://archive.ics.uci.edu/ml/machine-learning-databases/00321/LD2011_2014.txt.zip",
+                cache_dir=path,
+                extract=True,
+                archive_format="zip",
+                cache_subdir=".",
+            )
         os.remove(f"{path}/LD2011_2014.txt.zip")
+            
+        with open(f"{path}/LD2011_2014.txt", "r") as file:
+            txt_content = file.read()
+
+        csv_content = txt_content.replace(",", ".").replace(";", ",")
+
+        with open(f"{path}/LD2011_2014.csv", "w+") as file:
+            file.write(csv_content)
 
     def read_csv(self, path: str) -> pl.DataFrame:
         return read_raw_csv(path)
 
 
 def read_raw_csv(path: str) -> pl.DataFrame:
-    lazy_df = pl.read_csv(f"{path}/LD2011_2014.txt", separator=";", use_pyarrow=True).lazy()
-    lazy_df = lazy_df.rename({"column_0": "timestamp"})
-
-    # parse numbers with `,` into normal format (and convert to float).
+    lazy_df = pl.scan_csv(f"{path}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True)
+    lazy_df = lazy_df.rename({"": "timestamp"})
+    
     num_cols = lazy_df.columns[1:]
-    lazy_df = lazy_df.with_columns([pl.col(i).str.replace(",", ".").cast(pl.Float32) for i in num_cols])
-
     lazy_df = lazy_df.sort(by="timestamp")
     # down sample to 1h https://pola-rs.github.io/polars-book/user-guide/transformations/time-series/rolling/
     lazy_df = lazy_df.groupby_dynamic("timestamp", every="1h").agg([pl.col(i).mean() for i in num_cols])
