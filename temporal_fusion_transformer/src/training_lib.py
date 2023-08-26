@@ -1,37 +1,35 @@
 from __future__ import annotations
 
 import functools
+import gc
 import os
 import platform
 from pathlib import Path
-from traceback import format_exception
-from typing import Literal, Mapping, Protocol, Tuple, TypeVar, Callable
-import gc
+from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, Tuple, TypeVar
 
 import clu.metric_writers
 import clu.periodic_actions
 import jax
 import optax
 import orbax.checkpoint
-import orbax.checkpoint
 import orbax.checkpoint.checkpoint_utils
-import tensorflow as tf
 from absl import logging
 from absl_extra import flax_utils
+from absl_extra.slurm_utils import JobCanceledException
 from absl_extra.typing_utils import ParamSpec
-from clu.metric_writers import SummaryWriter, AsyncMultiWriter, create_default_writer
+from clu.metric_writers import AsyncMultiWriter, SummaryWriter, create_default_writer
 from etils import epath
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import field
-from flax.training.early_stopping import EarlyStopping
 from flax.training.dynamic_scale import DynamicScale
+from flax.training.early_stopping import EarlyStopping
 from flax.training.train_state import TrainState
 from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 from jaxtyping import Array, Float, PRNGKeyArray, Scalar
-from orbax.checkpoint import CheckpointManagerOptions, PyTreeCheckpointHandler, AsyncCheckpointer
-from absl_extra.slurm_utils import JobCanceledException
+from ml_collections import ConfigDict
+from orbax.checkpoint import AsyncCheckpointer, CheckpointManagerOptions, PyTreeCheckpointHandler
 
 from temporal_fusion_transformer.src.config_dict import OptimizerConfig
 from temporal_fusion_transformer.src.metrics import MetricContainer
@@ -41,6 +39,9 @@ from temporal_fusion_transformer.src.tft_layers import InputStruct
 P = ParamSpec("P")
 R = TypeVar("R")
 T = TypeVar("T")
+
+if TYPE_CHECKING:
+    import tensorflow as tf
 
 
 class ApplyFunc(Protocol):
@@ -53,12 +54,12 @@ class ApplyFunc(Protocol):
         rngs: Mapping[str, PRNGKeyArray] | None = None,
     ) -> Float[Array, "batch time n"]:
         ...
-    
+
 
 class CheckpointManager(orbax.checkpoint.CheckpointManager):
     def should_save(self, step: int) -> bool:
         return step % self._options.save_interval_steps == 0 or step in self._options.save_on_steps
-    
+
 
 class NoOpWriter:
     def flush(self):
@@ -89,7 +90,7 @@ def make_training_hooks(
     logdir: str,
     profile: bool = False,
     checkpoint_directory: str = "checkpoints",
-    delete_checkpoints_after_training: bool = True,
+    delete_checkpoints_after_training: bool = False,
     report_progress_frequency: int = 50,
     log_metrics_frequency: bool = 100,
     monitor_exception: bool = True,
@@ -130,12 +131,6 @@ def make_training_hooks(
         callback_fn=log_training_metrics_fn,
     )
 
-    write_validation_metrics = flax_utils.UncheckedPeriodicCallback(
-        every_steps=1,
-        callback_fn=write_validation_metrics_fn,
-        execute_async=True,
-    )
-
     def flush(*args, **kwargs):
         training_writer.flush()
         validation_writer.flush()
@@ -144,7 +139,7 @@ def make_training_hooks(
     hooks.on_training_end.append(flush)
     hooks.on_step_end.append(write_training_metrics)
     hooks.on_step_end.append(log_training_metrics)
-    hooks.on_epoch_end.append(write_validation_metrics)
+    hooks.on_epoch_end.append(write_validation_metrics_fn)
 
     report_progress = clu.periodic_actions.ReportProgress(
         every_steps=num_training_steps // report_progress_frequency,
@@ -266,25 +261,18 @@ def make_training_hooks(
             exception: Exception,
         ):
             if isinstance(exception, FloatingPointError):
-                ex_str = format_exception(exception)
                 logging.error(
-                    f"Step number {int(state.step)} failed with {format_exception(exception)} for {x_batch = }, {y_batch = }"
+                    f"Step number {int(state.step)} failed with on {step_type}_step with {exception} for {x_batch = }, {y_batch = }"
                 )
-                data = {
-                    "state": state,
-                    "x_batch": x_batch,
-                    "y_batch": y_batch,
-                    "exception": ex_str,
-                    "step_type": step_type,
-                }
-                flax_utils.save_as_msgpack(data, "fp_error.msgpack")
+                mngr.save(int(state.step), state, force=True)
+                flax_utils.save_as_msgpack({"x_batch": x_batch, "y_batch": y_batch}, "fp_error_data.msgpack")
             raise
 
         hooks.on_error.append(persist_nan_causing_args)
-    
+
     def run_gc(*args, **kwargs):
         gc.collect()
-    
+
     hooks.on_step_end.append(run_gc)
     return hooks
 
@@ -415,6 +403,7 @@ def load_dataset(
     -------
 
     """
+    import tensorflow as tf
 
     tf_dtype = tf.dtypes.as_dtype(dtype)
 
@@ -425,29 +414,24 @@ def load_dataset(
         ds = tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
 
         if full_reshuffle:
-            ds = (
-                ds.shuffle(int(ds.cardinality()), seed=prng_seed, reshuffle_each_iteration=False)
-                .batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.shuffle(int(ds.cardinality()), seed=prng_seed, reshuffle_each_iteration=False).batch(
+                batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE
             )
         else:
-            ds = (
-                ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
-            .shuffle(shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
+            ds = ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE).shuffle(
+                shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True
             )
-            
-        return (
-            ds.map(downcast_input)
-            .map(lambda x, y: (x, y[:, num_encoder_steps:]))
-            .cache()
-            .prefetch(tf.data.AUTOTUNE)
-        )
+
+        return ds.map(downcast_input).map(lambda x, y: (x, y[:, num_encoder_steps:])).cache().prefetch(tf.data.AUTOTUNE)
 
     training_ds = load_fn("training")
     validation_ds = load_fn("validation")
     return training_ds, validation_ds
 
 
-def make_optimizer(config: OptimizerConfig, num_training_steps: int, epochs: int) -> optax.GradientTransformation:
+def make_optimizer(
+    config: OptimizerConfig | ConfigDict, num_training_steps: int, epochs: int
+) -> optax.GradientTransformation:
     learning_rate = config.learning_rate
     if config.decay_steps != 0:
         decay_steps = num_training_steps * epochs * config.decay_steps
@@ -464,4 +448,4 @@ def make_optimizer(config: OptimizerConfig, num_training_steps: int, epochs: int
 
 def restore_optimizer_state(opt_state: T, restored: Mapping[str, ...]) -> T:
     """Restore optimizer state from loaded checkpoint (or .msgpack file)."""
-    return tree_util.tree_unflatten(tree_util.tree_flatten(opt_state)[1], tree_util.tree_leaves(restored))
+    return tree_util.tree_unflatten(tree_util.tree_structure(opt_state), tree_util.tree_leaves(restored))

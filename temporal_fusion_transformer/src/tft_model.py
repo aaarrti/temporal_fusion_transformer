@@ -3,13 +3,14 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Sequence
 
-from absl import logging
 import flax.linen as nn
 import jax.numpy as jnp
+from absl import logging
 from flax import struct
 from jaxtyping import Array, Float, jaxtyped
+from ml_collections import ConfigDict
 
-from temporal_fusion_transformer.src.config_dict import ConfigDict
+from temporal_fusion_transformer.src.config_dict import ConfigDictProto
 from temporal_fusion_transformer.src.tft_layers import (
     ComputeDtype,
     DecoderBlock,
@@ -20,6 +21,7 @@ from temporal_fusion_transformer.src.tft_layers import (
     StaticCovariatesEncoder,
     TimeDistributed,
     VariableSelectionNetwork,
+    make_causal_mask,
 )
 
 
@@ -172,16 +174,21 @@ class TemporalFusionTransformer(nn.Module):
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
         )(temporal_features, static_context.vector[:, jnp.newaxis], training=training)
         decoder_in = enriched
-
+        mask = make_causal_mask(decoder_in, dtype=self.dtype)
         for _ in range(self.num_decoder_blocks):
             decoder_out = DecoderBlock(
                 num_attention_heads=self.num_attention_heads,
                 latent_dim=self.latent_dim,
                 dropout_rate=self.dropout_rate,
                 dtype=self.dtype,
-            )(decoder_in, training=training)
+            )(decoder_in, mask=mask, training=training)
             decoder_out = nn.LayerNorm(dtype=self.dtype)(decoder_out + temporal_features)
             decoder_in = decoder_out
+
+        # Final skip connection
+        decoded, _ = GatedLinearUnit(
+            latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
+        )(decoder_in, training=training)
 
         outputs = TimeDistributed(
             nn.Dense(self.num_outputs * self.num_quantiles, dtype=self.dtype),
@@ -311,7 +318,9 @@ class TemporalFusionTransformer(nn.Module):
         )
 
     @staticmethod
-    def from_config_dict(config: ConfigDict, jit_module: bool = False, dtype=jnp.float32) -> TemporalFusionTransformer:
+    def from_config_dict(
+        config: ConfigDict | ConfigDictProto, jit_module: bool = False, dtype=jnp.float32
+    ) -> TemporalFusionTransformer:
         fixed_params = config.fixed_params
         hyperparams = config.hyperparams
 

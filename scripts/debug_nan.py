@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from absl import logging
 from absl_extra import logging_utils
 from flax.serialization import msgpack_restore
 from jax import tree_util
 from sklearn.utils import gen_batches
 from tqdm.auto import tqdm
+from flax.training.dynamic_scale import DynamicScale
 
 from temporal_fusion_transformer.config import get_config
 from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
@@ -23,9 +25,10 @@ logging_utils.setup_logging(log_level="INFO")
 jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
 jax.config.update("jax_disable_jit", True)
+jax.config.update("jax_softmax_custom_jvp", True)
 
-# 512 was used on cluster, smaller batch size cause no problems at all
-batch_size = 512
+# 256 was used on cluster, smaller batch size cause no problems at all
+batch_size = 8
 
 
 def unshard(batch: jnp.ndarray) -> jnp.ndarray:
@@ -42,11 +45,11 @@ def main():
     x_batch = restored["x_batch"]
     y_batch = restored["y_batch"]
 
-    y_batch = unshard(y_batch)
-    x_batch = tree_util.tree_map(unshard, x_batch)
+    # y_batch = unshard(y_batch)
+    # x_batch = tree_util.tree_map(unshard, x_batch)
     # num_shards = len(y_batch)
 
-    model = TemporalFusionTransformer.from_config_dict(config, jit_module=False, dtype=jnp.float16)
+    model = TemporalFusionTransformer.from_config_dict(config, dtype=jnp.float16)
     loss_fn = make_quantile_loss_fn(config.hyperparams.quantiles, dtype=jnp.float16)
 
     state = TrainStateContainer.create(
@@ -77,7 +80,10 @@ def main():
             unknown=None,
         ).cast_inexact(jnp.float16)
         y = y_batch[batch.start : batch.stop].astype(jnp.float16)
+        # try:
         state, _ = single_device_train_step(state, x, y)
+        # except FloatingPointError as err:
+        #     logging.error(err)
 
 
 if __name__ == "__main__":

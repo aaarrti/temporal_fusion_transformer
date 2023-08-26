@@ -4,18 +4,15 @@ import os
 import pathlib
 from collections import OrderedDict
 from functools import cached_property
-from typing import final, NamedTuple
 from pathlib import Path
+from typing import NamedTuple, final
 
 import polars as pl
 from absl import logging
 from keras.utils import FeatureSpace, get_file
 from tqdm.auto import tqdm
 
-from temporal_fusion_transformer.src.datasets.base import (
-    MultiHorizonTimeSeriesDataset,
-    Triple,
-)
+from temporal_fusion_transformer.src.datasets.base import MultiHorizonTimeSeriesDataset, Triple
 
 
 class CutoffDays(NamedTuple):
@@ -82,7 +79,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         )
         test_df = df.filter(pl.col("days_from_start") >= self.test_boundary - SPLIT_OVERLAP_DAYS)
         return train_df, validation_df, test_df
-    
+
     def needs_download(self, path: str) -> bool:
         if Path(f"{path}/LD2011_2014.csv").exists():
             logging.info(f"Found {path}/LD2011_2014.csv locally, will skip download.")
@@ -94,14 +91,14 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         pathlib.Path(path).mkdir(exist_ok=True)
         logging.info(f"Downloading LD2011_2014.txt.zip")
         get_file(
-                origin=f"https://archive.ics.uci.edu/ml/machine-learning-databases/00321/LD2011_2014.txt.zip",
-                cache_dir=path,
-                extract=True,
-                archive_format="zip",
-                cache_subdir=".",
-            )
+            origin=f"https://archive.ics.uci.edu/ml/machine-learning-databases/00321/LD2011_2014.txt.zip",
+            cache_dir=path,
+            extract=True,
+            archive_format="zip",
+            cache_subdir=".",
+        )
         os.remove(f"{path}/LD2011_2014.txt.zip")
-            
+
         with open(f"{path}/LD2011_2014.txt", "r") as file:
             txt_content = file.read()
 
@@ -117,7 +114,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
 def read_raw_csv(path: str) -> pl.DataFrame:
     lazy_df = pl.scan_csv(f"{path}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True)
     lazy_df = lazy_df.rename({"": "timestamp"})
-    
+
     num_cols = lazy_df.columns[1:]
     lazy_df = lazy_df.sort(by="timestamp")
     # down sample to 1h https://pola-rs.github.io/polars-book/user-guide/transformations/time-series/rolling/

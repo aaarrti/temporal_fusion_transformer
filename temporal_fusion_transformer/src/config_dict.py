@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol, Sequence
 
 
-class ConfigDict(Protocol):
+class ConfigDictProto(Protocol):
     prng_seed: int
     shuffle_buffer_size: int
     fixed_params: FixedParamsConfig

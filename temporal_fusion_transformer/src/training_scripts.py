@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Tuple, Generator, Callable
+from typing import TYPE_CHECKING, Callable, Generator, Literal, Tuple
 
 import jax
-import tensorflow as tf
 from absl import logging
 from absl_extra import flax_utils
 from absl_extra.typing_utils import ParamSpec
 from flax.training.dynamic_scale import DynamicScale
 from flax.training.early_stopping import EarlyStopping
 from jax import numpy as jnp
+from ml_collections import ConfigDict
 
-from temporal_fusion_transformer.src.config_dict import ConfigDict
+from temporal_fusion_transformer.src.config_dict import ConfigDictProto
 from temporal_fusion_transformer.src.metrics import MetricContainer
 from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
-from temporal_fusion_transformer.src.tft_model import TemporalFusionTransformer, InputStruct
+from temporal_fusion_transformer.src.tft_model import InputStruct, TemporalFusionTransformer
 from temporal_fusion_transformer.src.training_lib import (
     TrainStateContainer,
     load_dataset,
@@ -29,6 +29,9 @@ from temporal_fusion_transformer.src.training_lib import (
 
 P = ParamSpec("P")
 
+if TYPE_CHECKING:
+    import tensorflow as tf
+
 
 def make_timestamp_tag() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M")
@@ -39,13 +42,13 @@ def train_experiment(
     data_dir: str,
     batch_size: int,
     experiment_name: Literal["electricity", "favorita"],
-    config: ConfigDict,
+    config: ConfigDictProto | ConfigDict,
     epochs: int = 1,
     mixed_precision: bool = False,
     jit_module: bool = False,
     save_path: str | None = None,
     device_type: Literal["cpu", "gpu", "tpu"] = "tpu",
-    prefetch_buffer_size: int = 2,
+    prefetch_buffer_size: int = 0,
     dynamic_scale: DynamicScale | None = None,
     verbose: bool = True,
     hooks: flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | None = None,
@@ -93,7 +96,7 @@ def train_experiment(
 def train(
     *,
     data: Tuple[tf.data.Dataset, tf.data.Dataset],
-    config: ConfigDict,
+    config: ConfigDictProto | ConfigDict,
     epochs: int = 1,
     batch_size: int | None = None,
     mixed_precision: bool = False,
@@ -101,11 +104,12 @@ def train(
     save_path: str | None = None,
     device_type: Literal["gpu", "tpu"] = "gpu",
     dynamic_scale: DynamicScale | None | Literal["auto"] = None,
-    prefetch_buffer_size: int = 2,
+    prefetch_buffer_size: int = 0,
     hooks: flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | None = None,
     verbose: bool = True,
     tensorboard_logdir: str = None,
     profile: bool = False,
+    early_stopping: EarlyStopping | None | Literal["auto"] = "auto",
 ) -> flax_utils.MetricsAndParams:
     """
 
@@ -127,7 +131,7 @@ def train(
     verbose:
         Show progressbar yes/no.
     prefetch_buffer_size:
-        Number of element to prefetch to the GPU.
+        Number of element to prefetch to the GPU (mb we don't need it at all)
     hooks:
         Custom training hooks.
     dynamic_scale:
@@ -136,6 +140,7 @@ def train(
         Relevant only for multi-device setting.
     tensorboard_logdir:
     profile
+    early_stopping
 
 
     Returns
@@ -160,7 +165,7 @@ def train(
     if batch_size is not None:
         first_x = first_x[:batch_size]
 
-    model = TemporalFusionTransformer.from_config_dict(config, jit_module=jit_module, dtype=compute_dtype)
+    model = TemporalFusionTransformer.from_config_dict(config, jit_module=jit_module)
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
     dropout_key, params_key = jax.random.split(prng_key, 2)
@@ -174,6 +179,9 @@ def train(
     if dynamic_scale == "auto" and compute_dtype == jnp.float16:
         dynamic_scale = DynamicScale()
 
+    if early_stopping == "auto":
+        early_stopping = EarlyStopping(best_metric=999, min_delta=0.1, patience=100)
+
     training_state = TrainStateContainer.create(
         params=params,
         tx=tx,
@@ -181,7 +189,7 @@ def train(
         dropout_key=dropout_key,
         loss_fn=loss_fn,
         dynamic_scale=dynamic_scale,
-        early_stopping=EarlyStopping(best_metric=999, min_delta=0.1, patience=100),
+        early_stopping=early_stopping,
     )
 
     if tensorboard_logdir is None:
@@ -202,7 +210,7 @@ def train(
     ) -> Callable[[], Generator[Tuple[InputStruct, jnp.ndarray], None, None]]:
         def generator():
             for x, y in ds.as_numpy_iterator():
-                yield model.make_input_struct(x), jnp.asarray(y, dtype=compute_dtype)
+                yield model.make_input_struct(x).cast_inexact(compute_dtype), jnp.asarray(y, dtype=compute_dtype)
 
         return generator
 
@@ -231,7 +239,6 @@ def train(
             epochs=epochs,
             hooks=hooks,
             num_training_steps=num_training_steps,
-            prefetch_buffer_size=prefetch_buffer_size,
             verbose=verbose,
         )
 

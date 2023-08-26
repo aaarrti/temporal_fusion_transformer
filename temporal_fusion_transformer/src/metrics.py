@@ -1,6 +1,6 @@
-from clu.metrics import Collection, Average
-from jaxtyping import jaxtyped
+from clu.metrics import Average, Collection
 from flax.struct import dataclass
+from jaxtyping import jaxtyped
 
 
 @jaxtyped

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TypeVar, Tuple, Dict, List, ClassVar, OrderedDict, Sequence
+from functools import cached_property
+from typing import ClassVar, Dict, List, OrderedDict, Sequence, Tuple, TypeVar
+
 import numpy as np
 import polars as pl
 import tensorflow as tf
-from functools import cached_property
-from keras.utils import FeatureSpace, timeseries_dataset_from_array
-from toolz import functoolz
 from absl import logging
+from keras.utils import FeatureSpace, timeseries_dataset_from_array
 from ordered_set import OrderedSet
+from toolz import functoolz
 from tqdm.auto import tqdm
 
 T = TypeVar("T")
@@ -125,9 +126,9 @@ class MultiHorizonTimeSeriesDataset(ABC):
             df: pl.DataFrame = df.collect()
 
         time_series_list = []
-        number_of_groups = len(list(df.groupby("id")))
+        groups = list(df.groupby("id"))
 
-        for id_i, df_i in tqdm(df.groupby("id"), total=number_of_groups, desc="Converting to time-series dataset"):
+        for id_i, df_i in tqdm(groups, desc="Converting to time-series dataset"):
             data_dict_i = {k: list(v.to_numpy()) for k, v in df_i.to_dict().items()}
             data_dict_i = feature_space(data_dict_i)
             x_i, y_i = self._unpack_x_y(data_dict_i)
@@ -175,7 +176,7 @@ class MultiHorizonTimeSeriesDataset(ABC):
     def string_categorical() -> FeatureSpace.Feature:
         """Just a shortcut to avoid typing the same long types."""
         return FeatureSpace.string_categorical(num_oov_indices=0, output_mode="int")
-    
+
     @abstractmethod
     def needs_download(self, path: str) -> bool:
         raise NotImplementedError

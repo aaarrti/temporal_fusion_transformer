@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from typing import Sequence, Tuple, Type, TypeVar, Union
+from typing import Sequence, Tuple, Union
 
 import flax.linen as nn
 import jax
@@ -10,9 +10,6 @@ from flax import struct
 from jaxtyping import Array, Float, Int, jaxtyped
 
 ComputeDtype = Union[jnp.float32, jnp.float16, jnp.bfloat16]
-T = TypeVar("T", bound=Type[nn.Module])
-
-# TODO: mb batch norm will fix overflow?
 
 
 class TimeDistributed(nn.Module):
@@ -199,7 +196,6 @@ class InputEmbedding(nn.Module):
             static_input_embeddings.append(embeds_i)
 
         static_input_embeddings = jnp.stack(static_input_embeddings, axis=1)
-        # static_input_embeddings = nn.LayerNorm(dtype=self.dtype)(static_input_embeddings)
         for i in range(self.num_known_real_inputs):
             embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.known_real[..., i, jnp.newaxis])
             known_real_inputs_embeddings.append(embeds_i)
@@ -210,7 +206,6 @@ class InputEmbedding(nn.Module):
                 embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.observed[..., i, jnp.newaxis])
                 observed_input_embeddings.append(embeds_i)
             observed_input_embeddings = jnp.stack(observed_input_embeddings, axis=-1)
-            # observed_input_embeddings = nn.LayerNorm(dtype=self.dtype)(observed_input_embeddings)
         else:
             observed_input_embeddings = None
 
@@ -229,15 +224,12 @@ class InputEmbedding(nn.Module):
 
         else:
             known_inputs_embeddings = jnp.stack(known_real_inputs_embeddings, axis=-1)
-
-        # known_inputs_embeddings = nn.LayerNorm(dtype=self.dtype)(known_inputs_embeddings)
         if self.num_unknown_inputs > 0:
             unknown = []
             for i in range(self.num_unknown_inputs):
                 embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(inputs.unknown[..., i, jnp.newaxis])
                 unknown.append(embeds_i)
             unknown = jnp.stack(unknown, axis=-1)
-            # unknown = nn.LayerNorm(dtype=self.dtype)(unknown)
         else:
             unknown = None
 
@@ -395,9 +387,10 @@ class DecoderBlock(nn.Module):
     dtype: ComputeDtype = jnp.float32
 
     @nn.compact
-    def __call__(self, inputs: jnp.ndarray, training: bool) -> jnp.ndarray:
-        mask = make_causal_attention_mask(inputs, dtype=self.dtype)
-        x = nn.SelfAttention(num_heads=self.num_attention_heads, dtype=self.dtype)(inputs, mask, True)
+    def __call__(self, inputs: jnp.ndarray, training: bool, mask: jnp.ndarray | None = None) -> jnp.ndarray:
+        x = nn.SelfAttention(num_heads=self.num_attention_heads, dtype=self.dtype)(
+            inputs, mask=mask, deterministic=True
+        )
         x, _ = GatedLinearUnit(
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
         )(x, training=training)
@@ -406,10 +399,6 @@ class DecoderBlock(nn.Module):
         decoded, _ = GatedResidualNetwork(
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
         )(x, training=training)
-        # Final skip connection
-        decoded, _ = GatedLinearUnit(
-            latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
-        )(decoded, training=training)
         return decoded
 
 
@@ -503,17 +492,5 @@ def flatten(arr: jnp.ndarray) -> jnp.ndarray:
 
 
 @functools.partial(jax.jit, static_argnames=["dtype"])
-def make_causal_attention_mask(x: jnp.ndarray, dtype=jnp.float32) -> jnp.ndarray:
-    """Creates a causal attention mask.
-
-    Args:
-      x: The SelfAttention input.
-      dtype:
-
-    Returns:
-      A tensor of shape `[seq_len, seq_len]`, where each entry is 1 if the
-      corresponding positions are causally related and 0 otherwise.
-    """
-    seq_len = x.shape[1]
-    attention_mask = jnp.tril(jnp.ones([seq_len, seq_len], dtype))
-    return jnp.expand_dims(attention_mask, 0)
+def make_causal_mask(x: jnp.ndarray, dtype: ComputeDtype = jnp.float32) -> jnp.ndarray:
+    return nn.make_causal_mask(x[..., 0], dtype=dtype)
