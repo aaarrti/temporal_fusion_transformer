@@ -13,10 +13,10 @@ from flax.training.early_stopping import EarlyStopping
 from jax import numpy as jnp
 
 from temporal_fusion_transformer.src.config_dict import ConfigDict
+from temporal_fusion_transformer.src.metrics import MetricContainer
 from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
 from temporal_fusion_transformer.src.tft_model import TemporalFusionTransformer, InputStruct
 from temporal_fusion_transformer.src.training_lib import (
-    MetricContainer,
     TrainStateContainer,
     load_dataset,
     make_optimizer,
@@ -25,8 +25,6 @@ from temporal_fusion_transformer.src.training_lib import (
     multi_device_validation_step,
     single_device_train_step,
     single_device_validation_step,
-    early_stopping_wrapper,
-    early_stopping_wrapper_distributed,
 )
 
 P = ParamSpec("P")
@@ -145,8 +143,6 @@ def train(
 
     """
 
-    raise RuntimeError("bla")
-
     if mixed_precision:
         if device_type == "gpu":
             compute_dtype = jnp.float16
@@ -178,14 +174,14 @@ def train(
     if dynamic_scale == "auto" and compute_dtype == jnp.float16:
         dynamic_scale = DynamicScale()
 
-    state = TrainStateContainer.create(
+    training_state = TrainStateContainer.create(
         params=params,
         tx=tx,
         apply_fn=model.apply,
         dropout_key=dropout_key,
         loss_fn=loss_fn,
         dynamic_scale=dynamic_scale,
-        early_stopping=EarlyStopping(best_metric=999, min_delta=0.1, patience=100),
+        # early_stopping=EarlyStopping(best_metric=999, min_delta=0.1, patience=50),
     )
 
     if tensorboard_logdir is None:
@@ -212,11 +208,11 @@ def train(
 
     if multi_device:
         (training_metrics, validation_metrics), params = flax_utils.fit_multi_device(
-            state=state,
+            training_state=training_state,
             training_dataset_factory=make_dataset_generator(training_dataset),
             validation_dataset_factory=make_dataset_generator(validation_dataset),
             metrics_container_type=MetricContainer,
-            training_step_func=early_stopping_wrapper_distributed(multi_device_train_step),
+            training_step_func=multi_device_train_step,
             validation_step_func=multi_device_validation_step,
             epochs=epochs,
             hooks=hooks,
@@ -226,11 +222,11 @@ def train(
         )
     else:
         (training_metrics, validation_metrics), params = flax_utils.fit_single_device(
-            state=state,
+            training_state=training_state,
             training_dataset_factory=make_dataset_generator(training_dataset),
             validation_dataset_factory=make_dataset_generator(validation_dataset),
             metrics_container_type=MetricContainer,
-            training_step_func=early_stopping_wrapper(single_device_train_step),
+            training_step_func=single_device_train_step,
             validation_step_func=single_device_validation_step,
             epochs=epochs,
             hooks=hooks,

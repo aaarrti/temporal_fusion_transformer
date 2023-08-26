@@ -11,33 +11,40 @@ import clu.metric_writers
 import clu.periodic_actions
 import jax
 import optax
+import orbax.checkpoint
+import orbax.checkpoint
 import orbax.checkpoint.checkpoint_utils
 import tensorflow as tf
 from absl import logging
-from absl_extra import flax_utils, clu_utils
+from absl_extra import flax_utils
 from absl_extra.typing_utils import ParamSpec
 from clu.metric_writers import SummaryWriter, AsyncMultiWriter, create_default_writer
-from clu.metrics import Average
 from etils import epath
 from flax.core.frozen_dict import FrozenDict
-from flax.struct import dataclass, field
-from flax.training.dynamic_scale import DynamicScale
+from flax.struct import field
 from flax.training.early_stopping import EarlyStopping
+from flax.training.dynamic_scale import DynamicScale
 from flax.training.train_state import TrainState
-from flax import jax_utils
 from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 from jaxtyping import Array, Float, PRNGKeyArray, Scalar, jaxtyped
-from orbax.checkpoint import CheckpointManagerOptions, PyTreeCheckpointHandler, AsyncCheckpointer, CheckpointManager
-import orbax.checkpoint
+from orbax.checkpoint import CheckpointManagerOptions, PyTreeCheckpointHandler, AsyncCheckpointer
 
 from temporal_fusion_transformer.src.config_dict import OptimizerConfig
+from temporal_fusion_transformer.src.metrics import MetricContainer
 from temporal_fusion_transformer.src.quantile_loss import QuantileLossFn
 from temporal_fusion_transformer.src.tft_layers import InputStruct
 
 P = ParamSpec("P")
 R = TypeVar("R")
+T = TypeVar("T")
+
+
+class CheckpointManager(orbax.checkpoint.CheckpointManager):
+    
+    def should_save(self, step: int) -> bool:
+        return step % self._options.save_interval_steps == 0 or step in self._options.save_on_steps
 
 
 class ApplyFunc(Protocol):
@@ -50,12 +57,6 @@ class ApplyFunc(Protocol):
         rngs: Mapping[str, PRNGKeyArray] | None = None,
     ) -> Float[Array, "batch time n"]:
         ...
-
-
-@jaxtyped
-@dataclass
-class MetricContainer(clu_utils.AnnotationsCompatibleCollection):
-    loss: Average.from_output("loss")
 
 
 class NoOpWriter:
@@ -154,8 +155,14 @@ def make_training_hooks(
 
     def report_progress_func(step: int, *args, **kwargs):
         report_progress(step)
-
+    
+    def maybe_replace_early_stopping(*args, training_state: TrainStateContainer, training_metrics: MetricContainer, **kwargs):
+        if training_state.early_stopping is not None:
+            early_stopping = training_state.early_stopping.update(training_metrics.compute()["loss"])[1]
+            return {"training_state": training_state.replace(early_stopping=early_stopping)}
+        
     hooks.on_step_end.append(report_progress_func)
+    hooks.on_step_end.append(maybe_replace_early_stopping)
 
     if profile:
         if not_running_on_linux:
@@ -177,8 +184,10 @@ def make_training_hooks(
 
         options = CheckpointManagerOptions(
             save_interval_steps=200,
+            save_on_steps=[num_training_steps * i for i in range(1, epochs)],
             max_to_keep=5,
             cleanup_tmp_directories=True,
+            create=True,
             best_mode="min",
             best_fn=lambda metrics: metrics["loss"],
         )
@@ -189,7 +198,7 @@ def make_training_hooks(
         )
 
         def checkpoint_fn(step: int, *, training_metrics: MetricContainer, training_state: TrainStateContainer):
-            mngr.save(step, training_state, metrics=training_metrics.as_dict())
+            mngr.save(step, training_state, metrics={k: float(v) for k, v in training_metrics.compute().items()})
 
         def restore_checkpoint(training_state: TrainStateContainer):
             all_steps = mngr.all_steps(True)
@@ -258,35 +267,6 @@ def make_training_hooks(
 
 StateAndMetrics = Tuple[TrainStateContainer, MetricContainer]
 StepFn = Callable[[TrainStateContainer, InputStruct, Float[Array, "batch time n"]], StateAndMetrics]
-
-
-def early_stopping_wrapper(func: StepFn) -> StepFn:
-    @functools.wraps(func)
-    def wrapper(
-        state: TrainStateContainer, x_batch: InputStruct, y_batch: Float[Array, "batch time n"]
-    ) -> StateAndMetrics:
-        state, metrics = func(state, x_batch, y_batch)
-        if state.early_stopping is not None:
-            state = state.replace(early_stopping=state.early_stopping.update(metrics.compute()["loss"])[1])
-        return state, metrics
-
-    return wrapper
-
-
-def early_stopping_wrapper_distributed(func: StepFn) -> StepFn:
-    @functools.wraps(func)
-    def wrapper(
-        state: TrainStateContainer, x_batch: InputStruct, y_batch: Float[Array, "batch time n"]
-    ) -> StateAndMetrics:
-        state, metrics = func(state, x_batch, y_batch)
-        if state.early_stopping is not None:
-            loss = metrics.unreplicate().compute()["loss"]
-            early_stopping: EarlyStopping = jax_utils.unreplicate(state.early_stopping)
-            early_stopping = jax_utils.replicate(early_stopping.update(loss)[1])
-            state = state.replace(early_stopping=early_stopping)
-        return state, metrics
-
-    return wrapper
 
 
 @jaxtyped
@@ -456,5 +436,6 @@ def make_optimizer(config: OptimizerConfig, num_training_steps: int, epochs: int
     return tx
 
 
-def restore_optimizer_state(opt_state, restored):
+def restore_optimizer_state(opt_state: T, restored: Mapping[str, ...]) -> T:
+    """Restore optimizer state from loaded checkpoint (or .msgpack file)."""
     return tree_util.tree_unflatten(tree_util.tree_flatten(opt_state)[1], tree_util.tree_leaves(restored))
