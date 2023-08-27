@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from absl import logging
 from absl_extra import logging_utils
 from flax.serialization import msgpack_restore
 from jax import tree_util
 from sklearn.utils import gen_batches
 from tqdm.auto import tqdm
-from flax.training.dynamic_scale import DynamicScale
 
 from temporal_fusion_transformer.config import get_config
 from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
@@ -20,7 +18,6 @@ from temporal_fusion_transformer.src.training_lib import (
     single_device_train_step,
 )
 
-# CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 logging_utils.setup_logging(log_level="INFO")
 jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
@@ -28,7 +25,7 @@ jax.config.update("jax_disable_jit", True)
 jax.config.update("jax_softmax_custom_jvp", True)
 
 # 256 was used on cluster, smaller batch size cause no problems at all
-batch_size = 8
+batch_size = 256
 
 
 def unshard(batch: jnp.ndarray) -> jnp.ndarray:
@@ -37,7 +34,7 @@ def unshard(batch: jnp.ndarray) -> jnp.ndarray:
 
 def main():
     config = get_config("electricity")
-    with open("fp_error.msgpack", "rb") as file:
+    with open("fp_error_data.msgpack", "rb") as file:
         byte_data = file.read()
 
     restored = msgpack_restore(byte_data)

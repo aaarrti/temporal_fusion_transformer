@@ -5,10 +5,8 @@ import tensorflow as tf
 tf.config.set_visible_devices([], "GPU")
 from absl import flags
 from absl import logging
-from absl_extra import tasks, logging_utils, notifier
+from absl_extra import tasks, logging_utils
 from ml_collections import config_flags
-import platform
-import os
 
 import temporal_fusion_transformer as tft
 
@@ -57,16 +55,16 @@ def make_dataset():
     feature_space.save(f"{data_dir}/features_space.keras")
 
 
-def make_notifier():
-    if platform.system().lower() == "linux":
-        return notifier.SlackNotifier(
-            slack_token=os.environ["SLACK_BOT_TOKEN"], channel_id=os.environ["SLACK_CHANNEL_ID"]
-        )
-    else:
-        return notifier.NoOpNotifier()
+# def make_notifier():
+#    if platform.system().lower() == "linux":
+#        return notifier.SlackNotifier(
+#            slack_token=os.environ["SLACK_BOT_TOKEN"], channel_id=os.environ["SLACK_CHANNEL_ID"]
+#        )
+#    else:
+#        return notifier.NoOpNotifier()
 
 
-@tasks.register_task(name="hyperparams", notifier=make_notifier)
+@tasks.register_task(name="hyperparams")
 def train_model():
     tft.hyperparams.optimize_experiment_hyperparams(
         data_dir=FLAGS.data_dir,
@@ -81,7 +79,7 @@ def train_model():
     )
 
 
-@tasks.register_task(name="model", notifier=make_notifier)
+@tasks.register_task(name="model")
 def train_model():
     tft.training_scripts.train_experiment(
         data_dir=FLAGS.data_dir,

@@ -193,7 +193,7 @@ class TemporalFusionTransformer(nn.Module):
 
         outputs = TimeDistributed(
             nn.Dense(self.num_outputs * self.num_quantiles, dtype=self.dtype),
-        )(decoder_in[:, self.num_encoder_steps: self.total_time_steps])
+        )(decoder_in[:, self.num_encoder_steps : self.total_time_steps])
 
         if self.return_attention:
             return TftOutputs(

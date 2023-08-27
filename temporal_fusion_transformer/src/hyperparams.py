@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 def optimize_experiment_hyperparams(
     experiment_name: str,
-    config: ConfigDictProto,
+    config: ConfigDictProto | ConfigDict,
     epochs: int,
     batch_size: int,
     data_dir: str,
@@ -110,6 +110,7 @@ def optimize_hyperparams(
         num_attention_heads = trial.suggest_int("num_heads", low=1, high=20)
 
         dropout_rate = trial.suggest_float("dropout_rate", low=0.1, high=0.3, step=0.05)
+        attention_dropout_rate = trial.suggest_float("attention_dropout_rate", low=0.1, high=0.3, step=0.05)
 
         if latent_dim % num_attention_heads != 0:
             raise optuna.TrialPruned("`latent_dim` must be divisible by `num_attention_heads`")
@@ -130,6 +131,7 @@ def optimize_hyperparams(
                     "latent_dim": latent_dim,
                     "num_attention_heads": num_attention_heads,
                     "num_decoder_blocks": num_stacks,
+                    "attention_dropout_rate": attention_dropout_rate,
                 },
             }
         )

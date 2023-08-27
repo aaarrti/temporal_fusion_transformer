@@ -14,4 +14,4 @@ cp images/electricity.sqfs /tmp
 apptainer run --nv --writable-tmpfs --env-file .env \
   --bind=/tmp/electricity.sqfs:/data:image-src=/ images/image.sif /usr/bin/python scripts/main.py \
   --task=model --experiment=electricity --batch_size=256 --mixed_precision=true --data_dir=/data \
-  --verbose=false --profile=false --jit_module=true
+  --verbose=false --profile=false --jit_module=true --prefetch_buffer_size=0

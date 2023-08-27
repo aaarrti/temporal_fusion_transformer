@@ -12,10 +12,10 @@ import clu.periodic_actions
 import jax
 import optax
 import orbax.checkpoint
+from traceback import format_exception
 import orbax.checkpoint.checkpoint_utils
 from absl import logging
 from absl_extra import flax_utils
-from absl_extra.slurm_utils import JobCanceledException
 from absl_extra.typing_utils import ParamSpec
 from clu.metric_writers import AsyncMultiWriter, SummaryWriter, create_default_writer
 from etils import epath
@@ -95,7 +95,6 @@ def make_training_hooks(
     log_metrics_frequency: bool = 100,
     monitor_exception: bool = True,
     save_path: str | None = None,
-    save_checkpoint_on_sigterm: bool = True,
 ) -> flax_utils.TrainingHooks:
     logging.info(f"Writing tensorboard logs to {logdir}")
 
@@ -237,20 +236,6 @@ def make_training_hooks(
 
             hooks.on_training_end.append(save_weight_fn)
 
-        if save_checkpoint_on_sigterm:
-
-            def save_checkpoint_on_preemption(
-                state: TrainStateContainer,
-                x_batch,
-                y_batch,
-                step_type,
-                exception: Exception,
-            ):
-                if isinstance(exception, JobCanceledException):
-                    mngr.save(int(state.step), state, force=True)
-
-            hooks.on_error.append(save_checkpoint_on_preemption)
-
     if monitor_exception:
 
         def persist_nan_causing_args(
@@ -264,8 +249,15 @@ def make_training_hooks(
                 logging.error(
                     f"Step number {int(state.step)} failed with on {step_type}_step with {exception} for {x_batch = }, {y_batch = }"
                 )
-                mngr.save(int(state.step), state, force=True)
-                flax_utils.save_as_msgpack({"x_batch": x_batch, "y_batch": y_batch}, "fp_error_data.msgpack")
+                ex_str = format_exception(exception)
+                data = {
+                    "state": state,
+                    "x_batch": x_batch,
+                    "y_batch": y_batch,
+                    "exception": ex_str,
+                    "step_type": step_type,
+                }
+                flax_utils.save_as_msgpack(data, "fp_error_data.msgpack")
             raise
 
         hooks.on_error.append(persist_nan_causing_args)
