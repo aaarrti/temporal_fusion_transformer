@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Mapping, Tuple
+import jax
+import jax.numpy as jnp
 
 import matplotlib.pyplot as plt
 import numpy as np
 from keras.utils import FeatureSpace
+import keras
+from ml_collections import ConfigDict
+from absl_extra.flax_utils import load_from_msgpack
 
 PredictFn = Callable
+
+from temporal_fusion_transformer.src.config_dict import ConfigDictProto
+from temporal_fusion_transformer.src.tft_model import TemporalFusionTransformer, InputStruct
 
 
 """
@@ -19,13 +27,27 @@ We could map those nodes 1 to 1, to make outputs resonable.
 class InferenceService:
     def __init__(
         self,
-        model: PredictFn,
-        feature_space: FeatureSpace,
-        batch_size: int | None = None,
+        config: ConfigDictProto | ConfigDict,
+        weights_path: str,
+        feature_space_path: str,
+        batch_size: int = 8,
     ):
-        self.model = model
-        self.target_scaler = target_scaler
+        model = TemporalFusionTransformer.from_config_dict(config, jit_module=True)
+        prng_key = jax.random.PRNGKey(config.prng_seed)
+        declared_num_features = (
+            len(config.fixed_params.input_static_idx)
+            + len(config.fixed_params.input_known_real_idx)
+            + len(config.fixed_params.input_known_categorical_idx)
+            + len(config.fixed_params.input_observed_idx)
+        )
+
+        x = jnp.ones([batch_size, config.fixed_params.total_time_steps, declared_num_features])
+        params = model.init(prng_key, x)
+        loaded_params = load_from_msgpack(params, weights_path)
+        self.features_space = keras.models.load_model(feature_space_path)
         self.batch_size = batch_size
+        self.model = model
+        self.params = loaded_params
 
     def plot_predictions_for_entity(
         self,

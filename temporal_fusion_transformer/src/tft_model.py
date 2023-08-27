@@ -325,7 +325,7 @@ class TemporalFusionTransformer(nn.Module):
 
     @staticmethod
     def from_config_dict(
-        config: ConfigDict | ConfigDictProto, jit_module: bool = False, dtype=jnp.float32
+        config: ConfigDict | ConfigDictProto, jit_module: bool = False, **kwargs
     ) -> TemporalFusionTransformer:
         fixed_params = config.fixed_params
         hyperparams = config.hyperparams
@@ -350,6 +350,6 @@ class TemporalFusionTransformer(nn.Module):
             num_outputs=fixed_params.num_outputs,
             total_time_steps=fixed_params.total_time_steps,
             attention_dropout_rate=hyperparams.attention_dropout_rate,
-            dtype=dtype,
+            **kwargs,
         )
         return model

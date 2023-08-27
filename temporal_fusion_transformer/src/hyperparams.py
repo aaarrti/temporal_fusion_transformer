@@ -98,6 +98,7 @@ def optimize_hyperparams(
             tensorboard_logdir=None,
         )
         hooks.on_step_end.append(hyperband_pruning_hook)
+        hooks.on_error.append(prune_trial_on_nan)
 
         learning_rate = trial.suggest_float("learning_rate", low=1e-4, high=1e-3)
         decay_steps = trial.suggest_float("decay_steps", low=0, high=1.0)
@@ -164,3 +165,10 @@ def optimize_hyperparams(
         n_jobs=n_jobs,
         gc_after_trial=True,
     )
+
+
+def prune_trial_on_nan(*args, exception: Exception):
+    if isinstance(exception, FloatingPointError):
+        raise optuna.TrialPruned("Encountered NaN")
+    else:
+        raise

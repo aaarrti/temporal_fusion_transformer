@@ -21,10 +21,10 @@ from temporal_fusion_transformer.src.training_lib import (
 logging_utils.setup_logging(log_level="INFO")
 jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
-jax.config.update("jax_disable_jit", True)
+# jax.config.update("jax_disable_jit", True)
 jax.config.update("jax_softmax_custom_jvp", True)
 
-# 256 was used on cluster, smaller batch size cause no problems at all
+# 256 was used on cluster
 batch_size = 256
 
 
@@ -39,12 +39,14 @@ def main():
 
     restored = msgpack_restore(byte_data)
 
-    x_batch = restored["x_batch"]
-    y_batch = restored["y_batch"]
-
-    # y_batch = unshard(y_batch)
-    # x_batch = tree_util.tree_map(unshard, x_batch)
-    # num_shards = len(y_batch)
+    x_batch = InputStruct(
+        static=restored["x_batch"]["static"],
+        known_categorical=restored["x_batch"]["known_categorical"],
+        known_real=restored["x_batch"]["known_real"],
+        observed=None,
+        unknown=None,
+    ).cast_inexact(jnp.float16)
+    y_batch = jnp.asarray(restored["y_batch"], jnp.float16)
 
     model = TemporalFusionTransformer.from_config_dict(config, dtype=jnp.float16)
     loss_fn = make_quantile_loss_fn(config.hyperparams.quantiles, dtype=jnp.float16)
@@ -59,28 +61,7 @@ def main():
     state = state.replace(step=restored["state"]["step"])
     restored_optimizer = restore_optimizer_state(state.opt_state, restored["state"]["opt_state"])
     state = state.replace(opt_state=restored_optimizer)
-
-    batches = gen_batches(len(y_batch), batch_size)
-    num_mini_batches = len(list(gen_batches(len(y_batch), batch_size)))
-    # step_fn = logging_utils.log_exception(single_device_train_step, ignore_argnums=(0,))
-    pbar = tqdm(total=num_mini_batches)
-
-    for i, batch in enumerate(batches):
-        pbar.update(1)
-
-        x = tree_util.tree_map(lambda k: k[batch.start : batch.stop], x_batch)
-        x = InputStruct(
-            static=x["static"],
-            known_categorical=x["known_categorical"],
-            known_real=x["known_real"],
-            observed=None,
-            unknown=None,
-        ).cast_inexact(jnp.float16)
-        y = y_batch[batch.start : batch.stop].astype(jnp.float16)
-        # try:
-        state, _ = single_device_train_step(state, x, y)
-        # except FloatingPointError as err:
-        #     logging.error(err)
+    single_device_train_step(state, x_batch, y_batch)
 
 
 if __name__ == "__main__":

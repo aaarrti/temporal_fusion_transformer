@@ -1,5 +1,4 @@
 import jax.random
-import jax.numpy as jnp
 import chex
 from temporal_fusion_transformer.src.quantile_loss import quantile_loss, make_quantile_loss_fn
 

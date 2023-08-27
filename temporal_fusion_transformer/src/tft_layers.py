@@ -389,9 +389,15 @@ class DecoderBlock(nn.Module):
 
     @nn.compact
     def __call__(self, inputs: jnp.ndarray, training: bool, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        x = nn.SelfAttention(num_heads=self.num_attention_heads, dtype=self.dtype)(
-            inputs, mask=mask, deterministic=not training, dropout_rate=self.attention_dropout_rate
-        )
+        # float16 in attention causes overflow in softmax
+        attention_dtype = jnp.float32 if self.dtype == jnp.float16 else self.dtype
+        # TODO: we probably can set decode=True during inference.
+        x = nn.SelfAttention(
+            num_heads=self.num_attention_heads,
+            dtype=attention_dtype,
+            dropout_rate=self.attention_dropout_rate
+        )(inputs, mask=mask, deterministic=not training)
+        # x = x.astype(self.dtype)
         x, _ = GatedLinearUnit(
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
         )(x, training=training)
