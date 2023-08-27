@@ -1,6 +1,5 @@
 ## Flax reimplementation of Temporal Fusion Transformer
 
-The goal is to re-create the model using up-to date technologies, with production-grade implementation.
 
 #### Experiments
 Two experiments from the original publication are duplicated in this repository.

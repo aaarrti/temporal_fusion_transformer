@@ -108,72 +108,68 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             file.write(csv_content)
 
     def read_csv(self, path: str) -> pl.DataFrame:
-        return read_raw_csv(path)
+        lazy_df = pl.scan_csv(f"{path}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True)
+        lazy_df = lazy_df.rename({"": "timestamp"})
 
+        num_cols = lazy_df.columns[1:]
+        lazy_df = lazy_df.sort(by="timestamp")
+        # down sample to 1h https://pola-rs.github.io/polars-book/user-guide/transformations/time-series/rolling/
+        lazy_df = lazy_df.groupby_dynamic("timestamp", every="1h").agg([pl.col(i).mean() for i in num_cols])
+        # replace dummy 0.0 by nulls
+        df: pl.DataFrame = lazy_df.with_columns(
+            [pl.col(c).apply(lambda i: None if i == 0.0 else i) for c in num_cols]
+        ).collect()
 
-def read_raw_csv(path: str) -> pl.DataFrame:
-    lazy_df = pl.scan_csv(f"{path}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True)
-    lazy_df = lazy_df.rename({"": "timestamp"})
+        earliest_time = df["timestamp"].min()
 
-    num_cols = lazy_df.columns[1:]
-    lazy_df = lazy_df.sort(by="timestamp")
-    # down sample to 1h https://pola-rs.github.io/polars-book/user-guide/transformations/time-series/rolling/
-    lazy_df = lazy_df.groupby_dynamic("timestamp", every="1h").agg([pl.col(i).mean() for i in num_cols])
-    # replace dummy 0.0 by nulls
-    df: pl.DataFrame = lazy_df.with_columns(
-        [pl.col(c).apply(lambda i: None if i == 0.0 else i) for c in num_cols]
-    ).collect()
+        def make_hours_from_start(date: pl.datetime):
+            return (date - earliest_time).seconds / 60 / 60 + (date - earliest_time).days * 24
 
-    earliest_time = df["timestamp"].min()
+        df_list = []
 
-    def make_hours_from_start(date: pl.datetime):
-        return (date - earliest_time).seconds / 60 / 60 + (date - earliest_time).days * 24
+        for label in tqdm(num_cols, desc="Formatting inputs"):
+            sub_df: pl.DataFrame = df.select("timestamp", label)
 
-    df_list = []
-
-    for label in tqdm(num_cols, desc="Formatting inputs"):
-        sub_df: pl.DataFrame = df.select("timestamp", label)
-
-        start_date = (
-            sub_df.select("timestamp", pl.col(label).forward_fill())
-            .filter(pl.col(label).is_not_null())["timestamp"]
-            .min()
-        )
-        end_date = (
-            sub_df.select("timestamp", pl.col(label).backward_fill())
-            .filter(pl.col(label).is_not_null())["timestamp"]
-            .max()
-        )
-
-        lazy_sub_df = sub_df.lazy()
-
-        lazy_sub_df = (
-            lazy_sub_df.filter(pl.col("timestamp") >= start_date)
-            .filter(pl.col("timestamp") <= end_date)
-            .rename({label: "power_usage"})
-            .with_columns(
-                [
-                    pl.col("power_usage").fill_null(value=0.0),
-                    pl.col("timestamp").apply(make_hours_from_start).alias("hours_from_start"),
-                    pl.col("timestamp").apply(lambda date: (date - earliest_time).days).alias("days_from_start"),
-                    pl.col("timestamp").dt.hour().alias("hour"),
-                    pl.col("timestamp").dt.day().alias("day"),
-                    pl.col("timestamp").dt.weekday().alias("day_of_week"),
-                    pl.col("timestamp").dt.month().alias("month"),
-                ],
-                id=pl.lit(label),
+            start_date = (
+                sub_df.select("timestamp", pl.col(label).forward_fill())
+                .filter(pl.col(label).is_not_null())["timestamp"]
+                .min()
             )
-            .drop("timestamp")
+            end_date = (
+                sub_df.select("timestamp", pl.col(label).backward_fill())
+                .filter(pl.col(label).is_not_null())["timestamp"]
+                .max()
+            )
+
+            lazy_sub_df = sub_df.lazy()
+
+            lazy_sub_df = (
+                lazy_sub_df.filter(pl.col("timestamp") >= start_date)
+                .filter(pl.col("timestamp") <= end_date)
+                .rename({label: "power_usage"})
+                .with_columns(
+                    [
+                        pl.col("power_usage").fill_null(value=0.0),
+                        pl.col("timestamp").apply(make_hours_from_start).alias("hours_from_start"),
+                        pl.col("timestamp").apply(lambda date: (date - earliest_time).days).alias("days_from_start"),
+                        pl.col("timestamp").dt.hour().alias("hour"),
+                        pl.col("timestamp").dt.day().alias("day"),
+                        pl.col("timestamp").dt.weekday().alias("day_of_week"),
+                        pl.col("timestamp").dt.month().alias("month"),
+                    ],
+                    id=pl.lit(label),
+                )
+                .drop("timestamp")
+            )
+
+            df_list.append(lazy_sub_df)
+
+        df: pl.LazyFrame = pl.concat(df_list)
+        del df_list
+
+        # Filter to match range used by other academic papers
+        return (
+            df.filter(pl.col("days_from_start") >= CUTOFF_DAYS.start)
+            .filter(pl.col("days_from_start") <= CUTOFF_DAYS.stop)
+            .collect()
         )
-
-        df_list.append(lazy_sub_df)
-
-    df: pl.LazyFrame = pl.concat(df_list)
-    del df_list
-
-    # Filter to match range used by other academic papers
-    return (
-        df.filter(pl.col("days_from_start") >= CUTOFF_DAYS.start)
-        .filter(pl.col("days_from_start") <= CUTOFF_DAYS.stop)
-        .collect()
-    )

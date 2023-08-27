@@ -15,6 +15,7 @@ import jax
 
 jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
+jax.config.update("jax_default_matmul_precision", "tensorfloat32")
 # jax.config.update("jax_log_compiles", True)
 # jax.config.update("jax_disable_jit", True)
 
@@ -33,7 +34,7 @@ flags.DEFINE_string("save_path", default="model.msgpack", help="Save path for mo
 flags.DEFINE_integer("prefetch_buffer_size", default=2, help="Prefetch buffer size")
 CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
-logging_utils.setup_logging(log_level="INFO")
+logging_utils.setup_logging(log_level="DEBUG")
 
 
 @tasks.register_task(name="data")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import glob
 import os
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import final
 
 import polars as pl
@@ -14,14 +14,21 @@ from toolz.dicttoolz import valmap
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src.datasets.base import MultiHorizonTimeSeriesDataset, Triple
+from temporal_fusion_transformer.src.datasets.base import downcast_dataframe
 
-_DEFAULT_START_DATE = datetime(2015, 1, 1)
-_DEFAULT_END_DATE = datetime(2016, 6, 1)
+
 _NUM_IDS = 143658
 
 
 @final
 class Favorita(MultiHorizonTimeSeriesDataset):
+    """
+    References
+    ----------
+
+    - https://www.kaggle.com/c/favorita-grocery-sales-forecasting/data
+    """
+
     target_feature_names = ["log_sales"]
     total_time_steps = 120
     num_encoder_steps = 90
@@ -67,53 +74,121 @@ class Favorita(MultiHorizonTimeSeriesDataset):
 
     def __init__(
         self,
-        start_date: datetime | None = _DEFAULT_START_DATE,
-        end_date: datetime | None = _DEFAULT_END_DATE,
+        start_date: datetime | None = datetime(2015, 1, 1),
+        end_date: datetime | None = datetime(2016, 6, 1),
         validation_boundary=datetime(2015, 12, 1),
     ):
         self.start_date = start_date
         self.end_date = end_date
         self.validation_boundary = validation_boundary
 
-    def read_csv(self, path: str) -> pl.LazyFrame:
-        return read_raw_csv(path, self.start_date, self.end_date)
+    def read_csv(self, path: str) -> pl.DataFrame:
+        lazy_temporal = downcast_dataframe(pl.scan_csv(f"{path}/train.csv", try_parse_dates=True))
+
+        # Filter dates to reduce storage space requirements
+        if self.start_date is not None:
+            lazy_temporal = lazy_temporal.filter(pl.col("date") >= self.start_date)
+        if self.end_date is not None:
+            lazy_temporal = lazy_temporal.filter(pl.col("date") <= self.end_date)
+
+        logging.debug("Adding trajectory identifier")
+        lazy_temporal = lazy_temporal.with_columns(
+            [
+                pl.format("{}_{}", "store_nbr", "item_nbr").alias("traj_id"),
+            ]
+        )
+        # Remove all IDs with negative returns
+        logging.debug("Removing returns data")
+
+        lazy_temporal = lazy_temporal.filter(pl.col("unit_sales").min().over("traj_id") >= 0)
+        lazy_temporal = lazy_temporal.with_columns(open=pl.lit(1))
+
+        # LazyFrame does not support up-sampling
+        logging.info("Up-sampling to uniform grid.")
+        lazy_temporal = (
+            lazy_temporal.sort("date", "traj_id")
+            .collect()
+            .upsample("date", every="1h", by="traj_id")
+            .fill_null(strategy="forward")
+            .lazy()
+        )
+        logging.debug(f"{lazy_temporal = }")
+
+        store_info = downcast_dataframe(pl.scan_csv(f"{path}/stores.csv"))
+        items = downcast_dataframe(pl.scan_csv(f"{path}/items.csv"))
+        transactions = downcast_dataframe(pl.scan_csv(f"{path}/transactions.csv", try_parse_dates=True))
+
+        oil = downcast_dataframe(
+            pl.scan_csv(f"{path}/oil.csv", try_parse_dates=True)
+            .with_columns(pl.col("dcoilwtico").forward_fill())
+            .filter(pl.col("dcoilwtico").is_not_null())
+        )
+
+        holidays = downcast_dataframe(pl.scan_csv(f"{path}/holidays_events.csv", try_parse_dates=True))
+
+        national_holidays = (
+            holidays.filter(pl.col("locale") == "National")
+            .select(["description", "date"])
+            .rename({"description": "national_hol"})
+        )
+        regional_holidays = (
+            holidays.filter(pl.col("locale") == "Regional")
+            .select(["description", "locale_name", "date"])
+            .rename({"locale_name": "state", "description": "regional_hol"})
+        )
+        local_holidays = (
+            holidays.filter(pl.col("locale") == "Local")
+            .select(["description", "locale_name", "date"])
+            .rename({"locale_name": "city", "description": "local_hol"})
+        )
+
+        logging.debug("Joining tables")
+
+        temporal: pl.LazyFrame = (
+            lazy_temporal.join(oil, on="date", how="left")
+            .join(store_info, on="store_nbr")
+            .join(items, on="item_nbr")
+            .join(transactions, on=["store_nbr", "date"])
+            .join(national_holidays, on="date", how="left")
+            .join(regional_holidays, on=["date", "state"], how="left")
+            .join(local_holidays, on=["date", "city"], how="left")
+            .with_columns(
+                [
+                    pl.col("oil_price").fill_null(strategy="forward"),
+                    pl.col("national_hol").fill_null(""),
+                    pl.col("regional_hol").fill_null(""),
+                    pl.col("local_hol").fill_null(""),
+                ]
+            )
+            .sort("traj_id", "date")
+        )
+        df = temporal.collect()
+        logging.debug(f"{df = }")
+        return df
 
     def split_data(self, df: pl.LazyFrame) -> Triple[pl.LazyFrame]:
+        if not isinstance(df, pl.LazyFrame):
+            df = df.lazy()
+
         forecast_horizon = self.total_time_steps - self.num_encoder_steps
 
-        df_lists = {"train": [], "valid": [], "test": []}
+        test_boundary = self.validation_boundary + timedelta(hours=forecast_horizon)
 
-        for _, sub_df in tqdm(df.groupby("traj_id"), total=_NUM_IDS):
-            sub_df: pl.DataFrame
-            train = sub_df.filter(pl.col("date").lt(self.validation_boundary))
-            train_len = len(train)
-            valid_len = train_len + forecast_horizon
+        training_df: pl.DataFrame = df.filter(pl.col("date").over("traj_id").lt(self.validation_boundary)).collect()
+        validation_df = df.filter(pl.col("date").over("traj_id").ge(self.validation_boundary).lt(test_boundary))
+        test_df = df.filter(pl.col("date").over("traj_id").ge(test_boundary))
 
-            valid = sub_df.slice(train_len - self.num_encoder_steps, valid_len)
-            test = sub_df.slice(valid_len - self.num_encoder_steps, valid_len + forecast_horizon)
-
-            sliced_map = {"train": train, "valid": valid, "test": test}
-
-            for k in sliced_map:
-                item = sliced_map[k]
-
-                if len(item) >= self.total_time_steps:
-                    df_lists[k].append(item)
-
-        dfs = valmap(df_lists, pl.concat)
-
-        train = dfs["train"]
         # Filter out identifiers not present in training (i.e. cold-started items).
-        identifiers = list(df["id"].unique())
+        identifiers = training_df["traj_id"].unique().to_list()
         ids = set(identifiers)
 
         def filter_ids(frame: pl.DataFrame) -> pl.DataFrame:
             return frame.filter(pl.col("traj_id") in ids)
 
-        valid = filter_ids(dfs["valid"])
-        test = filter_ids(dfs["test"])
+        validation_df = filter_ids(validation_df["valid"])
+        test_df = filter_ids(test_df["test"])
 
-        return train, valid, test
+        return training_df, validation_df, test_df
 
     def needs_download(self, path: str) -> bool:
         csvs = glob.glob(f"{path}/*.csv")
@@ -143,94 +218,3 @@ class Favorita(MultiHorizonTimeSeriesDataset):
             with py7zr.SevenZipFile(i, mode="r") as archive:
                 archive.extractall(path=path)
             os.remove(i)
-
-
-def read_raw_csv(
-    data_folder: str,
-    start_date: datetime | None = _DEFAULT_START_DATE,
-    end_date: datetime | None = _DEFAULT_END_DATE,
-) -> pl.LazyFrame:
-    temporal = make_temporal_dataframe(data_folder, start_date, end_date)
-    store_info = pl.scan_csv(f"{data_folder}/stores.csv")
-    items = pl.scan_csv(f"{data_folder}/items.csv")
-    transactions = pl.scan_csv(f"{data_folder}/transactions.csv", try_parse_dates=True)
-
-    oil = (
-        pl.scan_csv(f"{data_folder}/oil.csv", try_parse_dates=True)
-        .with_columns(pl.col("dcoilwtico").forward_fill())
-        .filter(pl.col("dcoilwtico").is_not_null())
-    )
-
-    holidays = pl.scan_csv(f"{data_folder}/holidays_events.csv", try_parse_dates=True)
-
-    national_holidays = holidays.filter(pl.col("locale") == "National")
-    regional_holidays = holidays.filter(pl.col("locale") == "Regional").rename({"locale_name": "state"})
-    local_holidays = holidays.filter(pl.col("locale") == "Local").rename({"locale_name": "city"})
-
-    logging.debug("Joining tables")
-
-    temporal = (
-        temporal.join(oil, on="date", how="left", suffix="oil_")
-        .join(store_info, on="store_nbr", how="left", suffix="store_info")
-        .join(items, on="item_nbr", how="left", suffix="items_")
-        .join(transactions, on=["date", "store_nbr"], suffix="transactions_")
-        .join(national_holidays, on="date", suffix="national_holidays_")
-        .join(regional_holidays, on=["date", "sate"], suffix="regional_holidays_")
-        .join(local_holidays, on=["date", "city"], suffix="local_holidays_")
-        .sort("traj_id", "date")
-    )
-    return temporal.collect()
-
-
-def make_temporal_dataframe(
-    data_folder: str,
-    start_date: datetime | None = _DEFAULT_START_DATE,
-    end_date: datetime | None = _DEFAULT_END_DATE,
-) -> pl.LazyFrame:
-    # load temporal data
-    lazy_df = pl.scan_csv(f"{data_folder}/train.csv", try_parse_dates=True)
-    lazy_df = downcast_dataframe(lazy_df)
-
-    # Filter dates to reduce storage space requirements
-    if start_date is not None:
-        lazy_df = lazy_df.filter(pl.col("date") >= start_date)
-    if end_date is not None:
-        lazy_df = lazy_df.filter(pl.col("date") <= end_date)
-
-    logging.debug("Adding trajectory identifier")
-    lazy_df = lazy_df.with_columns(
-        [
-            pl.format("{}_{}", "store_nbr", "item_nbr").alias("traj_id"),
-        ]
-    )
-    # Remove all IDs with negative returns
-    logging.debug("Removing returns data")
-
-    lazy_df = lazy_df.filter(pl.col("unit_sales").min().over("traj_id") >= 0)
-    lazy_df = lazy_df.with_columns(open=pl.lit(1))
-
-    # LazyFrame does not support ups sampling
-    df = lazy_df.sort("date", "traj_id").collect()
-
-    resampled_df = []
-
-    # Yes, this could have been done in 1 `df.upsample`, but I like to see a progress bar.
-    for _, sub_df in tqdm(df.groupby("traj_id"), desc="Resampling to regular grid", total=_NUM_IDS):
-        sub_df: pl.DataFrame
-        sub_df = sub_df.sort("date").upsample("date", every="1h").fill_null("forward")
-        resampled_df.append(sub_df)
-
-    df: pl.DataFrame = pl.concat(resampled_df)
-    return df
-
-
-def downcast_dataframe(df: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame | pl.LazyFrame:
-    columns_to_cast = []
-
-    for i, j in zip(df.columns, df.dtypes):
-        if j == pl.Float64:
-            columns_to_cast.append((i, pl.Float32))
-        if j == pl.Int64:
-            columns_to_cast.append((i, pl.Int32))
-
-    return df.with_columns([pl.col(i).cast(j) for i, j in columns_to_cast])

@@ -9,16 +9,11 @@ import polars as pl
 import tensorflow as tf
 from absl import logging
 from keras.utils import FeatureSpace, timeseries_dataset_from_array
-from ordered_set import OrderedSet
 from toolz import functoolz
 from tqdm.auto import tqdm
 
 T = TypeVar("T")
-
-"""
-In the end, wee want n time series stacked over batch axis.
-"""
-
+DF = TypeVar("DF", pl.DataFrame, pl.LazyFrame)
 Triple = Tuple[T, T, T]
 
 
@@ -30,6 +25,15 @@ class MultiHorizonTimeSeriesDataset(ABC):
     ----------
 
 
+    target_feature_names:
+        TODO
+    features:
+        TODO
+    total_time_steps:
+        TODO
+    feature_space:
+        TODO
+
 
     """
 
@@ -37,6 +41,9 @@ class MultiHorizonTimeSeriesDataset(ABC):
     features: OrderedDict[str, FeatureSpace.Feature]
     total_time_steps: ClassVar[int]
     feature_space: FeatureSpace = property(lambda self: FeatureSpace(self.features, output_mode="dict"))
+    input_feature_names = cached_property(
+        lambda self: [i for i in self.features.keys() if i not in self.target_feature_names]
+    )
 
     def make_dataset(self, path: str) -> Tuple[Triple[tf.data.Dataset], FeatureSpace]:
         """
@@ -50,6 +57,8 @@ class MultiHorizonTimeSeriesDataset(ABC):
         - split inputs and targets.
         - Create a 2D grid of ids, so later we can identify to which entity each data-point belongs to.
         - Join into 1 dataset, persist it.
+
+        In the end, wee want n time series stacked over batch axis.
 
         Parameters
         ----------
@@ -102,26 +111,18 @@ class MultiHorizonTimeSeriesDataset(ABC):
         test_ds = self._make_time_series_dataset(test_df, feature_space)
         return (training_ds, validation_ds, test_ds), feature_space
 
-    @cached_property
-    def _input_feature_names(self) -> List[str]:
-        features_from_feature_space = OrderedSet(list(self.features.keys()))
-        input_features = features_from_feature_space.symmetric_difference(OrderedSet(list(self.target_feature_names)))
-        return list(input_features)
-
     def _unpack_x_y(self, data: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         data = tf.nest.map_structure(np.squeeze, data)
 
         y = [data.pop(i) for i in self.target_feature_names]
-        x = [data.pop(i) for i in self._input_feature_names]
+        x = [data.pop(i) for i in self.input_feature_names]
 
         x = tf.stack(x, axis=1)
         y = tf.stack(y, axis=1)
 
         return x, y
 
-    def _make_time_series_dataset(
-        self, df: pl.DataFrame | pl.LazyFrame, feature_space: FeatureSpace
-    ) -> tf.data.Dataset:
+    def _make_time_series_dataset(self, df: DF, feature_space: FeatureSpace) -> tf.data.Dataset:
         if isinstance(df, pl.LazyFrame):
             df: pl.DataFrame = df.collect()
 
@@ -158,12 +159,12 @@ class MultiHorizonTimeSeriesDataset(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def read_csv(self, path: str) -> pl.DataFrame | pl.LazyFrame:
+    def read_csv(self, path: str) -> DF:
         """Read raw data from `path` directory, do necessary preprocessing."""
         raise NotImplementedError
 
     @abstractmethod
-    def split_data(self, df: pl.DataFrame | pl.LazyFrame) -> Triple[pl.DataFrame | pl.LazyFrame]:
+    def split_data(self, df: DF) -> Triple[DF]:
         """Split data into training/validation/test."""
         raise NotImplementedError
 
@@ -180,3 +181,17 @@ class MultiHorizonTimeSeriesDataset(ABC):
     @abstractmethod
     def needs_download(self, path: str) -> bool:
         raise NotImplementedError
+
+
+def downcast_dataframe(df: DF) -> DF:
+    columns_to_cast = []
+
+    for i, j in zip(df.columns, df.dtypes):
+        if j == pl.Float64:
+            columns_to_cast.append((i, pl.Float32))
+        if j == pl.Int64:
+            columns_to_cast.append((i, pl.Int32))
+        if j == pl.UInt64:
+            columns_to_cast.append((i, pl.UInt32))
+
+    return df.with_columns([pl.col(i).cast(j) for i, j in columns_to_cast])

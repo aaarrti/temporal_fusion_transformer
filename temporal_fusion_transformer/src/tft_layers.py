@@ -393,11 +393,9 @@ class DecoderBlock(nn.Module):
         attention_dtype = jnp.float32 if self.dtype == jnp.float16 else self.dtype
         # TODO: we probably can set decode=True during inference.
         x = nn.SelfAttention(
-            num_heads=self.num_attention_heads,
-            dtype=attention_dtype,
-            dropout_rate=self.attention_dropout_rate
+            num_heads=self.num_attention_heads, dtype=attention_dtype, dropout_rate=self.attention_dropout_rate
         )(inputs, mask=mask, deterministic=not training)
-        # x = x.astype(self.dtype)
+        x = x.astype(self.dtype)
         x, _ = GatedLinearUnit(
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
         )(x, training=training)
