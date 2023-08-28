@@ -94,7 +94,7 @@ class TemporalFusionTransformer(nn.Module):
     input_observed_idx: Sequence[int] | None = None
     input_static_idx: Sequence[int] | None = None
     input_known_real_idx: Sequence[int] | None = None
-    input_known_categorical_idx: Sequence[int] = None
+    input_known_categorical_idx: Sequence[int] | None = None
     num_observed_inputs: int | None = None
     num_known_real_inputs: int | None = None
     num_known_categorical_inputs: int | None = None

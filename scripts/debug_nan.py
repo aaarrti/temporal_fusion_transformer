@@ -21,7 +21,7 @@ from temporal_fusion_transformer.src.training_lib import (
 logging_utils.setup_logging(log_level="INFO")
 jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
-# jax.config.update("jax_disable_jit", True)
+jax.config.update("jax_disable_jit", True)
 jax.config.update("jax_softmax_custom_jvp", True)
 
 # 256 was used on cluster

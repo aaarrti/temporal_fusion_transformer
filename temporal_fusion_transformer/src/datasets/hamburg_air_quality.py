@@ -16,8 +16,8 @@ class HamburgAirQuality(MultiHorizonTimeSeriesDataset):
     def download_data(self, path: str):
         super().download_data(path)
 
-    def read_csv(self, path: str) -> DF:
-        super().read_csv(path)
+    def read_parquet(self, path: str) -> DF:
+        super().read_parquet(path)
 
     def split_data(self, df: DF) -> Triple[DF]:
         super().split_data(df)

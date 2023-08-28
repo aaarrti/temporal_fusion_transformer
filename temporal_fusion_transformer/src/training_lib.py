@@ -261,11 +261,6 @@ def make_training_hooks(
             raise
 
         hooks.on_error.append(persist_nan_causing_args)
-
-    def run_gc(*args, **kwargs):
-        gc.collect()
-
-    hooks.on_step_end.append(run_gc)
     return hooks
 
 

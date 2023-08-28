@@ -10,12 +10,9 @@ import polars as pl
 from absl import logging
 from keras.utils import FeatureSpace
 from keras.utils.data_utils import _extract_archive
-from toolz.dicttoolz import valmap
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src.datasets.base import MultiHorizonTimeSeriesDataset, Triple
-from temporal_fusion_transformer.src.datasets.base import downcast_dataframe
-
 
 _NUM_IDS = 143658
 
@@ -29,14 +26,14 @@ class Favorita(MultiHorizonTimeSeriesDataset):
     - https://www.kaggle.com/c/favorita-grocery-sales-forecasting/data
     """
 
-    target_feature_names = ["log_sales"]
+    target_feature_names = ("log_sales",)
     total_time_steps = 120
     num_encoder_steps = 90
+    id_column = "traj_id"
 
     features = property(
         lambda self: OrderedDict(
             [
-                ("log_sales", FeatureSpace.float_normalized()),
                 # static
                 ("item_nbr", self.integer_categorical()),
                 ("store_nbr", self.integer_categorical()),
@@ -45,159 +42,63 @@ class Favorita(MultiHorizonTimeSeriesDataset):
                 ("type", self.string_categorical()),
                 ("cluster", self.integer_categorical()),
                 ("family", self.string_categorical()),
-                ("class", self.integer_categorical()),  # mb real?
+                ("class", self.integer_categorical()),
                 ("perishable", self.integer_categorical()),
                 # known real
-                ("date", FeatureSpace.float_normalized()),
+                # ("date", FeatureSpace.float_normalized()),
                 # known categorical
-                ("day_of_month", self.integer_categorical()),
                 ("month", self.integer_categorical()),
-                ("open", self.integer_categorical()),
-                ("onpromotion", self.integer_categorical()),
+                ("day_of_month", self.integer_categorical()),
                 ("day_of_week", self.integer_categorical()),
                 ("national_hol", self.string_categorical()),
                 ("regional_hol", self.string_categorical()),
                 ("local_hol", self.string_categorical()),
+                ("onpromotion", self.integer_categorical()),
+                ("open", self.integer_categorical()),
                 # observed
                 ("transactions", FeatureSpace.float_normalized()),
-                ("oil", FeatureSpace.float_normalized()),
+                ("oil_price", FeatureSpace.float_normalized()),
             ]
         )
     )
     _required_files = (
-        "stores.csv",
-        "items.csv",
-        "transactions.csv",
-        "oil.csv",
-        "holidays_events.csv",
+        "stores.parquet",
+        "items.parquet",
+        "transactions.parquet",
+        "oil.parquet",
+        "holidays_events.parquet",
     )
 
     def __init__(
         self,
-        start_date: datetime | None = datetime(2015, 1, 1),
+        start_date: datetime | None = datetime(2016, 1, 1),
         end_date: datetime | None = datetime(2016, 6, 1),
-        validation_boundary=datetime(2015, 12, 1),
+        validation_boundary=datetime(2016, 4, 1),
     ):
+        """
+        We assume 3 month lookback and one-month forecast horizon.
+
+        Parameters
+        ----------
+        start_date:
+            Limit time-series size, so don't need 40GB of RAM.
+        end_date:
+             Limit time-series size, so don't need 40GB of RAM.
+        validation_boundary:
+            Date at which validation starts.
+        """
         self.start_date = start_date
         self.end_date = end_date
         self.validation_boundary = validation_boundary
 
-    def read_csv(self, path: str) -> pl.DataFrame:
-        lazy_temporal = downcast_dataframe(pl.scan_csv(f"{path}/train.csv", try_parse_dates=True))
-
-        # Filter dates to reduce storage space requirements
-        if self.start_date is not None:
-            lazy_temporal = lazy_temporal.filter(pl.col("date") >= self.start_date)
-        if self.end_date is not None:
-            lazy_temporal = lazy_temporal.filter(pl.col("date") <= self.end_date)
-
-        logging.debug("Adding trajectory identifier")
-        lazy_temporal = lazy_temporal.with_columns(
-            [
-                pl.format("{}_{}", "store_nbr", "item_nbr").alias("traj_id"),
-            ]
-        )
-        # Remove all IDs with negative returns
-        logging.debug("Removing returns data")
-
-        lazy_temporal = lazy_temporal.filter(pl.col("unit_sales").min().over("traj_id") >= 0)
-        lazy_temporal = lazy_temporal.with_columns(open=pl.lit(1))
-
-        # LazyFrame does not support up-sampling
-        logging.info("Up-sampling to uniform grid.")
-        lazy_temporal = (
-            lazy_temporal.sort("date", "traj_id")
-            .collect()
-            .upsample("date", every="1h", by="traj_id")
-            .fill_null(strategy="forward")
-            .lazy()
-        )
-        logging.debug(f"{lazy_temporal = }")
-
-        store_info = downcast_dataframe(pl.scan_csv(f"{path}/stores.csv"))
-        items = downcast_dataframe(pl.scan_csv(f"{path}/items.csv"))
-        transactions = downcast_dataframe(pl.scan_csv(f"{path}/transactions.csv", try_parse_dates=True))
-
-        oil = downcast_dataframe(
-            pl.scan_csv(f"{path}/oil.csv", try_parse_dates=True)
-            .with_columns(pl.col("dcoilwtico").forward_fill())
-            .filter(pl.col("dcoilwtico").is_not_null())
-        )
-
-        holidays = downcast_dataframe(pl.scan_csv(f"{path}/holidays_events.csv", try_parse_dates=True))
-
-        national_holidays = (
-            holidays.filter(pl.col("locale") == "National")
-            .select(["description", "date"])
-            .rename({"description": "national_hol"})
-        )
-        regional_holidays = (
-            holidays.filter(pl.col("locale") == "Regional")
-            .select(["description", "locale_name", "date"])
-            .rename({"locale_name": "state", "description": "regional_hol"})
-        )
-        local_holidays = (
-            holidays.filter(pl.col("locale") == "Local")
-            .select(["description", "locale_name", "date"])
-            .rename({"locale_name": "city", "description": "local_hol"})
-        )
-
-        logging.debug("Joining tables")
-
-        temporal: pl.LazyFrame = (
-            lazy_temporal.join(oil, on="date", how="left")
-            .join(store_info, on="store_nbr")
-            .join(items, on="item_nbr")
-            .join(transactions, on=["store_nbr", "date"])
-            .join(national_holidays, on="date", how="left")
-            .join(regional_holidays, on=["date", "state"], how="left")
-            .join(local_holidays, on=["date", "city"], how="left")
-            .with_columns(
-                [
-                    pl.col("oil_price").fill_null(strategy="forward"),
-                    pl.col("national_hol").fill_null(""),
-                    pl.col("regional_hol").fill_null(""),
-                    pl.col("local_hol").fill_null(""),
-                ]
-            )
-            .sort("traj_id", "date")
-        )
-        df = temporal.collect()
-        logging.debug(f"{df = }")
-        return df
-
-    def split_data(self, df: pl.LazyFrame) -> Triple[pl.LazyFrame]:
-        if not isinstance(df, pl.LazyFrame):
-            df = df.lazy()
-
-        forecast_horizon = self.total_time_steps - self.num_encoder_steps
-
-        test_boundary = self.validation_boundary + timedelta(hours=forecast_horizon)
-
-        training_df: pl.DataFrame = df.filter(pl.col("date").over("traj_id").lt(self.validation_boundary)).collect()
-        validation_df = df.filter(pl.col("date").over("traj_id").ge(self.validation_boundary).lt(test_boundary))
-        test_df = df.filter(pl.col("date").over("traj_id").ge(test_boundary))
-
-        # Filter out identifiers not present in training (i.e. cold-started items).
-        identifiers = training_df["traj_id"].unique().to_list()
-        ids = set(identifiers)
-
-        def filter_ids(frame: pl.DataFrame) -> pl.DataFrame:
-            return frame.filter(pl.col("traj_id") in ids)
-
-        validation_df = filter_ids(validation_df["valid"])
-        test_df = filter_ids(test_df["test"])
-
-        return training_df, validation_df, test_df
-
     def needs_download(self, path: str) -> bool:
-        csvs = glob.glob(f"{path}/*.csv")
+        files = glob.glob(f"{path}/*.parquet")
 
-        filenames = {i.rpartition("/")[-1] for i in csvs}
+        filenames = {i.rpartition("/")[-1] for i in files}
         missing_files = list(set(self._required_files).difference(filenames))
 
         if len(missing_files) == 0:
-            logging.info(f"Found {csvs} locally, will skip download from Kaggle.")
+            logging.info(f"Found {files} locally, will skip download from Kaggle.")
             return False
         else:
             logging.info(f"{missing_files = }")
@@ -218,3 +119,159 @@ class Favorita(MultiHorizonTimeSeriesDataset):
             with py7zr.SevenZipFile(i, mode="r") as archive:
                 archive.extractall(path=path)
             os.remove(i)
+
+    def convert_to_parquet(self, path: str):
+        files = glob.glob(f"{path}/*.csv")
+        for f in tqdm(files, desc="Converting to parquet"):
+            f: str
+            pl.scan_csv(f, try_parse_dates=True).sink_parquet(f.replace("csv", "parquet"))
+            os.remove(f)
+
+    def read_parquet(self, path: str) -> pl.DataFrame:
+        def drop_id(lf: pl.LazyFrame) -> pl.LazyFrame:
+            return lf.drop("id")
+
+        def filter_dates(lf: pl.LazyFrame) -> pl.LazyFrame:
+            # Filter dates to reduce storage space requirements
+            if self.start_date is not None:
+                lf = lf.filter(pl.col("date") >= self.start_date)
+            if self.end_date is not None:
+                lf = lf.filter(pl.col("date") <= self.end_date)
+            return lf
+
+        def remove_returns_data(lf: pl.LazyFrame) -> pl.LazyFrame:
+            lf = lf.filter(pl.col("unit_sales").min().over("traj_id") >= 0)
+            lf = lf.with_columns(open=pl.lit(1))
+            return lf
+
+        lazy_temporal: pl.DataFrame = (
+            pl.scan_parquet(f"{path}/train.parquet")
+            .pipe(drop_id)
+            .pipe(downcast_dataframe)
+            .pipe(filter_dates)
+            .pipe(
+                lambda lf: lf.with_columns(
+                    [
+                        pl.format("{}_{}", "store_nbr", "item_nbr").alias("traj_id"),
+                    ]
+                )
+            )
+            .pipe(remove_returns_data)
+            .pipe(lambda lf: lf.sort("date", "traj_id"))
+            .collect(streaming=True)
+        )
+
+        logging.info("Upsampling to regular grid ...")
+        temporal = (
+            lazy_temporal.shrink_to_fit(in_place=True)
+            .upsample("date", every="1d", by="traj_id")
+            .fill_null(strategy="forward")
+            .lazy()
+            .pipe(lambda lf: lf.with_columns(pl.col("unit_sales").log()).rename({"unit_sales": "log_sales"}))
+        )
+
+        store_info = pl.scan_parquet(f"{path}/stores.parquet").pipe(downcast_dataframe)
+        items = pl.scan_parquet(f"{path}/items.parquet").pipe(downcast_dataframe)
+        transactions = pl.scan_parquet(f"{path}/transactions.parquet").pipe(downcast_dataframe)
+        oil = (
+            pl.scan_parquet(f"{path}/oil.parquet")
+            .pipe(downcast_dataframe)
+            .pipe(lambda lf: lf.rename({"dcoilwtico": "oil_price"}))
+        )
+        holidays = pl.scan_parquet(f"{path}/holidays_events.parquet").pipe(downcast_dataframe)
+
+        national_holidays = (
+            holidays.filter(pl.col("locale") == "National")
+            .select(["description", "date"])
+            .rename({"description": "national_hol"})
+            .collect()
+            .shrink_to_fit(in_place=True)
+            .rechunk()
+            .lazy()
+        )
+        regional_holidays = (
+            holidays.filter(pl.col("locale") == "Regional")
+            .select(["description", "locale_name", "date"])
+            .rename({"locale_name": "state", "description": "regional_hol"})
+            .collect()
+            .shrink_to_fit(in_place=True)
+            .rechunk()
+            .lazy()
+        )
+        local_holidays = (
+            holidays.filter(pl.col("locale") == "Local")
+            .select(["description", "locale_name", "date"])
+            .rename({"locale_name": "city", "description": "local_hol"})
+            .collect()
+            .shrink_to_fit(in_place=True)
+            .rechunk()
+            .lazy()
+        )
+
+        logging.debug("Joining tables")
+
+        df: pl.DataFrame = (
+            temporal.join(oil, on="date", how="left")
+            .join(store_info, on="store_nbr")
+            .join(items, on="item_nbr")
+            .join(transactions, on=["store_nbr", "date"])
+            .join(national_holidays, on="date", how="left")
+            .join(regional_holidays, on=["date", "state"], how="left")
+            .join(local_holidays, on=["date", "city"], how="left")
+            .with_columns(
+                [
+                    pl.col("oil_price").fill_null(strategy="forward"),
+                    pl.col("national_hol").fill_null(""),
+                    pl.col("regional_hol").fill_null(""),
+                    pl.col("local_hol").fill_null(""),
+                    pl.col("date").dt.month().alias("month"),
+                    pl.col("date").dt.day().alias("day_of_month"),
+                    pl.col("date").dt.weekday().alias("day_of_week"),
+                ]
+            )
+            .filter(pl.col("oil_price").is_not_null())
+            .sort("date", "traj_id")
+            .collect(streaming=True)
+            .shrink_to_fit(in_place=True)
+            .rechunk()
+        )
+        logging.debug(f"{df = }")
+        df.write_parquet(f"{path}/df.parquet")
+        return df
+
+    def split_data(self, df: pl.DataFrame) -> Triple[pl.DataFrame]:
+        
+        lf = df.lazy()
+        forecast_horizon = self.total_time_steps - self.num_encoder_steps
+
+        test_boundary = self.validation_boundary + timedelta(hours=forecast_horizon)
+
+        training_df: pl.DataFrame = lf.filter(pl.col("date").over("traj_id").lt(self.validation_boundary)).collect()
+        validation_df = df.filter(pl.col("date").over("traj_id").ge(self.validation_boundary).lt(test_boundary))
+        test_df = df.filter(pl.col("date").over("traj_id").ge(test_boundary))
+
+        # Filter out identifiers not present in training (i.e. cold-started items).
+        identifiers = training_df["traj_id"].unique().to_list()
+        ids = set(identifiers)
+
+        def filter_ids(frame: pl.DataFrame) -> pl.DataFrame:
+            return frame.filter(pl.col("traj_id") in ids)
+
+        validation_df = filter_ids(validation_df["valid"])
+        test_df = filter_ids(test_df["test"])
+
+        return training_df, validation_df, test_df
+
+
+def downcast_dataframe(lf: pl.LazyFrame) -> pl.LazyFrame:
+    columns_to_cast = []
+
+    for i, j in zip(lf.columns, lf.dtypes):
+        if j == pl.Float64:
+            columns_to_cast.append((i, pl.Float32))
+        if j == pl.Int64:
+            columns_to_cast.append((i, pl.Int32))
+        if j == pl.UInt64:
+            columns_to_cast.append((i, pl.UInt32))
+
+    return lf.with_columns([pl.col(i).cast(j) for i, j in columns_to_cast])

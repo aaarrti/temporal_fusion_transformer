@@ -45,8 +45,8 @@ def get_fixed_params_config(choice: Choice = "electricity") -> ConfigDict:
             "num_encoder_steps": 7 * 24,
             "total_time_steps": 8 * 24,
             "num_outputs": 1,
-            "known_categories_sizes": [31, 24, 7, 12],
-            "static_categories_sizes": [369],
+            "known_categories_sizes": [31, 24, 7, 12],  # day of month  # hour of the day  # day of the week  # month
+            "static_categories_sizes": [369],  # id
             "input_observed_idx": [],
             "input_static_idx": [0],
             "input_known_real_idx": [1, 2],
@@ -56,12 +56,31 @@ def get_fixed_params_config(choice: Choice = "electricity") -> ConfigDict:
             "total_time_steps": 120,
             "num_encoder_steps": 90,
             "num_outputs": 1,
-            "known_categories_sizes": [],
-            "static_categories_sizes": [],
-            "input_observed_idx": [],
-            "input_static_idx": [],
-            "input_known_real_idx": [],
-            "input_known_categorical_idx": [],
+            "known_categories_sizes": [
+                12,  # month
+                31,  # day of month
+                7,  # day of week
+                39,  # national holiday
+                2,  # regional hol
+                6,  # local holiday
+                2,  # on promotion
+                2,  # open
+            ],
+            "static_categories_sizes": [
+                3586,  # item nbr
+                53,  # store nbr
+                22,  # city
+                16,  # state,
+                5,  # type
+                17,  # cluster
+                32,  # family
+                317,  # class
+                2,  # perishable
+            ],
+            "input_observed_idx": [17, 18],
+            "input_static_idx": [0, 1, 2, 3, 4, 5, 6, 7],
+            "input_known_real_idx": [8],
+            "input_known_categorical_idx": [9, 10, 11, 12, 13, 14, 15, 16],
         },
         "hamburg_air_quality": {},
     }

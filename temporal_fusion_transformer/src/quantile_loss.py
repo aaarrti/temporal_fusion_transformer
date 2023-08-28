@@ -20,7 +20,7 @@ def make_quantile_loss_fn(quantiles: Sequence[float], dtype=jnp.float32) -> Quan
 def quantile_loss(
     y_true: Float[Array, "time n"],
     y_pred: Float[Array, "time n*quantiles"],
-    quantiles: Tuple[float],
+    quantiles: Tuple[float, ...],
     dtype: AbstractDtype = jnp.float32,
 ) -> Float[Array, "batch"]:
     """

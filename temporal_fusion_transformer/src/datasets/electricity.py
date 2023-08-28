@@ -11,6 +11,7 @@ import polars as pl
 from absl import logging
 from keras.utils import FeatureSpace, get_file
 from tqdm.auto import tqdm
+import kaggle
 
 from temporal_fusion_transformer.src.datasets.base import MultiHorizonTimeSeriesDataset, Triple
 
@@ -36,8 +37,6 @@ class Electricity(MultiHorizonTimeSeriesDataset):
     features = cached_property(
         lambda self: OrderedDict(
             [
-                # target
-                ("power_usage", FeatureSpace.float_normalized()),
                 # static
                 ("id", self.string_categorical()),
                 # known real
@@ -81,8 +80,8 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         return train_df, validation_df, test_df
 
     def needs_download(self, path: str) -> bool:
-        if Path(f"{path}/LD2011_2014.csv").exists():
-            logging.info(f"Found {path}/LD2011_2014.csv locally, will skip download.")
+        if Path(f"{path}/LD2011_2014.parquet").exists():
+            logging.info(f"Found {path}/LD2011_2014.parquet locally, will skip download.")
             return False
         else:
             return True
@@ -91,7 +90,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         pathlib.Path(path).mkdir(exist_ok=True)
         logging.info(f"Downloading LD2011_2014.txt.zip")
         get_file(
-            origin=f"https://archive.ics.uci.edu/ml/machine-learning-databases/00321/LD2011_2014.txt.zip",
+            origin="https://archive.ics.uci.edu/ml/machine-learning-databases/00321/LD2011_2014.txt.zip",
             cache_dir=path,
             extract=True,
             archive_format="zip",
@@ -99,6 +98,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         )
         os.remove(f"{path}/LD2011_2014.txt.zip")
 
+    def convert_to_parquet(self, path: str):
         with open(f"{path}/LD2011_2014.txt", "r") as file:
             txt_content = file.read()
 
@@ -107,12 +107,18 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         with open(f"{path}/LD2011_2014.csv", "w+") as file:
             file.write(csv_content)
 
-    def read_csv(self, path: str) -> pl.DataFrame:
-        lazy_df = pl.scan_csv(f"{path}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True)
-        lazy_df = lazy_df.rename({"": "timestamp"})
+        pl.scan_csv(f"{path}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True).rename(
+            {"": "timestamp"}
+        ).sink_parquet(f"{path}/LD2011_2014.parquet")
+
+        os.remove(f"{path}/LD2011_2014.txt")
+        os.remove(f"{path}/LD2011_2014.csv")
+
+    def read_parquet(self, path: str) -> pl.DataFrame:
+        lazy_df = pl.scan_parquet(f"{path}/LD2011_2014.parquet")
 
         num_cols = lazy_df.columns[1:]
-        lazy_df = lazy_df.sort(by="timestamp")
+        lazy_df = lazy_df.sort("timestamp")
         # down sample to 1h https://pola-rs.github.io/polars-book/user-guide/transformations/time-series/rolling/
         lazy_df = lazy_df.groupby_dynamic("timestamp", every="1h").agg([pl.col(i).mean() for i in num_cols])
         # replace dummy 0.0 by nulls

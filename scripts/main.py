@@ -31,7 +31,7 @@ flags.DEFINE_boolean("full_reshuffle", default=False, help="Fully reshuffle data
 flags.DEFINE_boolean("profile", default=False, help="Run with profiling")
 flags.DEFINE_boolean("verbose", default=True, help="Verbose mode for training")
 flags.DEFINE_string("save_path", default="model.msgpack", help="Save path for model")
-flags.DEFINE_integer("prefetch_buffer_size", default=2, help="Prefetch buffer size")
+flags.DEFINE_integer("prefetch_buffer_size", default=0, help="Prefetch buffer size")
 CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
 logging_utils.setup_logging(log_level="DEBUG")
