@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Literal
 from ml_collections import ConfigDict
 
-
 Choice = Literal["electricity", "favorita", "hamburg_air_quality"]
 
 
@@ -45,7 +44,12 @@ def get_fixed_params_config(choice: Choice = "electricity") -> ConfigDict:
             "num_encoder_steps": 7 * 24,
             "total_time_steps": 8 * 24,
             "num_outputs": 1,
-            "known_categories_sizes": [31, 24, 7, 12],  # day of month  # hour of the day  # day of the week  # month
+            "known_categories_sizes": [
+                31,  # day of month
+                24,  # hour of the day
+                7,   # day of the week
+                12   # month
+            ],
             "static_categories_sizes": [369],  # id
             "input_observed_idx": [],
             "input_static_idx": [0],
@@ -59,23 +63,23 @@ def get_fixed_params_config(choice: Choice = "electricity") -> ConfigDict:
             "known_categories_sizes": [
                 12,  # month
                 31,  # day of month
-                7,  # day of week
+                7,   # day of week
                 39,  # national holiday
-                2,  # regional hol
-                6,  # local holiday
-                2,  # on promotion
-                2,  # open
+                2,   # regional hol
+                6,   # local holiday
+                2,   # on promotion
+                2,   # open
             ],
             "static_categories_sizes": [
                 3586,  # item nbr
-                53,  # store nbr
-                22,  # city
-                16,  # state,
-                5,  # type
-                17,  # cluster
-                32,  # family
-                317,  # class
-                2,  # perishable
+                53,    # store nbr
+                22,    # city
+                16,    # state,
+                5,     # type
+                17,    # cluster
+                32,    # family
+                317,   # class
+                2,     # perishable
             ],
             "input_observed_idx": [17, 18],
             "input_static_idx": [0, 1, 2, 3, 4, 5, 6, 7],

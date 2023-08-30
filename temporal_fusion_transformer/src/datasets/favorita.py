@@ -128,46 +128,55 @@ class Favorita(MultiHorizonTimeSeriesDataset):
             os.remove(f)
 
     def read_parquet(self, path: str) -> pl.DataFrame:
-        def drop_id(lf: pl.LazyFrame) -> pl.LazyFrame:
-            return lf.drop("id")
+        def downcast_dataframe(lf: pl.LazyFrame) -> pl.LazyFrame:
+            return lf.with_columns(
+                [
+                    pl.col("onpromotion").cast(pl.Int8),
+                    pl.col("store_nbr").cast(pl.Int8),
+                    pl.col("item_nbr").cast(pl.Int32),
+                    pl.col("unit_sales").cast(pl.Float32),
+                ]
+            )
 
-        def filter_dates(lf: pl.LazyFrame) -> pl.LazyFrame:
-            # Filter dates to reduce storage space requirements
-            if self.start_date is not None:
-                lf = lf.filter(pl.col("date") >= self.start_date)
-            if self.end_date is not None:
-                lf = lf.filter(pl.col("date") <= self.end_date)
-            return lf
+        def convert_onpromotion_to_bool(lf: pl.LazyFrame) -> pl.LazyFrame:
+            def map_fn(x):
+                if x is None:
+                    return None
+                else:
+                    return x == "True"
+
+            return lf.with_columns([pl.col("onpromotion").apply(map_fn)])
 
         def remove_returns_data(lf: pl.LazyFrame) -> pl.LazyFrame:
             lf = lf.filter(pl.col("unit_sales").min().over("traj_id") >= 0)
-            lf = lf.with_columns(open=pl.lit(1))
+            lf = lf.with_columns(open=pl.lit(1).cast(pl.Int8))
             return lf
 
-        lazy_temporal: pl.DataFrame = (
-            pl.scan_parquet(f"{path}/train.parquet")
-            .pipe(drop_id)
-            .pipe(downcast_dataframe)
-            .pipe(filter_dates)
-            .pipe(
-                lambda lf: lf.with_columns(
-                    [
-                        pl.format("{}_{}", "store_nbr", "item_nbr").alias("traj_id"),
-                    ]
-                )
-            )
-            .pipe(remove_returns_data)
-            .pipe(lambda lf: lf.sort("date", "traj_id"))
-            .collect(streaming=True)
-        )
+        def filter_dates(lf: pl.LazyFrame, start_date, end_date) -> pl.LazyFrame:
+            # Filter dates to reduce storage space requirements
+            if start_date is not None:
+                lf = lf.filter(pl.col("date") >= start_date)
+            if end_date is not None:
+                lf = lf.filter(pl.col("date") <= end_date)
+            return lf
 
-        logging.info("Upsampling to regular grid ...")
-        temporal = (
-            lazy_temporal.shrink_to_fit(in_place=True)
+        temporal: pl.LazyFrame = (
+            pl.scan_parquet(f"{path}/train.parquet")
+            .drop("id")
+            .pipe(convert_onpromotion_to_bool)
+            .pipe(downcast_dataframe)
+            .pipe(filter_dates, self.start_date, self.end_date)
+            .with_columns([pl.format("{}_{}", "store_nbr", "item_nbr").alias("traj_id")])
+            .pipe(remove_returns_data)
+            .sort("date", "traj_id")
+            .collect(streaming=True)
+            .shrink_to_fit(in_place=True)
+            .rechunk()
             .upsample("date", every="1d", by="traj_id")
             .fill_null(strategy="forward")
+            .with_columns(pl.col("unit_sales").log())
+            .rename({"unit_sales": "log_sales"})
             .lazy()
-            .pipe(lambda lf: lf.with_columns(pl.col("unit_sales").log()).rename({"unit_sales": "log_sales"}))
         )
 
         store_info = pl.scan_parquet(f"{path}/stores.parquet").pipe(downcast_dataframe)
@@ -240,7 +249,6 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         return df
 
     def split_data(self, df: pl.DataFrame) -> Triple[pl.DataFrame]:
-        
         lf = df.lazy()
         forecast_horizon = self.total_time_steps - self.num_encoder_steps
 
@@ -261,17 +269,3 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         test_df = filter_ids(test_df["test"])
 
         return training_df, validation_df, test_df
-
-
-def downcast_dataframe(lf: pl.LazyFrame) -> pl.LazyFrame:
-    columns_to_cast = []
-
-    for i, j in zip(lf.columns, lf.dtypes):
-        if j == pl.Float64:
-            columns_to_cast.append((i, pl.Float32))
-        if j == pl.Int64:
-            columns_to_cast.append((i, pl.Int32))
-        if j == pl.UInt64:
-            columns_to_cast.append((i, pl.UInt32))
-
-    return lf.with_columns([pl.col(i).cast(j) for i, j in columns_to_cast])

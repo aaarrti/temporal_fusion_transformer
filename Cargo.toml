@@ -1,3 +1,0 @@
-[workspace]
-members = ["favorita"]
-resolver = "2"
