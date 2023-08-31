@@ -9,7 +9,10 @@ from absl_extra import flax_utils
 from ml_collections import ConfigDict
 
 from temporal_fusion_transformer.src import training_scripts
-from temporal_fusion_transformer.src.config_dict import ConfigDictProto, FixedParamsConfig
+from temporal_fusion_transformer.src.config_dict import (
+    ConfigDictProto,
+    DatasetConfig,
+)
 from temporal_fusion_transformer.src.training_lib import MetricContainer, load_dataset
 
 if TYPE_CHECKING:
@@ -65,7 +68,7 @@ def optimize_experiment_hyperparams(
 
 def optimize_hyperparams(
     *,
-    fixed_params: ConfigDict | FixedParamsConfig,
+    fixed_params: ConfigDict | DatasetConfig,
     data: Tuple[tf.data.Dataset, tf.data.Dataset],
     epochs: int,
     batch_size: int,

@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from typing import Protocol, Sequence
+from typing import Protocol, Sequence, Union
+from ml_collections import ConfigDict
 
 
-class ConfigDictProto(Protocol):
+class _ConfigDictProto(Protocol):
     prng_seed: int
     shuffle_buffer_size: int
-    fixed_params: FixedParamsConfig
-    hyperparams: HyperParamsConfig
+    model: ModelConfig
     optimizer: OptimizerConfig
 
 
-class HyperParamsConfig(Protocol):
+class _ModelConfig(Protocol):
     """
     Attributes
     ----------
@@ -34,7 +34,7 @@ class HyperParamsConfig(Protocol):
     attention_dropout_rate: float
 
 
-class FixedParamsConfig(Protocol):
+class _DatasetConfig(Protocol):
     """
     Attributes
     ----------
@@ -72,7 +72,7 @@ class FixedParamsConfig(Protocol):
     input_known_categorical_idx: Sequence[int]
 
 
-class OptimizerConfig(Protocol):
+class _OptimizerConfig(Protocol):
     """
     Attributes
     ----------
@@ -94,3 +94,9 @@ class OptimizerConfig(Protocol):
     decay_alpha: float
     ema: float
     clipnorm: float
+
+
+ConfigDictProto = Union[ConfigDict, _ConfigDictProto]
+OptimizerConfig = Union[ConfigDict, _OptimizerConfig]
+ModelConfig = Union[ConfigDict, _ModelConfig]
+DatasetConfig = Union[ConfigDict, _DatasetConfig]

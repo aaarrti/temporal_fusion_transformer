@@ -49,7 +49,7 @@ def main():
     y_batch = jnp.asarray(restored["y_batch"], jnp.float16)
 
     model = TemporalFusionTransformer.from_config_dict(config, dtype=jnp.float16)
-    loss_fn = make_quantile_loss_fn(config.hyperparams.quantiles, dtype=jnp.float16)
+    loss_fn = make_quantile_loss_fn(config.model.quantiles, dtype=jnp.float16)
 
     state = TrainStateContainer.create(
         tx=make_optimizer(config.optimizer, 18000, 1),

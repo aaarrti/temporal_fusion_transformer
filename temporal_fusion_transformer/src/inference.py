@@ -1,21 +1,23 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Mapping, Tuple
+
 import jax
 import jax.numpy as jnp
-
+import keras
 import matplotlib.pyplot as plt
 import numpy as np
-from keras.utils import FeatureSpace
-import keras
-from ml_collections import ConfigDict
 from absl_extra.flax_utils import load_from_msgpack
+from keras.utils import FeatureSpace
+from ml_collections import ConfigDict
 
 PredictFn = Callable
 
 from temporal_fusion_transformer.src.config_dict import ConfigDictProto
-from temporal_fusion_transformer.src.tft_model import TemporalFusionTransformer, InputStruct
-
+from temporal_fusion_transformer.src.tft_model import (
+    InputStruct,
+    TemporalFusionTransformer,
+)
 
 """
 We receive as input a grid like data [id, time, values * quantiles]

@@ -19,7 +19,7 @@ def make_quantile_loss_fn(quantiles: Sequence[float], dtype=jnp.float32) -> Quan
 @functools.partial(jax.jit, static_argnames=["quantiles", "dtype"])
 def quantile_loss(
     y_true: Float[Array, "time n"],
-    y_pred: Float[Array, "time n*quantiles"],
+    y_pred: Float[Array, "time n*q"],
     quantiles: Tuple[float, ...],
     dtype: AbstractDtype = jnp.float32,
 ) -> Float[Array, "batch"]:

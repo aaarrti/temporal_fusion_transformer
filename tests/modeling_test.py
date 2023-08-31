@@ -31,7 +31,7 @@ jax.config.update("jax_debug_infs", True)
 _CONFIG: ConfigDictProto = ConfigDict(
     {
         "prng_seed": 69,
-        "hyperparams": {
+        "model": {
             "num_attention_heads": 10,
             "num_decoder_blocks": 5,
             "latent_dim": 160,

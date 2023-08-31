@@ -10,12 +10,11 @@ from absl_extra.typing_utils import ParamSpec
 from flax.training.dynamic_scale import DynamicScale
 from flax.training.early_stopping import EarlyStopping
 from jax import numpy as jnp
-from ml_collections import ConfigDict
 
-from temporal_fusion_transformer.src.config_dict import ConfigDictProto
+from temporal_fusion_transformer.src.config_dict import ConfigDictProto, DatasetConfig
 from temporal_fusion_transformer.src.metrics import MetricContainer
 from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
-from temporal_fusion_transformer.src.tft_model import InputStruct, TemporalFusionTransformer
+from temporal_fusion_transformer.src.tft_model import TemporalFusionTransformer
 from temporal_fusion_transformer.src.training_lib import (
     TrainStateContainer,
     load_dataset,
@@ -42,17 +41,17 @@ def train_experiment(
     data_dir: str,
     batch_size: int,
     experiment_name: Literal["electricity", "favorita"],
-    config: ConfigDictProto | ConfigDict,
+    config: ConfigDictProto,
+    data_config: DatasetConfig,
     epochs: int = 1,
     mixed_precision: bool = False,
     jit_module: bool = False,
     save_path: str | None = None,
-    device_type: Literal["cpu", "gpu", "tpu"] = "tpu",
+    device_type: Literal["cpu", "gpu", "tpu"] = "gpu",
     prefetch_buffer_size: int = 0,
     dynamic_scale: DynamicScale | None = None,
     verbose: bool = True,
     hooks: flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | None = None,
-    full_reshuffle: bool = False,
     profile: bool = False,
 ) -> flax_utils.MetricsAndParams:
     if mixed_precision:
@@ -71,12 +70,12 @@ def train_experiment(
         config.prng_seed,
         dtype=compute_dtype,
         shuffle_buffer_size=config.shuffle_buffer_size,
-        full_reshuffle=full_reshuffle,
-        num_encoder_steps=config.fixed_params.num_encoder_steps,
+        num_encoder_steps=data_config.num_encoder_steps,
     )
     tensorboard_logdir = f"tensorboard/{experiment_name}"
     return train(
         data=data,
+        data_config=data_config,
         device_type=device_type,
         save_path=save_path,
         jit_module=jit_module,
@@ -96,7 +95,8 @@ def train_experiment(
 def train(
     *,
     data: Tuple[tf.data.Dataset, tf.data.Dataset],
-    config: ConfigDictProto | ConfigDict,
+    config: ConfigDictProto,
+    data_config: DatasetConfig,
     epochs: int = 1,
     batch_size: int | None = None,
     mixed_precision: bool = False,
@@ -118,6 +118,8 @@ def train(
     data:
         Tuple of training & validation tf.data.Dataset's
     config:
+    data_config:
+
     batch_size:
         Batch size for each device.
     epochs:
@@ -163,9 +165,9 @@ def train(
     first_x = training_dataset.as_numpy_iterator().next()[0]
 
     if batch_size is not None:
-        first_x = first_x[:batch_size]
+        first_x = jnp.asarray(first_x[:batch_size], dtype=compute_dtype)
 
-    model = TemporalFusionTransformer.from_config_dict(config, jit_module=jit_module)
+    model = TemporalFusionTransformer.from_config_dict(config, data_config, jit_module=jit_module, dtype=compute_dtype)
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
     dropout_key, params_key = jax.random.split(prng_key, 2)
@@ -174,7 +176,7 @@ def train(
 
     tx = make_optimizer(config.optimizer, num_training_steps, epochs)
 
-    loss_fn = make_quantile_loss_fn(config.hyperparams.quantiles, dtype=compute_dtype)
+    loss_fn = make_quantile_loss_fn(config.model.quantiles, dtype=compute_dtype)
 
     if dynamic_scale == "auto" and compute_dtype == jnp.float16:
         dynamic_scale = DynamicScale()
@@ -207,10 +209,10 @@ def train(
 
     def make_dataset_generator(
         ds: tf.data.Dataset,
-    ) -> Callable[[], Generator[Tuple[InputStruct, jnp.ndarray], None, None]]:
+    ) -> Callable[[], Generator[Tuple[jnp.ndarray, jnp.ndarray], None, None]]:
         def generator():
             for x, y in ds.as_numpy_iterator():
-                yield model.make_input_struct(x).cast_inexact(compute_dtype), jnp.asarray(y, dtype=compute_dtype)
+                yield jnp.asarray(x, dtype=compute_dtype), jnp.asarray(y, dtype=compute_dtype)
 
         return generator
 

@@ -5,6 +5,7 @@ import gc
 import os
 import platform
 from pathlib import Path
+from traceback import format_exception
 from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, Tuple, TypeVar
 
 import clu.metric_writers
@@ -12,7 +13,6 @@ import clu.periodic_actions
 import jax
 import optax
 import orbax.checkpoint
-from traceback import format_exception
 import orbax.checkpoint.checkpoint_utils
 from absl import logging
 from absl_extra import flax_utils
@@ -29,7 +29,11 @@ from jax import numpy as jnp
 from jax import tree_util
 from jaxtyping import Array, Float, PRNGKeyArray, Scalar
 from ml_collections import ConfigDict
-from orbax.checkpoint import AsyncCheckpointer, CheckpointManagerOptions, PyTreeCheckpointHandler
+from orbax.checkpoint import (
+    AsyncCheckpointer,
+    CheckpointManagerOptions,
+    PyTreeCheckpointHandler,
+)
 
 from temporal_fusion_transformer.src.config_dict import OptimizerConfig
 from temporal_fusion_transformer.src.metrics import MetricContainer
@@ -368,7 +372,6 @@ def load_dataset(
     num_encoder_steps: int,
     shuffle_buffer_size: int = 2048,
     dtype=jnp.float32,
-    full_reshuffle: bool = False,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
 
@@ -382,9 +385,6 @@ def load_dataset(
     dtype
     num_encoder_steps:
         Number of time steps to consider as past. Those steps will be discarded from y_batch.
-    full_reshuffle:
-        If set to true, will reshuffle complete dataset once before training.
-        Warning, this will need to load complete dataset into memory.
 
     Returns
     -------
@@ -398,18 +398,15 @@ def load_dataset(
         return tf.cast(x, tf_dtype), tf.cast(y, tf_dtype)
 
     def load_fn(split: Literal["training", "validation"]) -> tf.data.Dataset:
-        ds = tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
-
-        if full_reshuffle:
-            ds = ds.shuffle(int(ds.cardinality()), seed=prng_seed, reshuffle_each_iteration=False).batch(
-                batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE
-            )
-        else:
-            ds = ds.batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE).shuffle(
-                shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True
-            )
-
-        return ds.map(downcast_input).map(lambda x, y: (x, y[:, num_encoder_steps:])).cache().prefetch(tf.data.AUTOTUNE)
+        return (
+            tf.data.Dataset.load(f"{data_dir}/{split}", compression="GZIP")
+            .batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+            .shuffle(shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
+            .map(downcast_input)
+            .map(lambda x, y: (x, y[:, num_encoder_steps:]))
+            .cache()
+            .prefetch(tf.data.AUTOTUNE)
+        )
 
     training_ds = load_fn("training")
     validation_ds = load_fn("validation")

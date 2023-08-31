@@ -8,9 +8,8 @@ import jax.numpy as jnp
 from absl import logging
 from flax import struct
 from jaxtyping import Array, Float, jaxtyped
-from ml_collections import ConfigDict
 
-from temporal_fusion_transformer.src.config_dict import ConfigDictProto
+from temporal_fusion_transformer.src.config_dict import ConfigDictProto, DatasetConfig
 from temporal_fusion_transformer.src.tft_layers import (
     ComputeDtype,
     DecoderBlock,
@@ -285,7 +284,7 @@ class TemporalFusionTransformer(nn.Module):
                     f"could not indentify inputs at {unknown_indexes}"
                 )
                 unknown_indexes = jnp.asarray(unknown_indexes, jnp.int32)
-                unknown_inputs = jnp.take(inputs, unknown_indexes, axis=-1).astype(self.dtype)
+                unknown_inputs = inputs[..., unknown_indexes].astype(self.dtype)
             else:
                 logging.error(
                     f"Declared number of features does not match with the one seen in input, "
@@ -295,20 +294,20 @@ class TemporalFusionTransformer(nn.Module):
         else:
             unknown_inputs = None
 
-        static = jnp.take(inputs, jnp.asarray(input_static_idx), axis=-1).astype(jnp.int32)
+        static = inputs[..., input_static_idx].astype(jnp.int32)
 
         if len(input_known_real_idx) > 0:
-            known_real = jnp.take(inputs, jnp.asarray(input_known_real_idx), axis=-1).astype(self.dtype)
+            known_real = inputs[..., input_known_real_idx].astype(self.dtype)
         else:
             known_real = None
 
         if len(input_known_categorical_idx) > 0:
-            known_categorical = jnp.take(inputs, jnp.asarray(input_known_categorical_idx), axis=-1).astype(jnp.int32)
+            known_categorical = inputs[..., input_known_categorical_idx].astype(jnp.int32)
         else:
             known_categorical = None
 
         if len(input_observed_idx) > 0:
-            observed = jnp.take(inputs, jnp.asarray(input_observed_idx), axis=-1).astype(self.dtype)
+            observed = inputs[..., input_observed_idx].astype(self.dtype)
         else:
             observed = None
 
@@ -322,30 +321,29 @@ class TemporalFusionTransformer(nn.Module):
 
     @staticmethod
     def from_config_dict(
-        config: ConfigDict | ConfigDictProto, jit_module: bool = False, **kwargs
+        config: ConfigDictProto, data_config: DatasetConfig, jit_module: bool = False, **kwargs
     ) -> TemporalFusionTransformer:
-        fixed_params = config.fixed_params
-        hyperparams = config.hyperparams
+        hyperparams = config.model
 
         module = TemporalFusionTransformer
         if jit_module:
             module = nn.jit(module, static_argnums=2)
 
         model = module(
-            static_categories_sizes=fixed_params.static_categories_sizes,
-            known_categories_sizes=fixed_params.known_categories_sizes,
+            static_categories_sizes=data_config.static_categories_sizes,
+            known_categories_sizes=data_config.known_categories_sizes,
             latent_dim=hyperparams.latent_dim,
-            num_encoder_steps=fixed_params.num_encoder_steps,
+            num_encoder_steps=data_config.num_encoder_steps,
             dropout_rate=hyperparams.dropout_rate,
-            input_observed_idx=fixed_params.input_observed_idx,
-            input_static_idx=fixed_params.input_static_idx,
-            input_known_real_idx=fixed_params.input_known_real_idx,
-            input_known_categorical_idx=fixed_params.input_known_categorical_idx,
+            input_observed_idx=data_config.input_observed_idx,
+            input_static_idx=data_config.input_static_idx,
+            input_known_real_idx=data_config.input_known_real_idx,
+            input_known_categorical_idx=data_config.input_known_categorical_idx,
             num_attention_heads=hyperparams.num_attention_heads,
             num_decoder_blocks=hyperparams.num_decoder_blocks,
             num_quantiles=len(hyperparams.quantiles),
-            num_outputs=fixed_params.num_outputs,
-            total_time_steps=fixed_params.total_time_steps,
+            num_outputs=data_config.num_outputs,
+            total_time_steps=data_config.total_time_steps,
             attention_dropout_rate=hyperparams.attention_dropout_rate,
             **kwargs,
         )
