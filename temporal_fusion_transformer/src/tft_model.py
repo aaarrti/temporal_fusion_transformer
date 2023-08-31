@@ -106,12 +106,9 @@ class TemporalFusionTransformer(nn.Module):
     @nn.compact
     @jaxtyped
     def __call__(
-        self, inputs: Float[Array, "batch time n"] | InputStruct, training: bool = False
+        self, inputs: Float[Array, "batch time n"], training: bool = False
     ) -> Float[Array, "batch time n*quantiles"] | TftOutputs:
-        if not isinstance(inputs, InputStruct):
-            inputs = self.make_input_struct(inputs)
-
-        inputs = inputs.cast_inexact(self.dtype)
+        inputs = self.make_input_struct(inputs).cast_inexact(self.dtype)
 
         embeddings = InputEmbedding(
             static_categories_sizes=self.static_categories_sizes,

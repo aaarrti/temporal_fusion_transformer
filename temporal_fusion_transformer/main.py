@@ -3,9 +3,10 @@ from __future__ import annotations
 import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
-from absl import flags
-from absl import logging
-from absl_extra import tasks, logging_utils
+from absl import flags, logging
+from absl_extra.tasks import register_task, run
+from absl_extra.logging_utils import setup_logging
+from absl_extra.flax_utils import save_as_msgpack
 from ml_collections import config_flags
 
 import temporal_fusion_transformer as tft
@@ -30,42 +31,38 @@ flags.DEFINE_boolean("jit_module", default=False, help="Apply nn.jit to model")
 flags.DEFINE_boolean("full_reshuffle", default=False, help="Fully reshuffle dataset before training")
 flags.DEFINE_boolean("profile", default=False, help="Run with profiling")
 flags.DEFINE_boolean("verbose", default=True, help="Verbose mode for training")
-flags.DEFINE_string("save_path", default="model.msgpack", help="Save path for model")
+flags.DEFINE_string("save_path", default="model.msgpack", help="Save data_dir for model")
 flags.DEFINE_integer("prefetch_buffer_size", default=0, help="Prefetch buffer size")
 CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
-logging_utils.setup_logging(log_level="DEBUG")
+setup_logging(log_level="DEBUG")
 
 
-@tasks.register_task(name="data")
+@register_task(name="data")
 def make_dataset():
-    experiment_factories = {
-        "electricity": tft.datasets.Electricity,
-        "favorita": tft.datasets.Favorita,
-    }
     data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
     data_dir = f"{data_dir}/{experiment_name}"
-    experiment: tft.datasets.MultiHorizonTimeSeriesDataset = experiment_factories[experiment_name]()
-    (train_ds, val_ds, test_ds), feature_space = experiment.make_dataset(data_dir)
+
+    if experiment_name == "electricity":
+        (train_dataset, validation_dataset, test_dataset), preprocessor = tft.datasets.electricity.make_dataset(data_dir)
+    
+    else:
+        raise RuntimeError("this is unexpected")
+    
     logging.info(f"Saving training split")
-    train_ds.save(f"{data_dir}/training", compression="GZIP")
+    train_dataset.save(f"{data_dir}/training", compression="GZIP")
     logging.info(f"Saving validation split")
-    val_ds.save(f"{data_dir}/validation", compression="GZIP")
+    validation_dataset.save(f"{data_dir}/validation", compression="GZIP")
     logging.info(f"Saving test split")
-    test_ds.save(f"{data_dir}/test", compression="GZIP")
-    feature_space.save(f"{data_dir}/features_space.keras")
+    test_dataset.save(f"{data_dir}/test", compression="GZIP")
+    tft.datasets.preprocessing.serialize_preprocessor(preprocessor, data_dir)
+    
 
 
-# def make_notifier():
-#    if platform.system().lower() == "linux":
-#        return notifier.SlackNotifier(
-#            slack_token=os.environ["SLACK_BOT_TOKEN"], channel_id=os.environ["SLACK_CHANNEL_ID"]
-#        )
-#    else:
-#        return notifier.NoOpNotifier()
 
 
-@tasks.register_task(name="hyperparams")
+
+@register_task(name="hyperparams")
 def train_model():
     tft.hyperparams.optimize_experiment_hyperparams(
         data_dir=FLAGS.data_dir,
@@ -80,7 +77,7 @@ def train_model():
     )
 
 
-@tasks.register_task(name="model")
+@register_task(name="model")
 def train_model():
     tft.training_scripts.train_experiment(
         data_dir=FLAGS.data_dir,
@@ -100,4 +97,4 @@ def train_model():
 
 
 if __name__ == "__main__":
-    tasks.run()
+    run()

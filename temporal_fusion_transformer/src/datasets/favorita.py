@@ -8,17 +8,13 @@ from typing import final
 
 import polars as pl
 from absl import logging
-from keras.utils import FeatureSpace
-from keras.utils.data_utils import _extract_archive
 from tqdm.auto import tqdm
-
-from temporal_fusion_transformer.src.datasets.base import MultiHorizonTimeSeriesDataset, Triple
 
 _NUM_IDS = 143658
 
 
 @final
-class Favorita(MultiHorizonTimeSeriesDataset):
+class Favorita:
     """
     References
     ----------
@@ -248,7 +244,7 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         df.write_parquet(f"{path}/df.parquet")
         return df
 
-    def split_data(self, df: pl.DataFrame) -> Triple[pl.DataFrame]:
+    def split_data(self, df: pl.DataFrame) -> [pl.DataFrame]:
         lf = df.lazy()
         forecast_horizon = self.total_time_steps - self.num_encoder_steps
 
