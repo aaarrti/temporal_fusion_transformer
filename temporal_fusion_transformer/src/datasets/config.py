@@ -54,32 +54,31 @@ def get_config(dataset: Choice) -> ConfigDict:
                 317,   # class
                 2,     # perishable
             ],
-            "input_static_idx": [
-                0,  # item nbr
-                1,  # store nbr
-                2,  # city
-                3,  # state,
-                4,  # type
-                5,  # cluster
-                6,  # family
-                7,  # class
-            ],
-            "input_known_real_idx": [8],
-            "input_known_categorical_idx": [
-                9,    # month
-                10,   # day of month
-                11,   # day of week
-                12,   # national holiday
-                13,   # regional hol
-                14,   # local holiday
-                15,   # on promotion
-                16    # open
-            ],
+            "input_known_real_idx": [],
             "input_observed_idx": [
-                17,  # oil price
-                18,  # transactions
+                0,  # oil price
+                1,  # transactions
             ],
-        
+            "input_static_idx": [
+                2,  # item nbr
+                3,  # store nbr
+                4,  # city
+                5,  # state,
+                6,  # type
+                7,  # cluster
+                8,  # family
+                9,  # class
+            ],
+            "input_known_categorical_idx": [
+                10,   # month
+                11,   # day of month
+                12,   # day of week
+                13,   # national holiday
+                14,   # regional hol
+                15,   # local holiday
+                16,   # on promotion
+                17,   # open
+            ],
         },
         "hamburg_air_quality": {},
     }
