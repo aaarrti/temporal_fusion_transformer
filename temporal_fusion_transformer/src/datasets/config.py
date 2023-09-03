@@ -9,26 +9,25 @@ def get_config(dataset: Choice) -> ConfigDict:
     # fmt: off
     choices = {
         "electricity": {
-            "num_encoder_steps": 168,          # 7 * 24
-            "total_time_steps": 192,           # 8 * 24
+            "num_encoder_steps": 168,  # 7 * 24
+            "total_time_steps": 192,   # 8 * 24
             "num_outputs": 1,
             "known_categories_sizes": [
-                12,                            # month
-                31,                            # day
-                24,                            # hour
-                7                              # day of week
+                12,  # month
+                31,  # day
+                24,  # hour
+                7,    # day of week
             ],
             "static_categories_sizes": [370],  # id
             "input_observed_idx": [],
-            "input_static_idx": [5],           # id
-            "input_known_real_idx": [0],       # year
+            "input_known_real_idx": [0],  # year
             "input_known_categorical_idx": [
-                1,                             # month
-                2,                             # day
-                3,                             # hour
-                4                              # day of week
+                1,  # month
+                2,  # day
+                3,  # hour
+                4,  # day of week
             ],
-            
+            "input_static_idx": [5],  # id
         },
         "favorita": {
             "total_time_steps": 120,
@@ -55,10 +54,31 @@ def get_config(dataset: Choice) -> ConfigDict:
                 317,   # class
                 2,     # perishable
             ],
-            "input_observed_idx": [17, 18],
-            "input_static_idx": [0, 1, 2, 3, 4, 5, 6, 7],
+            "input_static_idx": [
+                0,  # item nbr
+                1,  # store nbr
+                2,  # city
+                3,  # state,
+                4,  # type
+                5,  # cluster
+                6,  # family
+                7,  # class
+            ],
             "input_known_real_idx": [8],
-            "input_known_categorical_idx": [9, 10, 11, 12, 13, 14, 15, 16],
+            "input_known_categorical_idx": [
+                9,    # month
+                10,   # day of month
+                11,   # day of week
+                12,   # national holiday
+                13,   # regional hol
+                14,   # local holiday
+                15,   # on promotion
+                16    # open
+            ],
+            "input_observed_idx": [
+                17,  # oil price
+                18,  # transactions
+            ],
         
         },
         "hamburg_air_quality": {},
