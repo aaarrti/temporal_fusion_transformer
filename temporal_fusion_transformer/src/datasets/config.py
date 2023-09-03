@@ -18,7 +18,7 @@ def get_config(dataset: Choice) -> ConfigDict:
                 24,                            # hour
                 7                              # day of week
             ],
-            "static_categories_sizes": [369],  # id
+            "static_categories_sizes": [370],  # id
             "input_observed_idx": [],
             "input_static_idx": [5],           # id
             "input_known_real_idx": [0],       # year
@@ -37,23 +37,23 @@ def get_config(dataset: Choice) -> ConfigDict:
             "known_categories_sizes": [
                 12,  # month
                 31,  # day of month
-                7,  # day of week
+                7,   # day of week
                 39,  # national holiday
-                2,  # regional hol
-                6,  # local holiday
-                2,  # on promotion
-                2,  # open
+                2,   # regional hol
+                6,   # local holiday
+                2,   # on promotion
+                2,   # open
             ],
             "static_categories_sizes": [
                 3586,  # item nbr
-                53,  # store nbr
-                22,  # city
-                16,  # state,
-                5,  # type
-                17,  # cluster
-                32,  # family
-                317,  # class
-                2,  # perishable
+                53,    # store nbr
+                22,    # city
+                16,    # state,
+                5,     # type
+                17,    # cluster
+                32,    # family
+                317,   # class
+                2,     # perishable
             ],
             "input_observed_idx": [17, 18],
             "input_static_idx": [0, 1, 2, 3, 4, 5, 6, 7],
