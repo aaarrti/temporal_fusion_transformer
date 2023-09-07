@@ -3,15 +3,14 @@ from __future__ import annotations
 import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
+# For debugging
+import jax
 from absl import flags, logging
-from absl_extra.tasks import register_task, run
 from absl_extra.logging_utils import setup_logging
+from absl_extra.tasks import register_task, run
 from ml_collections import config_flags
 
 import temporal_fusion_transformer as tft
-
-# For debugging
-import jax
 
 jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
@@ -58,13 +57,14 @@ def make_dataset():
     logging.info(f"Saving validation split")
     validation_dataset.save(f"{data_dir}/validation", compression="GZIP")
     logging.info(f"Saving test split")
+
     test_dataset.save(f"{data_dir}/test", compression="GZIP")
     tft.datasets.serialize_preprocessor(preprocessor, data_dir)
 
 
 @register_task(name="model")
 def train_model():
-    tft.model.optimize_experiment_hyperparams(
+    tft.hyperparams.optimize_experiment_hyperparams(
         data_dir=FLAGS.data_dir,
         experiment_name=FLAGS.experiment,
         epochs=FLAGS.epochs,

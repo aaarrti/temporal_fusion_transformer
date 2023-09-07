@@ -20,7 +20,7 @@ from temporal_fusion_transformer.src.tft_model import (
 )
 
 """
-We receive as input a grid like data [id, time, values * quantiles]
+We receive as input a grid like data [id, time, values * tau]
 We also have a grid like structure of [id, time] of actual identifier
 We could map those nodes 1 to 1, to make outputs resonable.
 """
@@ -43,7 +43,7 @@ class InferenceService:
             + len(config.fixed_params.input_observed_idx)
         )
 
-        x = jnp.ones([batch_size, config.fixed_params.total_time_steps, declared_num_features])
+        x = jnp.ones([batch_size, config.fixed_params.TOTAL_TIME_STEPS, declared_num_features])
         params = model.init(prng_key, x)
         loaded_params = load_from_msgpack(params, weights_path)
         self.features_space = keras.models.load_model(feature_space_path)

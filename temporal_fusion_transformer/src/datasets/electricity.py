@@ -5,22 +5,27 @@ import pathlib
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Tuple, Final, List
+from typing import Mapping, Tuple, TypedDict
 
-import numpy as np
 import polars as pl
 import tensorflow as tf
 from absl import logging
-from keras.utils import timeseries_dataset_from_array
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from tqdm.auto import tqdm
 
-from temporal_fusion_transformer.src.datasets.preprocessing import PreprocessorDict
+from temporal_fusion_transformer.src.datasets.preprocessing import (
+    time_series_from_array,
+)
 
-targets: Final[List[str]] = ["power_usage"]
-real_inputs: Final[List[str]] = ["year"]
-categorical_inputs: Final[List[str]] = ["month", "day", "hour", "day_of_week"]
-total_time_steps: Final[int] = 192
+TARGETS = ["power_usage"]
+REAL_INPUTS = ["year"]
+CATEGORICAL_INPUTS = ["month", "day", "hour", "day_of_week"]
+
+
+class PreprocessorDict(TypedDict):
+    real: Mapping[str, StandardScaler]
+    target: Mapping[str, StandardScaler]
+    categorical: Mapping[str, LabelEncoder]
 
 
 def convert_to_parquet(data_dir: str):
@@ -115,14 +120,14 @@ def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
     target_scalers = defaultdict(lambda: StandardScaler())
     real_scalers = defaultdict(lambda: StandardScaler())
     label_encoders = defaultdict(lambda: LabelEncoder())
-    
+
     label_encoders["id"].fit(df["id"].to_numpy())
 
     for i, sub_df in tqdm(df.groupby("id"), desc="Training scalers", total=370):
-        target_scalers[i].fit(df[targets].to_numpy(order="c"))
-        real_scalers[i].fit(df[real_inputs].to_numpy(order="c"))
+        target_scalers[i].fit(df[TARGETS].to_numpy(order="c"))
+        real_scalers[i].fit(df[REAL_INPUTS].to_numpy(order="c"))
 
-    for i in tqdm(categorical_inputs, desc="Fitting label encoders"):
+    for i in tqdm(CATEGORICAL_INPUTS, desc="Fitting label encoders"):
         label_encoders[i].fit(df[i].to_numpy())
 
     return {"real": dict(**real_scalers), "target": dict(**target_scalers), "categorical": dict(**label_encoders)}
@@ -138,49 +143,28 @@ def apply_preprocessor(
         sub_df: pl.DataFrame
         sub_lf: pl.LazyFrame = sub_df.lazy()
 
-        x_real = df[real_inputs].to_numpy(order="c")
-        x_target = df[targets].to_numpy(order="c")
+        x_real = df[REAL_INPUTS].to_numpy(order="c")
+        x_target = df[TARGETS].to_numpy(order="c")
 
         x_real = preprocessor["real"][i].transform(x_real)
         x_target = preprocessor["target"][i].transform(x_target)
 
         sub_lf = sub_lf.with_columns(
-            [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real, real_inputs)]
-        ).with_columns(pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target, targets))
+            [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real, REAL_INPUTS)]
+        ).with_columns(pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target, TARGETS))
         lf_list.append(sub_lf)
 
     df: pl.DataFrame = pl.concat(lf_list).collect()
 
-    for i in tqdm(categorical_inputs):
+    for i in tqdm(CATEGORICAL_INPUTS):
         x = df[i].to_numpy()
         x = preprocessor["categorical"][i].transform(x)
         df = df.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))
-    
+
     ids = preprocessor["categorical"]["id"].transform(df["id"].to_numpy())
     df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
     df = df.shrink_to_fit(in_place=True).rechunk()
     return df
-
-
-def time_series_from_array(df: pl.DataFrame) -> tf.data.Dataset:
-    x: np.ndarray = df[real_inputs + categorical_inputs + ["id"] + targets].to_numpy(order="c")
-    
-    # -1 for targets
-    num_inputs = x.shape[-1] - 1
-
-    time_series: tf.data.Dataset = timeseries_dataset_from_array(
-        x,
-        None,
-        total_time_steps,
-        batch_size=None,
-    )
-    time_series = time_series.map(
-        lambda i: (i[..., :num_inputs], i[..., num_inputs:]),
-        num_parallel_calls=tf.data.AUTOTUNE,
-        deterministic=False,
-    )
-
-    return time_series
 
 
 def make_dataset(
@@ -189,6 +173,7 @@ def make_dataset(
     test_boundary: int = datetime(2014, 9, 1),
     split_overlap_days: int = 7,
     cutoff_days: Tuple[datetime, datetime] = (datetime(2014, 1, 1), datetime(2014, 9, 8)),
+    total_time_steps: int = 192,
 ) -> Tuple[Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset], PreprocessorDict]:
     """
     References
@@ -208,6 +193,7 @@ def make_dataset(
         Number of days, which are overlapped between splits.
     cutoff_days:
         Tuple of start and end dates, before/after which data is not included.
+    total_time_steps:
     """
     convert_to_parquet(data_dir)
     df = read_parquet(data_dir, cutoff_days=cutoff_days)
@@ -219,7 +205,14 @@ def make_dataset(
     validation_df = apply_preprocessor(validation_df, preprocessor)
     test_df = apply_preprocessor(test_df, preprocessor)
     # ---
-    training_time_series = time_series_from_array(training_df)
-    validation_time_series = time_series_from_array(validation_df)
-    test_time_series = time_series_from_array(test_df)
+    inputs = REAL_INPUTS + CATEGORICAL_INPUTS + ["id"]
+    training_time_series = time_series_from_array(
+        training_df, total_time_steps=total_time_steps, inputs=inputs, targets=TARGETS
+    )
+    validation_time_series = time_series_from_array(
+        validation_df, total_time_steps=total_time_steps, inputs=inputs, targets=TARGETS
+    )
+    test_time_series = time_series_from_array(
+        test_df, total_time_steps=total_time_steps, inputs=inputs, targets=TARGETS
+    )
     return (training_time_series, validation_time_series, test_time_series), preprocessor

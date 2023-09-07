@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+
 from ml_collections import ConfigDict
 
 Choice = Literal["electricity", "favorita", "hamburg_air_quality"]

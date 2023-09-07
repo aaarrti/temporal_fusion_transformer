@@ -9,10 +9,7 @@ from absl_extra import flax_utils
 from ml_collections import ConfigDict
 
 from temporal_fusion_transformer.src import training_scripts
-from temporal_fusion_transformer.src.config_dict import (
-    ConfigDictProto,
-    DatasetConfig,
-)
+from temporal_fusion_transformer.src.config_dict import ConfigDictProto, DatasetConfig
 from temporal_fusion_transformer.src.training_lib import MetricContainer, load_dataset
 
 if TYPE_CHECKING:
@@ -130,7 +127,7 @@ def optimize_hyperparams(
                     "clipnorm": clipnorm,
                 },
                 "model": {
-                    "quantiles": [0.1, 0.5, 0.9],
+                    "tau": [0.1, 0.5, 0.9],
                     "dropout_rate": dropout_rate,
                     "latent_dim": latent_dim,
                     "num_attention_heads": num_attention_heads,

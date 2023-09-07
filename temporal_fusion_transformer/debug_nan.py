@@ -8,9 +8,13 @@ from jax import tree_util
 from sklearn.utils import gen_batches
 from tqdm.auto import tqdm
 
+import temporal_fusion_transformer as tft
 from temporal_fusion_transformer.config import get_config
 from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
-from temporal_fusion_transformer.src.tft_model import InputStruct, TemporalFusionTransformer
+from temporal_fusion_transformer.src.tft_model import (
+    InputStruct,
+    TemporalFusionTransformer,
+)
 from temporal_fusion_transformer.src.training_lib import (
     TrainStateContainer,
     make_optimizer,
@@ -39,17 +43,11 @@ def main():
 
     restored = msgpack_restore(byte_data)
 
-    x_batch = InputStruct(
-        static=restored["x_batch"]["static"],
-        known_categorical=restored["x_batch"]["known_categorical"],
-        known_real=restored["x_batch"]["known_real"],
-        observed=None,
-        unknown=None,
-    ).cast_inexact(jnp.float16)
-    y_batch = jnp.asarray(restored["y_batch"], jnp.float16)
+    x_batch = jnp.asarray(restored["x_batch"])
+    y_batch = jnp.asarray(restored["y_batch"])
 
-    model = TemporalFusionTransformer.from_config_dict(config, dtype=jnp.float16)
-    loss_fn = make_quantile_loss_fn(config.model.quantiles, dtype=jnp.float16)
+    model = TemporalFusionTransformer.from_config_dict(config, data_config=tft.datasets.get_config("electricity"))
+    loss_fn = make_quantile_loss_fn(config.model.quantiles)
 
     state = TrainStateContainer.create(
         tx=make_optimizer(config.optimizer, 18000, 1),

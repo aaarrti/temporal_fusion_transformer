@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from functools import cached_property
-from typing import Sequence
+from typing import List, Sequence
 
 import flax.linen as nn
 import jax.numpy as jnp
@@ -26,48 +25,14 @@ from temporal_fusion_transformer.src.tft_layers import (
 
 @struct.dataclass
 class TftOutputs:
-    logits: Float[Array, "batch time_steps n*quantiles"]
+    logits: Float[Array, "batch time_steps n q"]
     static_flags: Float[Array, "batch n_s"]
-    historical_flags: Float[Array, "batch t (n - n_s)"]
-    future_flags: Float[Array, "batch (t -T) (n - n_s)"]
+    historical_flags: Float[Array, "batch t (n-n_s)"]
+    future_flags: Float[Array, "batch (t-T) (n-n_s)"]
 
 
 class TemporalFusionTransformer(nn.Module):
     """
-
-    Attributes
-    ----------
-
-    static_categories_sizes:
-        List with maximum value for each category of static inputs in order.
-    known_categories_sizes:
-        List with maximum value for each category of known categorical inputs in order.
-    num_encoder_steps:
-        Number of time steps, which will be considered as past.
-    dropout_rate:
-        Dropout rate passed down to keras.layer.Dropout.
-    latent_dim:
-        Latent space dimensionality.
-    num_attention_heads:
-        Number of attention heads to use for multi-head attention.
-    num_outputs:
-        Number of values to predict.
-    num_quantiles:
-        Number of quantiles, used to divide predicted distribution, typically you would use 3.
-    input_observed_idx:
-        Indices in 3rd axis in input tensor, which have observed inputs.
-    input_static_idx:
-        Indices in 3rd axis in input tensor, which have static inputs.
-    input_known_real_idx:
-        Indices in 3rd axis in input tensor, which have real-valued known inputs.
-    input_known_categorical_idx:
-        Indices in 3rd axis in input tensor, which have categorical known inputs.
-    num_decoder_blocks:
-        Number of decoder blocks to apply sequentially.
-    total_time_steps:
-        Size of the 3rd axis in the input.
-
-
     References
     ----------
 
@@ -76,28 +41,22 @@ class TemporalFusionTransformer(nn.Module):
 
     """
 
-    # caused by data
-    static_categories_sizes: Sequence[int]
-    known_categories_sizes: Sequence[int]
+    input_preprocessor: InputPreprocessor
+    input_embedding: InputEmbedding
+    static_covariates_encoder: StaticCovariatesEncoder
+    historical_variable_selection: VariableSelectionNetwork
+    future_variable_selection: VariableSelectionNetwork
+    historical_rnn: nn.RNN
+    future_rnn: nn.RNN
+    lstm_skip_connection: GatedLinearUnit
+    static_context_skip_connection: GatedLinearUnit
+    output_skip_connection: GatedLinearUnit
+    decoder_blocks: List[DecoderBlock]
+    output_projection: List[nn.Module]
+
     num_encoder_steps: int
     total_time_steps: int
-    num_outputs: int
-    # hyperparameters
-    latent_dim: int
-    num_attention_heads: int
-    num_decoder_blocks: int = 1
-    dropout_rate: float = 0.1
-    attention_dropout_rate: float = 0.1
-    num_quantiles: int = 3
-    # optional, as sometimes can be deduced from input.
-    input_observed_idx: Sequence[int] | None = None
-    input_static_idx: Sequence[int] | None = None
-    input_known_real_idx: Sequence[int] | None = None
-    input_known_categorical_idx: Sequence[int] | None = None
-    num_observed_inputs: int | None = None
-    num_known_real_inputs: int | None = None
-    num_known_categorical_inputs: int | None = None
-    num_static_inputs: int | None = None
+
     # ...
     return_attention: bool = False
     dtype: ComputeDtype = jnp.float32
@@ -106,24 +65,10 @@ class TemporalFusionTransformer(nn.Module):
     @jaxtyped
     def __call__(
         self, inputs: Float[Array, "batch time n"], training: bool = False
-    ) -> Float[Array, "batch time n*quantiles"] | TftOutputs:
-        inputs = self.make_input_struct(inputs).cast_inexact(self.dtype)
-
-        embeddings = InputEmbedding(
-            static_categories_sizes=self.static_categories_sizes,
-            known_categories_sizes=self.known_categories_sizes,
-            num_known_real_inputs=self._num_known_real_inputs,
-            num_observed_inputs=self._num_observed_inputs,
-            latent_dim=self.latent_dim,
-            dtype=self.dtype,
-        )(inputs)
-
-        static_context = StaticCovariatesEncoder(
-            latent_dim=self.latent_dim,
-            dropout_rate=self.dropout_rate,
-            num_static_inputs=self._num_static_inputs,
-            dtype=self.dtype,
-        )(embeddings.static, training=training)
+    ) -> Float[Array, "batch time n q"] | TftOutputs:
+        inputs = self.input_preprocessor(inputs)
+        embeddings = self.input_embedding(inputs)
+        static_context = self.static_covariates_encoder(embeddings.static, training=training)
 
         # Isolate known and observed historical inputs.
         historical_inputs = [embeddings.known[:, : self.num_encoder_steps]]
@@ -136,60 +81,46 @@ class TemporalFusionTransformer(nn.Module):
 
         # Isolate only known future inputs.
         future_inputs = embeddings.known[:, self.num_encoder_steps : self.total_time_steps]
-        historical_features, historical_flags, _ = VariableSelectionNetwork(
-            latent_dim=self.latent_dim,
-            dropout_rate=self.dropout_rate,
-            num_inputs=self._num_known_real_inputs + self._num_known_categorical_inputs + self._num_observed_inputs,
-            num_time_steps=self.num_encoder_steps,
-            dtype=self.dtype,
-        )(historical_inputs, static_context.enrichment, training=training)
+        historical_features, historical_flags, _ = self.historical_variable_selection(
+            historical_inputs, static_context.enrichment, training=training
+        )
+        future_features, future_flags, _ = self.future_variable_selection(
+            future_inputs, static_context.enrichment, training=training
+        )
 
-        future_features, future_flags, _ = VariableSelectionNetwork(
-            latent_dim=self.latent_dim,
-            dropout_rate=self.dropout_rate,
-            num_time_steps=self.total_time_steps - self.num_encoder_steps,
-            num_inputs=self._num_known_real_inputs + self._num_known_categorical_inputs,
-            dtype=self.dtype,
-        )(future_inputs, static_context.enrichment, training=training)
-        state_carry, history_lstm = nn.RNN(nn.OptimizedLSTMCell(self.latent_dim, dtype=self.dtype), return_carry=True)(
+        state_carry, history_lstm = self.historical_rnn(
             historical_features,
             initial_carry=(static_context.state_h, static_context.state_c),
         )
-        future_lstm = nn.RNN(nn.OptimizedLSTMCell(self.latent_dim, dtype=self.dtype))(
-            future_features, initial_carry=state_carry
-        )
+        future_lstm = self.future_rnn(future_features, initial_carry=state_carry)
 
         lstm_outputs = jnp.concatenate([history_lstm, future_lstm], axis=1)
         input_embeddings = jnp.concatenate([historical_features, future_features], axis=1)
 
-        lstm_outputs, _ = GatedLinearUnit(
-            latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
-        )(lstm_outputs, training=training)
+        lstm_outputs, _ = self.lstm_skip_connection(lstm_outputs, training=training)
         temporal_features = nn.LayerNorm(dtype=self.dtype)(lstm_outputs + input_embeddings)
 
-        enriched, _ = GatedResidualNetwork(
-            latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
-        )(temporal_features, static_context.vector[:, jnp.newaxis], training=training)
+        enriched, _ = self.static_context_skip_connection(
+            temporal_features, static_context.vector[:, jnp.newaxis], training=training
+        )
         decoder_in = enriched
         mask = make_causal_mask(decoder_in, dtype=self.dtype)
-        for _ in range(self.num_decoder_blocks):
-            decoder_out = DecoderBlock(
-                num_attention_heads=self.num_attention_heads,
-                latent_dim=self.latent_dim,
-                dropout_rate=self.dropout_rate,
-                dtype=self.dtype,
-            )(decoder_in, mask=mask, training=training)
+
+        for block in self.decoder_blocks:
+            decoder_out = block(decoder_in, mask=mask, training=training)
             decoder_out = nn.LayerNorm(dtype=self.dtype)(decoder_out + temporal_features)
             decoder_in = decoder_out
 
         # Final skip connection
-        decoded, _ = GatedLinearUnit(
-            latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
-        )(decoder_in, training=training)
+        decoded, _ = self.output_skip_connection(decoder_in, training=training)
 
-        outputs = TimeDistributed(
-            nn.Dense(self.num_outputs * self.num_quantiles, dtype=self.dtype),
-        )(decoder_in[:, self.num_encoder_steps : self.total_time_steps])
+        outputs = []
+
+        for layer in self.output_projection:
+            outputs_i = layer(decoded[:, self.num_encoder_steps : self.total_time_steps])
+            outputs.append(outputs_i)
+
+        outputs = jnp.stack(outputs, axis=-1)
 
         if self.return_attention:
             return TftOutputs(
@@ -201,43 +132,16 @@ class TemporalFusionTransformer(nn.Module):
         else:
             return outputs
 
-    @cached_property
-    def _num_known_real_inputs(self) -> int:
-        if self.num_known_real_inputs is not None:
-            return self.num_known_real_inputs
-        elif self.input_known_real_idx is not None:
-            return len(self.input_known_real_idx)
-        else:
-            raise ValueError(f"Must provide either `num_known_real_inputs` or input_known_real_idx")
 
-    @cached_property
-    def _num_known_categorical_inputs(self) -> int:
-        if self.num_known_categorical_inputs is not None:
-            return self.num_known_categorical_inputs
-        elif self.input_known_categorical_idx is not None:
-            return len(self.input_known_categorical_idx)
-        else:
-            raise ValueError(f"Must provide either `num_known_categorical_inputs` or input_known_categorical_idx")
+class InputPreprocessor(nn.Module):
+    input_observed_idx: Sequence[int]
+    input_static_idx: Sequence[int]
+    input_known_real_idx: Sequence[int]
+    input_known_categorical_idx: Sequence[int]
+    dtype: jnp.inexact = jnp.float32
 
-    @cached_property
-    def _num_static_inputs(self) -> int:
-        if self.num_static_inputs is not None:
-            return self.num_static_inputs
-        elif self.input_static_idx is not None:
-            return len(self.input_static_idx)
-        else:
-            raise ValueError(f"Must provide either `num_static_inputs` or input_static_idx")
-
-    @cached_property
-    def _num_observed_inputs(self) -> int:
-        if self.num_observed_inputs is not None:
-            return self.num_observed_inputs
-        elif self.input_observed_idx is not None:
-            return len(self.input_observed_idx)
-        else:
-            raise ValueError(f"Must provide either `num_observed_inputs` or input_observed_idx")
-
-    def make_input_struct(self, inputs: jnp.ndarray) -> InputStruct:
+    @nn.compact
+    def __call__(self, inputs: Float[Array, "batch time n"]) -> InputStruct:
         input_static_idx, input_known_real_idx, input_known_categorical_idx, input_observed_idx = (
             self.input_static_idx,
             self.input_known_real_idx,
@@ -319,32 +223,107 @@ class TemporalFusionTransformer(nn.Module):
             unknown=unknown_inputs,
         )
 
-    @staticmethod
-    def from_config_dict(
-        config: ConfigDictProto, data_config: DatasetConfig, jit_module: bool = False, **kwargs
-    ) -> TemporalFusionTransformer:
-        hyperparams = config.model
 
-        module = TemporalFusionTransformer
-        if jit_module:
-            module = nn.jit(module, static_argnums=2)
+def make_temporal_fusion_transformer(
+    config: ConfigDictProto,
+    data_config: DatasetConfig,
+    jit_module: bool = False,
+    dtype: jnp.inexact = jnp.float32,
+) -> TemporalFusionTransformer:
+    module = TemporalFusionTransformer
+    if jit_module:
+        module = nn.jit(module, static_argnums=2)
 
-        model = module(
-            static_categories_sizes=data_config.static_categories_sizes,
-            known_categories_sizes=data_config.known_categories_sizes,
-            latent_dim=hyperparams.latent_dim,
-            num_encoder_steps=data_config.num_encoder_steps,
-            dropout_rate=hyperparams.dropout_rate,
-            input_observed_idx=data_config.input_observed_idx,
-            input_static_idx=data_config.input_static_idx,
-            input_known_real_idx=data_config.input_known_real_idx,
-            input_known_categorical_idx=data_config.input_known_categorical_idx,
-            num_attention_heads=hyperparams.num_attention_heads,
-            num_decoder_blocks=hyperparams.num_decoder_blocks,
-            num_quantiles=len(hyperparams.quantiles),
-            num_outputs=data_config.num_outputs,
-            total_time_steps=data_config.total_time_steps,
-            attention_dropout_rate=hyperparams.attention_dropout_rate,
-            **kwargs,
+    num_known_real_inputs = len(data_config.input_known_real_idx)
+    num_known_categorical_inputs = len(data_config.input_known_categorical_idx)
+    num_observed_inputs = len(data_config.input_observed_idx)
+    latent_dim = config.model.latent_dim
+    dropout_rate = config.model.dropout_rate
+    num_encoder_steps = data_config.num_encoder_steps
+    total_time_steps = data_config.total_time_steps
+
+    input_preprocessor = InputPreprocessor(
+        input_observed_idx=data_config.input_observed_idx,
+        input_static_idx=data_config.input_static_idx,
+        input_known_real_idx=data_config.input_known_real_idx,
+        input_known_categorical_idx=data_config.input_known_categorical_idx,
+        dtype=dtype,
+    )
+    input_embedding = InputEmbedding(
+        static_categories_sizes=data_config.static_categories_sizes,
+        known_categories_sizes=data_config.known_categories_sizes,
+        num_known_real_inputs=num_known_real_inputs,
+        num_observed_inputs=num_observed_inputs,
+        latent_dim=latent_dim,
+        dtype=dtype,
+    )
+
+    static_covariates_encoder = StaticCovariatesEncoder(
+        latent_dim=latent_dim,
+        dropout_rate=dropout_rate,
+        num_static_inputs=len(data_config.static_categories_sizes),
+        dtype=dtype,
+    )
+
+    historical_variable_selection = VariableSelectionNetwork(
+        latent_dim=latent_dim,
+        dropout_rate=dropout_rate,
+        num_inputs=num_known_real_inputs + num_known_categorical_inputs + num_observed_inputs,
+        num_time_steps=num_encoder_steps,
+        dtype=dtype,
+    )
+
+    future_variable_selection = VariableSelectionNetwork(
+        latent_dim=latent_dim,
+        dropout_rate=dropout_rate,
+        num_time_steps=total_time_steps - num_encoder_steps,
+        num_inputs=num_known_real_inputs + num_known_categorical_inputs,
+        dtype=dtype,
+    )
+    historical_rnn = nn.RNN(nn.OptimizedLSTMCell(latent_dim, dtype=dtype), return_carry=True)
+
+    future_rnn = nn.RNN(nn.OptimizedLSTMCell(latent_dim, dtype=dtype))
+
+    lstm_skip_connection = GatedLinearUnit(
+        latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=True, dtype=dtype
+    )
+
+    static_context_skip_connection = GatedResidualNetwork(
+        latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=True, dtype=dtype
+    )
+
+    output_skip_connection = GatedLinearUnit(
+        latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=True, dtype=dtype
+    )
+
+    decoder_blocks = [
+        DecoderBlock(
+            num_attention_heads=config.model.num_attention_heads,
+            latent_dim=latent_dim,
+            dropout_rate=dropout_rate,
+            dtype=dtype,
         )
-        return model
+        for _ in range(config.model.num_decoder_blocks)
+    ]
+
+    output_projection = [
+        TimeDistributed(nn.Dense(data_config.num_outputs, dtype=dtype)) for _ in range(len(config.model.quantiles))
+    ]
+
+    return module(
+        input_preprocessor=input_preprocessor,
+        input_embedding=input_embedding,
+        static_context_skip_connection=static_context_skip_connection,
+        static_covariates_encoder=static_covariates_encoder,
+        decoder_blocks=decoder_blocks,
+        output_projection=output_projection,
+        output_skip_connection=output_skip_connection,
+        lstm_skip_connection=lstm_skip_connection,
+        future_rnn=future_rnn,
+        historical_rnn=historical_rnn,
+        future_variable_selection=future_variable_selection,
+        historical_variable_selection=historical_variable_selection,
+        num_encoder_steps=num_encoder_steps,
+        total_time_steps=total_time_steps,
+        dtype=dtype,
+    )

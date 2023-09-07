@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Protocol, Sequence, Union
+
 from ml_collections import ConfigDict
 
 

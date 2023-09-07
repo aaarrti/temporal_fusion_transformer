@@ -11,25 +11,27 @@ from flax.training.dynamic_scale import DynamicScale
 from flax.training.early_stopping import EarlyStopping
 from jax import numpy as jnp
 
-from temporal_fusion_transformer.src.config_dict import ConfigDictProto, DatasetConfig
+from temporal_fusion_transformer.src.loss_fn import make_quantile_loss_fn
 from temporal_fusion_transformer.src.metrics import MetricContainer
-from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
-from temporal_fusion_transformer.src.tft_model import TemporalFusionTransformer
+from temporal_fusion_transformer.src.tft_model import make_temporal_fusion_transformer
+from temporal_fusion_transformer.src.training_hooks import make_training_hooks
 from temporal_fusion_transformer.src.training_lib import (
+    MultiDevice,
+    SingleDevice,
     TrainStateContainer,
     load_dataset,
     make_optimizer,
-    make_training_hooks,
-    multi_device_train_step,
-    multi_device_validation_step,
-    single_device_train_step,
-    single_device_validation_step,
 )
 
 P = ParamSpec("P")
 
 if TYPE_CHECKING:
     import tensorflow as tf
+
+    from temporal_fusion_transformer.src.config_dict import (
+        ConfigDictProto,
+        DatasetConfig,
+    )
 
 
 def make_timestamp_tag() -> str:
@@ -167,7 +169,7 @@ def train(
     if batch_size is not None:
         first_x = jnp.asarray(first_x[:batch_size], dtype=compute_dtype)
 
-    model = TemporalFusionTransformer.from_config_dict(config, data_config, jit_module=jit_module, dtype=compute_dtype)
+    model = make_temporal_fusion_transformer(config, data_config, jit_module=jit_module, dtype=compute_dtype)
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
     dropout_key, params_key = jax.random.split(prng_key, 2)
@@ -204,7 +206,11 @@ def train(
         tensorboard_logdir = f"{tensorboard_logdir}/{tag}"
 
         hooks = make_training_hooks(
-            num_training_steps, epochs, logdir=tensorboard_logdir, profile=profile, save_path=save_path
+            num_training_steps,
+            epochs,
+            logdir=tensorboard_logdir,
+            profile=profile,
+            save_path=save_path,
         )
 
     def make_dataset_generator(
@@ -222,8 +228,8 @@ def train(
             training_dataset_factory=make_dataset_generator(training_dataset),
             validation_dataset_factory=make_dataset_generator(validation_dataset),
             metrics_container_type=MetricContainer,
-            training_step_func=multi_device_train_step,
-            validation_step_func=multi_device_validation_step,
+            training_step_func=MultiDevice.make_train_step_fn(),
+            validation_step_func=MultiDevice.make_validation_step_fn(),
             epochs=epochs,
             hooks=hooks,
             num_training_steps=num_training_steps,
@@ -236,8 +242,8 @@ def train(
             training_dataset_factory=make_dataset_generator(training_dataset),
             validation_dataset_factory=make_dataset_generator(validation_dataset),
             metrics_container_type=MetricContainer,
-            training_step_func=single_device_train_step,
-            validation_step_func=single_device_validation_step,
+            training_step_func=SingleDevice.make_train_step_fn(),
+            validation_step_func=SingleDevice.make_validation_step_fn(),
             epochs=epochs,
             hooks=hooks,
             num_training_steps=num_training_steps,
