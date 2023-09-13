@@ -2,8 +2,6 @@ from clu.metrics import Average, Collection
 from flax.struct import dataclass
 from jaxtyping import jaxtyped
 
-# TODO: https://github.com/tensorflow/addons/blob/master/tensorflow_addons/metrics/r_square.py
-
 
 @jaxtyped
 @dataclass

@@ -1,103 +1,96 @@
 from __future__ import annotations
 
-from typing import Protocol, Sequence, Union
+from typing import TYPE_CHECKING, Protocol, Sequence, Union
 
-from ml_collections import ConfigDict
+import ml_collections
 
+if TYPE_CHECKING:
 
-class _ConfigDictProto(Protocol):
-    prng_seed: int
-    shuffle_buffer_size: int
-    model: ModelConfig
-    optimizer: OptimizerConfig
+    class _ConfigDictProto(Protocol):
+        prng_seed: int
+        shuffle_buffer_size: int
+        model: ModelConfig
+        optimizer: OptimizerConfig
 
+    class _ModelConfig(Protocol):
+        """
+        Attributes
+        ----------
 
-class _ModelConfig(Protocol):
-    """
-    Attributes
-    ----------
+        num_attention_heads:
+        num_decoder_blocks:
+        dropout_rate:
+        latent_dim:
+            Model latent space dimensionality.
 
-    num_attention_heads:
-    num_decoder_blocks:
-    dropout_rate:
-    latent_dim:
-        Model latent space dimensionality.
+        quantiles:
+            Quantiles use for loss function.
+        """
 
-    quantiles:
-        Quantiles use for loss function.
-    """
+        num_attention_heads: int
+        num_decoder_blocks: int
+        latent_dim: int
+        dropout_rate: int
+        quantiles: Sequence[float]
+        attention_dropout_rate: float
 
-    num_attention_heads: int
-    num_decoder_blocks: int
-    latent_dim: int
-    dropout_rate: int
-    quantiles: Sequence[float]
-    attention_dropout_rate: float
+    class _DatasetConfig(Protocol):
+        """
+        Attributes
+        ----------
 
+        num_encoder_steps:
+            Number of time-steps considered past.
+        total_time_steps:
+            Total number observed time-steps.
+        num_outputs:
+            Number of values to predict.
+        known_categories_sizes:
+            Highest possible values for known categorical inputs (in order).
+        static_categories_sizes:
+             Highest possible values for static inputs (in order).
 
-class _DatasetConfig(Protocol):
-    """
-    Attributes
-    ----------
+        input_observed_idx:
+            Indices, at which observed inputs are in stacked array.
+        input_static_idx:
+            Indices, at which static inputs are in stacked array.
+        input_known_real_idx:
+            Indices, at which known real inputs are in stacked array.
+        input_known_categorical_idx:
+            Indices, at which known categorical inputs are in stacked array.
 
-    num_encoder_steps:
-        Number of time-steps considered past.
-    total_time_steps:
-        Total number observed time-steps.
-    num_outputs:
-        Number of values to predict.
-    known_categories_sizes:
-        Highest possible values for known categorical inputs (in order).
-    static_categories_sizes:
-         Highest possible values for static inputs (in order).
+        """
 
-    input_observed_idx:
-        Indices, at which observed inputs are in stacked array.
-    input_static_idx:
-        Indices, at which static inputs are in stacked array.
-    input_known_real_idx:
-        Indices, at which known real inputs are in stacked array.
-    input_known_categorical_idx:
-        Indices, at which known categorical inputs are in stacked array.
+        num_encoder_steps: int
+        total_time_steps: int
+        num_outputs: int
+        known_categories_sizes: Sequence[int]
+        static_categories_sizes: Sequence[int]
+        input_observed_idx: Sequence[int]
+        input_static_idx: Sequence[int]
+        input_known_real_idx: Sequence[int]
+        input_known_categorical_idx: Sequence[int]
 
-    """
-
-    num_encoder_steps: int
-    total_time_steps: int
-    num_outputs: int
-    known_categories_sizes: Sequence[int]
-    static_categories_sizes: Sequence[int]
-    input_observed_idx: Sequence[int]
-    input_static_idx: Sequence[int]
-    input_known_real_idx: Sequence[int]
-    input_known_categorical_idx: Sequence[int]
-
-
-class _OptimizerConfig(Protocol):
-    """
-    Attributes
-    ----------
-
-    learning_rate:
-        Initial learning rate
-    decay_steps:
-        Fraction of total training steps over which to decay. If set to 0, constant learning_rate will be used.
-    decay_alpha:
-        Fraction of initial learning rate, which will be reached after `decay_steps`
-    ema:
-        Only applies if `use_ema==True`
+    class _OptimizerConfig(Protocol):
+        """
+        Attributes
+        ----------
+        decay_steps:
+            Fraction of total training steps over which to decay. If set to 0, constant learning_rate will be used.
+        decay_alpha:
+            Fraction of initial learning rate, which will be reached after `decay_steps`
+        ema:
+            Only applies if `use_ema==True`
 
 
-    """
+        """
 
-    learning_rate: float
-    decay_steps: float
-    decay_alpha: float
-    ema: float
-    clipnorm: float
+        decay_steps: float
+        decay_alpha: float
+        ema: float
+        clipnorm: float
 
-
-ConfigDictProto = Union[ConfigDict, _ConfigDictProto]
-OptimizerConfig = Union[ConfigDict, _OptimizerConfig]
-ModelConfig = Union[ConfigDict, _ModelConfig]
-DatasetConfig = Union[ConfigDict, _DatasetConfig]
+    ConfigDict = Union[ml_collections.ConfigDict, _ConfigDictProto]
+    OptimizerConfig = Union[ml_collections.ConfigDict, _OptimizerConfig]
+    ModelConfig = Union[ml_collections.ConfigDict, _ModelConfig]
+    DatasetConfig = Union[ml_collections.ConfigDict, _DatasetConfig]

@@ -28,7 +28,7 @@ flags.DEFINE_boolean("mixed_precision", default=False, help="Use mixed (b)float1
 flags.DEFINE_boolean("jit_module", default=False, help="Apply nn.jit to model")
 flags.DEFINE_boolean("profile", default=False, help="Run with profiling")
 flags.DEFINE_boolean("verbose", default=True, help="Verbose mode for training")
-flags.DEFINE_string("save_path", default="model.msgpack", help="Save data_dir for model")
+flags.DEFINE_string("save_path", default="model.msgpack", help="Save file_name for model")
 flags.DEFINE_integer("prefetch_buffer_size", default=0, help="Prefetch buffer size")
 CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
@@ -41,58 +41,64 @@ def make_dataset():
     data_dir = f"{data_dir}/{experiment_name}"
 
     if experiment_name == "electricity":
-        # fmt: off
-        (train_dataset, validation_dataset, test_dataset), preprocessor = tft.datasets.electricity.make_dataset(
-            data_dir)
-        # fmt: on
-    elif experiment_name == "favorita":
-        # fmt: off
-        (train_dataset, validation_dataset, test_dataset), preprocessor = tft.datasets.favorita.make_dataset(data_dir)
-        # fmt: on
+        tft.experiments.Electricity().make_dataset(data_dir, mode="persist")
+    # elif experiment_name == "favorita":
+    #    tft.experiments.favorita.make_dataset(data_dir)
     else:
         raise RuntimeError("this is unexpected")
 
-    logging.info(f"Saving training split")
-    train_dataset.save(f"{data_dir}/training", compression="GZIP")
-    logging.info(f"Saving validation split")
-    validation_dataset.save(f"{data_dir}/validation", compression="GZIP")
-    logging.info(f"Saving test split")
 
-    test_dataset.save(f"{data_dir}/test", compression="GZIP")
-    tft.datasets.serialize_preprocessor(preprocessor, data_dir)
-
-
-@register_task(name="model")
-def train_model():
-    tft.hyperparams.optimize_experiment_hyperparams(
-        data_dir=FLAGS.data_dir,
-        experiment_name=FLAGS.experiment,
-        epochs=FLAGS.epochs,
-        batch_size=FLAGS.batch_size,
-        config=CONFIG.value,
-        mixed_precision=FLAGS.mixed_precision,
-        jit_module=FLAGS.jit_module,
-        device_type="gpu",
-        verbose=FLAGS.verbose,
-    )
+# @register_task(name="hyperparams")
+# def train_model():
+#    tft.hyperparams.optimize_experiment_hyperparams(
+#        data_dir=FLAGS.data_dir,
+#        experiment_name=FLAGS.experiment,
+#        epochs=FLAGS.epochs,
+#        batch_size=FLAGS.batch_size,
+#        config=CONFIG.value,
+#        mixed_precision=FLAGS.mixed_precision,
+#        jit_module=FLAGS.jit_module,
+#        device_type="gpu",
+#        verbose=FLAGS.verbose,
+#    )
 
 
 @register_task(name="model")
 def train_model():
     experiment_name = FLAGS.experiment
+    if experiment_name == "electricity":
+        trainer = tft.experiments.Electricity().trainer
+    else:
+        raise RuntimeError("this is unexpected")
 
-    data_config = tft.datasets.get_config(experiment_name)
-    tft.training_scripts.train_experiment(
+    trainer.run(
         data_dir=FLAGS.data_dir,
-        experiment_name=experiment_name,
         epochs=FLAGS.epochs,
         batch_size=FLAGS.batch_size,
         config=CONFIG.value,
-        data_config=data_config,
         mixed_precision=FLAGS.mixed_precision,
         jit_module=FLAGS.jit_module,
-        prefetch_buffer_size=FLAGS.prefetch_buffer_size,
-        device_type="gpu",
+        save_path=FLAGS.save_path,
+        profile=FLAGS.profile,
+        verbose=FLAGS.verbose,
+    )
+
+
+@register_task(name="model_distributed")
+def train_model():
+    experiment_name = FLAGS.experiment
+    if experiment_name == "electricity":
+        trainer = tft.experiments.Electricity().trainer
+    else:
+        raise RuntimeError("this is unexpected")
+
+    trainer.run_distributed(
+        data_dir=FLAGS.data_dir,
+        epochs=FLAGS.epochs,
+        batch_size=FLAGS.batch_size,
+        config=CONFIG.value,
+        mixed_precision=FLAGS.mixed_precision,
+        jit_module=FLAGS.jit_module,
         save_path=FLAGS.save_path,
         profile=FLAGS.profile,
         verbose=FLAGS.verbose,

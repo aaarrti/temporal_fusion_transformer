@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 import functools
-from typing import Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Sequence, Tuple, Union
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import struct
+from jax import lax
 from jaxtyping import Array, Float, Int, jaxtyped
 
-ComputeDtype = Union[jnp.float32, jnp.float16, jnp.bfloat16]
+if TYPE_CHECKING:
+    ComputeDtype = Union[jnp.float32, jnp.float16, jnp.bfloat16]
 
 
 class TimeDistributed(nn.Module):
     layer: nn.Module
 
+    @jaxtyped
     @nn.compact
-    def __call__(self, inputs: jnp.ndarray, **kwargs) -> jnp.ndarray:
+    def __call__(self, inputs: Float[Array, "batch time n"], *args, **kwargs) -> Float[Array, "batch time n"]:
         input_shape = inputs.shape
         batch_size = input_shape[0]
         input_length = input_shape[1]
@@ -25,7 +28,7 @@ class TimeDistributed(nn.Module):
         # transformation in self._input_map.
         inputs = jnp.reshape(inputs, [-1, *inner_input_shape])
         # (num_samples * timesteps, ...)
-        y = self.layer(inputs, **kwargs)
+        y = self.layer(inputs, *args, **kwargs)
         # Reconstruct the output shape by re-splitting the 0th dimension
         # back into (num_samples, timesteps, ...)
         # We use batch_size when available so that the 0th dimension is
@@ -389,11 +392,13 @@ class DecoderBlock(nn.Module):
 
     @nn.compact
     def __call__(self, inputs: jnp.ndarray, training: bool, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        # float16 in attention causes overflow in softmax
-        attention_dtype = jnp.float32 if self.dtype == jnp.float16 else self.dtype
-        # TODO: we probably can set decode=True during inference.
         x = nn.SelfAttention(
-            num_heads=self.num_attention_heads, dtype=attention_dtype, dropout_rate=self.attention_dropout_rate
+            num_heads=self.num_attention_heads,
+            dtype=self.dtype,
+            dropout_rate=self.attention_dropout_rate,
+            # We probably can set decode=True during inference.
+            # decode=not training,
+            attention_fn=self.attention_fn,
         )(inputs, mask=mask, deterministic=not training)
         x = x.astype(self.dtype)
         x, _ = GatedLinearUnit(
@@ -405,6 +410,46 @@ class DecoderBlock(nn.Module):
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
         )(x, training=training)
         return decoded
+
+    @property
+    def attention_fn(self):
+        """
+        We force attention computations to be in f32 and high precision, to avoid f16 overflow.
+        After we cast it back to main compute dtype.
+
+        """
+
+        attention_dtype = jnp.float32 if self.dtype == jnp.float16 else self.dtype
+        attention_precision = lax.Precision.HIGH if self.dtype == jnp.float16 else lax.Precision.DEFAULT
+
+        def fn(
+            query,
+            key,
+            value,
+            bias=None,
+            mask=None,
+            broadcast_dropout=True,
+            dropout_rng=None,
+            dropout_rate=0.0,
+            deterministic=False,
+            dtype=None,
+            precision=None,
+        ):
+            return nn.attention.dot_product_attention(
+                query=query,
+                key=key,
+                value=value,
+                bias=bias,
+                mask=mask,
+                broadcast_dropout=broadcast_dropout,
+                dropout_rng=dropout_rng,
+                dropout_rate=dropout_rate,
+                deterministic=deterministic,
+                dtype=attention_dtype,
+                precision=attention_precision,
+            ).astype(self.dtype)
+
+        return fn
 
 
 # -------------------------------------------------------------------------------------------------------------

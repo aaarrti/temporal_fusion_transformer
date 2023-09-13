@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import functools
-from typing import Callable, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
 
 import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
 from jaxtyping import Array, Float, Scalar, jaxtyped
 
-QuantileLossFn = Callable[[Float[Array, "batch time n"], Float[Array, "batch time n q"]], Float[Array, "batch q"]]
+if TYPE_CHECKING:
+    QuantileLossFn = Callable[[Float[Array, "batch time n"], Float[Array, "batch time n q"]], Float[Array, "batch q"]]
 
 
 def make_quantile_loss_fn(quantiles: Sequence[float], dtype: jnp.inexact = jnp.float32) -> QuantileLossFn:

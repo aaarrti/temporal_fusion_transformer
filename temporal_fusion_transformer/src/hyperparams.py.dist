@@ -7,13 +7,15 @@ import jax.numpy as jnp
 import optuna
 from absl_extra import flax_utils
 from ml_collections import ConfigDict
+import clu.periodic_actions
+import clu.metric_writers
 
 from temporal_fusion_transformer.src import training_scripts
-from temporal_fusion_transformer.src.config_dict import ConfigDictProto, DatasetConfig
-from temporal_fusion_transformer.src.training_lib import MetricContainer, load_dataset
+from src.training.training_lib import MetricContainer, load_dataset
 
 if TYPE_CHECKING:
     import tensorflow as tf
+    from temporal_fusion_transformer.src.config_dict import ConfigDictProto, DatasetConfig
 
 
 def optimize_experiment_hyperparams(
@@ -22,7 +24,8 @@ def optimize_experiment_hyperparams(
     epochs: int,
     batch_size: int,
     data_dir: str,
-    device_type: Literal["gpu", "tpu"],
+    data_config: DatasetConfig,
+    device_type: Literal["gpu", "tpu"] = "gpu",
     jit_module: bool = False,
     mixed_precision: bool = True,
     n_trials: int | None = 20,
@@ -69,6 +72,7 @@ def optimize_hyperparams(
     data: Tuple[tf.data.Dataset, tf.data.Dataset],
     epochs: int,
     batch_size: int,
+    data_config: DatasetConfig,
     device_type: Literal["gpu", "tpu"],
     jit_module: bool = False,
     mixed_precision: bool = True,
@@ -90,15 +94,19 @@ def optimize_hyperparams(
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-        hooks = flax_utils.make_training_hooks(
-            num_training_steps=num_training_steps,
-            epochs=epochs,
-            report_progress_frequency=10,
-            write_metrics_frequency=None,
-            tensorboard_logdir=None,
-        )
+        hooks = flax_utils.TrainingHooks()
         hooks.on_step_end.append(hyperband_pruning_hook)
         hooks.on_error.append(prune_trial_on_nan)
+
+        training_writer = clu.metric_writers.LoggingWriter(collection="training")
+        report_progress = clu.periodic_actions.ReportProgress(
+            every_steps=1000, num_train_steps=num_training_steps * epochs, writer=training_writer, every_secs=None
+        )
+
+        def report_progress_func(step: int, *args, **kwargs):
+            report_progress(step)
+
+        hooks.on_step_end.append(report_progress_func)
 
         learning_rate = trial.suggest_float("learning_rate", low=1e-4, high=1e-3)
         decay_steps = trial.suggest_float("decay_steps", low=0, high=1.0)

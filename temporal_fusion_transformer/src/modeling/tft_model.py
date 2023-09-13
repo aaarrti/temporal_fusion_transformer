@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Sequence
+from typing import TYPE_CHECKING, List, Sequence
 
 import flax.linen as nn
 import jax.numpy as jnp
@@ -8,9 +8,7 @@ from absl import logging
 from flax import struct
 from jaxtyping import Array, Float, jaxtyped
 
-from temporal_fusion_transformer.src.config_dict import ConfigDictProto, DatasetConfig
-from temporal_fusion_transformer.src.tft_layers import (
-    ComputeDtype,
+from temporal_fusion_transformer.src.modeling.tft_layers import (
     DecoderBlock,
     GatedLinearUnit,
     GatedResidualNetwork,
@@ -21,6 +19,10 @@ from temporal_fusion_transformer.src.tft_layers import (
     VariableSelectionNetwork,
     make_causal_mask,
 )
+
+if TYPE_CHECKING:
+    from temporal_fusion_transformer.src.config_dict import ConfigDict, DatasetConfig
+    from temporal_fusion_transformer.src.modeling.tft_layers import ComputeDtype
 
 
 @struct.dataclass
@@ -132,6 +134,15 @@ class TemporalFusionTransformer(nn.Module):
         else:
             return outputs
 
+    @staticmethod
+    def from_config_dict(
+        config: ConfigDict,
+        data_config: DatasetConfig,
+        jit_module: bool = False,
+        dtype: jnp.inexact = jnp.float32,
+    ) -> TemporalFusionTransformer:
+        return make_temporal_fusion_transformer(config, data_config, jit_module, dtype)
+
 
 class InputPreprocessor(nn.Module):
     input_observed_idx: Sequence[int]
@@ -225,7 +236,7 @@ class InputPreprocessor(nn.Module):
 
 
 def make_temporal_fusion_transformer(
-    config: ConfigDictProto,
+    config: ConfigDict,
     data_config: DatasetConfig,
     jit_module: bool = False,
     dtype: jnp.inexact = jnp.float32,

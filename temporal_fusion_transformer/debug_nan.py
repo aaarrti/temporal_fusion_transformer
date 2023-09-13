@@ -4,23 +4,17 @@ import jax
 import jax.numpy as jnp
 from absl_extra import logging_utils
 from flax.serialization import msgpack_restore
-from jax import tree_util
-from sklearn.utils import gen_batches
-from tqdm.auto import tqdm
-
-import temporal_fusion_transformer as tft
-from temporal_fusion_transformer.config import get_config
-from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
-from temporal_fusion_transformer.src.tft_model import (
-    InputStruct,
-    TemporalFusionTransformer,
-)
-from temporal_fusion_transformer.src.training_lib import (
+from src.modeling.tft_model import TemporalFusionTransformer
+from src.training.training_lib import (
     TrainStateContainer,
     make_optimizer,
     restore_optimizer_state,
     single_device_train_step,
 )
+
+import temporal_fusion_transformer as tft
+from temporal_fusion_transformer.config import get_config
+from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
 
 logging_utils.setup_logging(log_level="INFO")
 jax.config.update("jax_debug_nans", True)
