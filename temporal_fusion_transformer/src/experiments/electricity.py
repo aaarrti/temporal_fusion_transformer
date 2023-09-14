@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Literal, Mapping, Tuple, TypedDict, overload
 
@@ -21,7 +22,7 @@ from temporal_fusion_transformer.src.experiments.config import get_config
 from temporal_fusion_transformer.src.experiments.util import (
     deserialize_preprocessor,
     serialize_preprocessor,
-    time_series_from_array,
+    time_series_dataset_from_dataframe,
 )
 
 if TYPE_CHECKING:
@@ -31,10 +32,10 @@ if TYPE_CHECKING:
 
     from temporal_fusion_transformer.src.config_dict import ConfigDict
     from temporal_fusion_transformer.src.training.metrics import MetricContainer
+    from temporal_fusion_transformer.src.training.training import DeviceTypeT
     from temporal_fusion_transformer.src.training.training_lib import (
         TrainStateContainer,
     )
-    from temporal_fusion_transformer.src.training.training import DeviceTypeT
 
 
 try:
@@ -141,9 +142,7 @@ class Trainer(TrainerBase):
         verbose: bool = True,
         profile: bool = False,
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
-        from temporal_fusion_transformer.src.training.training import (
-            train,
-        )
+        from temporal_fusion_transformer.src.training.training import train
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
 
         data_config = get_config("electricity")
@@ -164,6 +163,7 @@ class Trainer(TrainerBase):
             mixed_precision=mixed_precision,
             epochs=epochs,
             tensorboard_logdir="tensorboard/electricity/",
+            verbose=verbose,
         )
 
     def run_distributed(
@@ -180,9 +180,7 @@ class Trainer(TrainerBase):
         device_type: DeviceTypeT = "gpu",
         prefetch_buffer_size: int = 2,
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
-        from temporal_fusion_transformer.src.training.training import (
-            train_distributed,
-        )
+        from temporal_fusion_transformer.src.training.training import train_distributed
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
 
         data_config = get_config("electricity")
@@ -206,6 +204,7 @@ class Trainer(TrainerBase):
             device_type=device_type,
             prefetch_buffer_size=prefetch_buffer_size,
             tensorboard_logdir="tensorboard/electricity/",
+            verbose=verbose,
         )
 
 
@@ -258,10 +257,17 @@ def make_dataset(
     logging.info(f"{df.columns = }")
     preprocessor = train_preprocessor(df)
     training_df, validation_df, test_df = split_data(df, validation_boundary, test_boundary, split_overlap_days)
-    training_time_series = convert_dataframe_to_tf_dataset(training_df, preprocessor, total_time_steps=total_time_steps)
-    validation_time_series = convert_dataframe_to_tf_dataset(
-        validation_df, preprocessor, total_time_steps=total_time_steps
+
+    make_dataset_fn = partial(
+        time_series_dataset_from_dataframe,
+        inputs=["year"] + ["month", "day", "hour", "day_of_week"] + ["id"],
+        targets=["power_usage"],
+        total_time_steps=total_time_steps,
+        id_column="id",
+        preprocess_fn=partial(apply_preprocessor, preprocessor=preprocessor),
     )
+    training_time_series: tf.data.Dataset = make_dataset_fn(training_df)
+    validation_time_series: tf.data.Dataset = make_dataset_fn(validation_df)
     if mode == "return":
         return training_time_series, validation_time_series, test_df, DataPreprocessor(preprocessor)
 
@@ -414,22 +420,6 @@ def apply_preprocessor(
     df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
     df = df.shrink_to_fit(in_place=True).rechunk()
     return df
-
-
-def convert_dataframe_to_tf_dataset(
-    df: pl.DataFrame,
-    preprocessor: PreprocessorDict,
-    total_time_steps: int = 192,
-) -> tf.data.Dataset:
-    df = apply_preprocessor(df, preprocessor)
-    time_series = time_series_from_array(
-        df,
-        inputs=["year"] + ["month", "day", "hour", "day_of_week"] + ["id"],
-        targets=["power_usage"],
-        total_time_steps=total_time_steps,
-        id_column="id",
-    )
-    return time_series
 
 
 # -------------------- inference ---------------

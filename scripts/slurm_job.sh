@@ -2,7 +2,7 @@
 
 #!/bin/bash
 #SBATCH --job-name=train_job
-#SBATCH --partition=gpu-2h
+#SBATCH --partition=gpu-test
 #SBATCH --gpus-per-node=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --output=logs/job-%j.out

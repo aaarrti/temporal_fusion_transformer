@@ -1,15 +1,7 @@
 from __future__ import annotations
 
 import functools
-from typing import (
-    TYPE_CHECKING,
-    Callable,
-    Literal,
-    Mapping,
-    Protocol,
-    Tuple,
-    TypeVar,
-)
+from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, Tuple, TypeVar
 
 import jax
 import optax
@@ -33,6 +25,7 @@ T = TypeVar("T", bound=optax.GradientTransformation)
 if TYPE_CHECKING:
     import tensorflow as tf
     from src.modeling.loss_fn import QuantileLossFn
+
     from temporal_fusion_transformer.src.config_dict import OptimizerConfig
 
     class ApplyFunc(Protocol):
@@ -154,7 +147,7 @@ def load_dataset(
     batch_size: int,
     prng_seed: int,
     num_encoder_steps: int,
-    shuffle_buffer_size: int = 2048,
+    shuffle_buffer_size: int = 1024,
     dtype=jnp.float32,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
@@ -197,18 +190,34 @@ def load_dataset(
     return training_ds, validation_ds
 
 
-def make_optimizer(config: OptimizerConfig, num_training_steps: int, epochs: int) -> optax.GradientTransformation:
-    learning_rate = optax.cosine_decay_schedule(
-        1.0, num_training_steps * epochs * config.decay_steps, config.decay_alpha
+def make_optimizer(
+    config: OptimizerConfig,
+    num_training_steps: int,
+) -> optax.GradientTransformation:
+    """
+
+    Parameters
+    ----------
+    config
+    num_training_steps:
+        Total number of training steps (not per epoch!).
+
+    Returns
+    -------
+
+    """
+    learning_rate = optax.warmup_cosine_decay_schedule(
+        1.0, 2.0, warmup_steps=int(num_training_steps * 0.2), decay_steps=int(num_training_steps * 0.8), end_value=0.1
     )
-    tx = optax.lion(learning_rate)
+    tx = optax.contrib.mechanize(optax.lion(learning_rate))
+
     if config.clipnorm != 0:
         tx = optax.chain(optax.adaptive_grad_clip(config.clipnorm), tx)
 
     if config.ema != 0:
-        tx = optax.chain(tx, optax.ema(config.ema))
+        tx = optax.chain(optax.ema(config.ema), tx)
 
-    return optax.contrib.mechanize(tx)
+    return tx
 
 
 def restore_optimizer_state(opt_state: T, restored: Mapping[str, ...]) -> T:

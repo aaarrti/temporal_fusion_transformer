@@ -31,7 +31,10 @@ if TYPE_CHECKING:
 
     from temporal_fusion_transformer.src.config_dict import ConfigDict, DatasetConfig
     from temporal_fusion_transformer.src.modeling.tft_layers import ComputeDtype
-    from temporal_fusion_transformer.src.training.training_lib import TrainFn, ValidationFn
+    from temporal_fusion_transformer.src.training.training_lib import (
+        TrainFn,
+        ValidationFn,
+    )
 
     HooksT = flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | Literal["auto"] | None
     DynamicScaleT = DynamicScale | None | Literal["auto"]
@@ -164,7 +167,7 @@ def _train(
     batch_size = first_x.shape[0] // device_count
     first_x = jnp.asarray(first_x[:batch_size], dtype=compute_dtype)
 
-    tx = make_optimizer(config.optimizer, num_training_steps, epochs)
+    tx = make_optimizer(config.optimizer, num_training_steps * epochs)
 
     loss_fn = make_quantile_loss_fn(config.model.quantiles, dtype=compute_dtype)
 

@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Mapping, TypedDict
+from typing import TYPE_CHECKING, Callable, List, Mapping, TypedDict
 
 import numpy as np
-import polars as pl
-import tensorflow as tf
+from absl import logging
 from absl_extra.flax_utils import save_as_msgpack
 from flax.serialization import msgpack_restore
 from jax.tree_util import tree_map
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 from toolz import functoolz
-from tqdm.auto import tqdm
+
+try:
+    import polars as pl
+    import tensorflow as tf
+    from sklearn.preprocessing import LabelEncoder, StandardScaler
+    from tqdm.auto import tqdm
+except ModuleNotFoundError as ex:
+    logging.warning(ex)
+
+
+if TYPE_CHECKING:
+    import polars as pl
+    from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 
 class StandardScalerPytree(TypedDict):
@@ -110,10 +120,18 @@ def deserialize_preprocessor(filename: str | Path) -> Mapping[str, ...]:
     return preprocessor
 
 
-def time_series_from_array(
-    df: pl.DataFrame, inputs: List[str], targets: List[str], total_time_steps: int, id_column: str
+def time_series_dataset_from_dataframe(
+    df: pl.DataFrame,
+    inputs: List[str],
+    targets: List[str],
+    total_time_steps: int,
+    id_column: str,
+    preprocess_fn: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
 ) -> tf.data.Dataset:
     from keras.utils import timeseries_dataset_from_array
+
+    if preprocess_fn is not None:
+        df = preprocess_fn(df)
 
     # for some reason, keras would generate targets of shape [1, n] and inputs [time_steps, n],
     # but we need time-steps for y_batch also, we need is [time_steps, m]. We don't need `sequence_stride`,

@@ -4,13 +4,13 @@ From: nvcr.io/nvdlfwea/jax/jax:23.07-py3
 %post -c /bin/bash
     /usr/bin/python -m pip install \
         flax==0.7.2 jaxtyping==0.2.20 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.13.0 \
-        optuna==3.3.0 slack_sdk==3.21.3 orbax-checkpoint==0.3.5
+        optuna==3.3.0 slack_sdk==3.21.3 orbax-checkpoint==0.3.5 optax==0.1.7
 
 %environment
     export DEBIAN_FRONTEND=noninteractive
 
 %runscript
     #!/bin/bash
-    /usr/bin/python -m pip install --upgrade absl_extra
-    /usr/bin/python -m pip install .
+    /usr/bin/python -m pip install --upgrade --pre absl_extra
+    /usr/bin/python -m pip install . --no-deps
     exec "$@"

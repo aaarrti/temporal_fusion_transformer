@@ -18,7 +18,7 @@ from temporal_fusion_transformer.src.experiments.base import (
 from temporal_fusion_transformer.src.experiments.config import get_config
 from temporal_fusion_transformer.src.experiments.util import (
     serialize_preprocessor,
-    time_series_from_array,
+    time_series_dataset_from_dataframe,
 )
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         self,
         start_date: datetime | None = datetime(2016, 1, 1),
         end_date: datetime | None = datetime(2016, 6, 1),
-        validation_boundary=datetime(2016, 4, 1),
+        validation_boundary: datetime = datetime(2016, 4, 1),
     ):
         config = get_config("favorita")
         self.start_date = start_date
@@ -202,16 +202,16 @@ def make_dataset(
     total_time_steps: int = 120,
     num_encoder_steps: int = 90,
     mode: Literal["return", "persist"] = "return",
-) -> Tuple[Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset], PreprocessorDict]:
+) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, PreprocessorDict]:
     convert_to_parquet(data_dir)
 
     df = read_parquet(data_dir, start_date, end_date)
-    logging.info(f"{df.columns = }")
+    logging.debug(f"{df.columns = }")
     preprocessor = train_preprocessor(df)
     training_df, validation_df, test_df = split_data(
         df, validation_boundary, total_time_steps=total_time_steps, num_encoder_steps=num_encoder_steps
     )
-    training_df = apply_preprocessor(training_df, preprocessor)
+    training_df = convert_dataframe_to_tf_dataset(training_df, preprocessor, total_time_steps)
     validation_df = apply_preprocessor(validation_df, preprocessor)
     test_df = apply_preprocessor(test_df, preprocessor)
 
@@ -455,10 +455,10 @@ def apply_preprocessor(
 def convert_dataframe_to_tf_dataset(
     df: pl.DataFrame,
     preprocessor: PreprocessorDict,
-    total_time_steps: int = 192,
+    total_time_steps: int,
 ) -> tf.data.Dataset:
     df = apply_preprocessor(df, preprocessor)
-    time_series = time_series_from_array(
+    time_series = time_series_dataset_from_dataframe(
         df,
         inputs=_REAL_INPUTS + _CATEGORICAL_INPUTS,
         targets=["log_sales"],

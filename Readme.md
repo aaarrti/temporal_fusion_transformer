@@ -36,6 +36,7 @@ OpenXLA IREE?
   repository.
   If you need a local copy of it, run: `./scripts/clone_original_implementation.sh`
 
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ## Differences with original implementation
 - Supports multiple transformer blocks stacked
 - No attention output, as attention-based explanations do not fulfill sanity-checks (TODO: `quantus link`)

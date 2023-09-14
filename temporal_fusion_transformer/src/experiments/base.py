@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Literal, Tuple, Type
+from typing import TYPE_CHECKING, Literal, Tuple
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt

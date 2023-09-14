@@ -10,7 +10,7 @@ Choice = Literal["electricity", "favorita", "hamburg_air_quality"]
 def get_config(choice: Choice = "electricity") -> ConfigDict:
     config = ConfigDict()
     config.prng_seed = 69
-    config.shuffle_buffer_size = 2048
+    config.shuffle_buffer_size = 1024
     config.optimizer = get_optimizer_config(choice)
     config.model = get_model_config(choice)
     return config
@@ -42,16 +42,10 @@ def get_optimizer_config(choice: Choice):
     config = {
         "electricity": {
             "clipnorm": 0.0,
-            "decay_alpha": 0.1,
-            "decay_steps": 0.8,
             "ema": 0.99,
-            "learning_rate": 5e-4,
         },
         "favorita": {
-            "learning_rate": 1e-3,
-            "clipnorm": 100.0,
-            "decay_alpha": 0.1,
-            "decay_steps": 0.8,
+            "clipnorm": 0.0,
             "ema": 0.99,
         },
         "hamburg_air_quality": {},

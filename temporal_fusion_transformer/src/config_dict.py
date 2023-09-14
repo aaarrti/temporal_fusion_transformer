@@ -75,18 +75,10 @@ if TYPE_CHECKING:
         """
         Attributes
         ----------
-        decay_steps:
-            Fraction of total training steps over which to decay. If set to 0, constant learning_rate will be used.
-        decay_alpha:
-            Fraction of initial learning rate, which will be reached after `decay_steps`
         ema:
             Only applies if `use_ema==True`
-
-
         """
 
-        decay_steps: float
-        decay_alpha: float
         ema: float
         clipnorm: float
 
