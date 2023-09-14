@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import os
 import platform
 from pathlib import Path
@@ -47,6 +48,7 @@ def make_training_hooks(
 ) -> flax_utils.TrainingHooks:
     hooks_list = [
         make_metrics_hooks(num_training_steps, epochs, logdir, report_progress_frequency, log_metrics_frequency),
+        make_garbage_collection_hooks()
     ]
 
     if checkpoint_directory is not None:
@@ -59,10 +61,7 @@ def make_training_hooks(
     if profile:
         hooks_list.append(make_profiler_hooks(logdir))
 
-    if len(hooks_list) > 1:
-        hooks = flax_utils.combine_hooks(*hooks_list)
-    else:
-        hooks = hooks_list[0]
+    hooks = flax_utils.combine_hooks(*hooks_list)
 
     if monitor_exception:
         hooks.on_error.append(persist_nan_causing_args)
@@ -219,6 +218,25 @@ def make_profiler_hooks(logdir: str) -> flax_utils.TrainingHooks:
 
     return hooks
 
+
+def make_garbage_collection_hooks() -> flax_utils.TrainingHooks:
+    """We need to manually call python GC to free up XLA memory. See https://github.com/google/jax/issues/14882"""
+    
+    def func():
+        gc.collect()
+    
+    periodic_action = clu.periodic_actions.PeriodicCallback(
+        every_steps=100,
+        every_secs=5*60,
+        execute_async=True,
+        callback_fn=func
+    )
+    
+    hooks = flax_utils.TrainingHooks()
+    hooks.on_step_end.append(periodic_action)
+    hooks.on_epoch_end.append(func)
+    return hooks
+    
 
 def persist_nan_causing_args(
     training_state: TrainStateContainer,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Generator, Literal, Tuple
 
@@ -108,7 +109,7 @@ def train_distributed(
     if prefetch_buffer_size != 0 and device_type == "tpu":
         logging.warning("`prefetch_buffer_size` must be 0 for TPU")
         prefetch_buffer_size = 0
-
+    
     if mixed_precision:
         if device_type == "gpu":
             compute_dtype = jnp.float16

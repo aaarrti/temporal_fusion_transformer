@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
@@ -9,6 +11,8 @@ from absl import flags, logging
 from absl_extra.logging_utils import setup_logging
 from absl_extra.tasks import register_task, run
 from ml_collections import config_flags
+from absl_extra.notifier import SlackNotifier, NoOpNotifier
+import platform
 
 import temporal_fusion_transformer as tft
 
@@ -63,9 +67,22 @@ def make_dataset():
 #    )
 
 
-@register_task(name="model")
+def make_notifier() -> SlackNotifier | None:
+    if platform.system().lower() == "linux":
+        return SlackNotifier(
+            slack_token=os.environ["SLACK_BOT_TOKEN"],
+            channel_id=os.environ["U03TKAHU9QV"]
+        )
+    else:
+        return NoOpNotifier()
+
+
+@register_task(name="model", notifier=make_notifier)
 def train_model():
     experiment_name = FLAGS.experiment
+    
+    mixed_precision = FLAGS.mixed_precision and tft.util.supports_mixed_precision()
+    
     if experiment_name == "electricity":
         trainer = tft.experiments.Electricity().trainer
     else:
@@ -76,7 +93,7 @@ def train_model():
         epochs=FLAGS.epochs,
         batch_size=FLAGS.batch_size,
         config=CONFIG.value,
-        mixed_precision=FLAGS.mixed_precision,
+        mixed_precision=mixed_precision,
         jit_module=FLAGS.jit_module,
         save_path=FLAGS.save_path,
         profile=FLAGS.profile,
@@ -84,7 +101,7 @@ def train_model():
     )
 
 
-@register_task(name="model_distributed")
+@register_task(name="model_distributed", notifier=make_notifier)
 def train_model():
     experiment_name = FLAGS.experiment
     if experiment_name == "electricity":
@@ -97,7 +114,7 @@ def train_model():
         epochs=FLAGS.epochs,
         batch_size=FLAGS.batch_size,
         config=CONFIG.value,
-        mixed_precision=FLAGS.mixed_precision,
+        mixed_precision=FLAGS.mixed_precision and tft.util.supports_mixed_precision(),
         jit_module=FLAGS.jit_module,
         save_path=FLAGS.save_path,
         profile=FLAGS.profile,
