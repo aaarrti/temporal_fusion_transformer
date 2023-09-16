@@ -1,12 +1,13 @@
-from temporal_fusion_transformer.src.experiments.util import (
-    serialize_preprocessor,
-    deserialize_preprocessor,
-)
-import jax
-import numpy as np
 from pathlib import Path
 
+import jax
+import numpy as np
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+from temporal_fusion_transformer.src.experiments.util import (
+    deserialize_preprocessor,
+    serialize_preprocessor,
+)
 
 
 def test_serialize_preprocessor(tmp_path: Path):

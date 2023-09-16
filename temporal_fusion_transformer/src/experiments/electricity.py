@@ -164,6 +164,7 @@ class Trainer(TrainerBase):
             epochs=epochs,
             tensorboard_logdir="tensorboard/electricity/",
             verbose=verbose,
+            save_path=save_path,
         )
 
     def run_distributed(

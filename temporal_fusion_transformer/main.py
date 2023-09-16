@@ -5,20 +5,22 @@ import os
 import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
+import platform
+
 # For debugging
 import jax
 from absl import flags, logging
 from absl_extra.logging_utils import setup_logging
+from absl_extra.notifier import NoOpNotifier, SlackNotifier
 from absl_extra.tasks import register_task, run
 from ml_collections import config_flags
-from absl_extra.notifier import SlackNotifier, NoOpNotifier
-import platform
+from absl_extra.cuda_utils import supports_mixed_precision
 
 import temporal_fusion_transformer as tft
 
 jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
-jax.config.update("jax_default_matmul_precision", "tensorfloat32")
+# jax.config.update("jax_default_matmul_precision", "tensorfloat32")
 # jax.config.update("jax_log_compiles", True)
 # jax.config.update("jax_disable_jit", True)
 
@@ -32,8 +34,6 @@ flags.DEFINE_boolean("mixed_precision", default=False, help="Use mixed (b)float1
 flags.DEFINE_boolean("jit_module", default=False, help="Apply nn.jit to model")
 flags.DEFINE_boolean("profile", default=False, help="Run with profiling")
 flags.DEFINE_boolean("verbose", default=True, help="Verbose mode for training")
-flags.DEFINE_string("save_path", default="model.msgpack", help="Save file_name for model")
-flags.DEFINE_integer("prefetch_buffer_size", default=0, help="Prefetch buffer size")
 CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
 setup_logging(log_level="INFO")
@@ -69,10 +69,7 @@ def make_dataset():
 
 def make_notifier() -> SlackNotifier | None:
     if platform.system().lower() == "linux":
-        return SlackNotifier(
-            slack_token=os.environ["SLACK_BOT_TOKEN"],
-            channel_id=os.environ["U03TKAHU9QV"]
-        )
+        return SlackNotifier(slack_token=os.environ["SLACK_BOT_TOKEN"], channel_id=os.environ["SLACK_CHANNEL_ID"])
     else:
         return NoOpNotifier()
 
@@ -80,9 +77,9 @@ def make_notifier() -> SlackNotifier | None:
 @register_task(name="model", notifier=make_notifier)
 def train_model():
     experiment_name = FLAGS.experiment
-    
-    mixed_precision = FLAGS.mixed_precision and tft.util.supports_mixed_precision()
-    
+
+    mixed_precision = FLAGS.mixed_precision and supports_mixed_precision()
+
     if experiment_name == "electricity":
         trainer = tft.experiments.Electricity().trainer
     else:
@@ -95,7 +92,7 @@ def train_model():
         config=CONFIG.value,
         mixed_precision=mixed_precision,
         jit_module=FLAGS.jit_module,
-        save_path=FLAGS.save_path,
+        save_path="model.msgpack",
         profile=FLAGS.profile,
         verbose=FLAGS.verbose,
     )
@@ -116,7 +113,7 @@ def train_model():
         config=CONFIG.value,
         mixed_precision=FLAGS.mixed_precision and tft.util.supports_mixed_precision(),
         jit_module=FLAGS.jit_module,
-        save_path=FLAGS.save_path,
+        save_path="model.msgpack",
         profile=FLAGS.profile,
         verbose=FLAGS.verbose,
     )

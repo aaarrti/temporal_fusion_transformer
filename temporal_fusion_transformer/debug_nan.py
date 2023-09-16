@@ -9,12 +9,12 @@ from src.training.training_lib import (
     TrainStateContainer,
     make_optimizer,
     restore_optimizer_state,
-    single_device_train_step,
+    train_step,
 )
 
 import temporal_fusion_transformer as tft
 from temporal_fusion_transformer.config import get_config
-from temporal_fusion_transformer.src.quantile_loss import make_quantile_loss_fn
+from temporal_fusion_transformer.src.modeling.loss_fn import make_quantile_loss_fn
 
 logging_utils.setup_logging(log_level="INFO")
 jax.config.update("jax_debug_nans", True)
@@ -24,10 +24,6 @@ jax.config.update("jax_softmax_custom_jvp", True)
 
 # 256 was used on cluster
 batch_size = 256
-
-
-def unshard(batch: jnp.ndarray) -> jnp.ndarray:
-    return jnp.reshape(batch, [-1, *batch.shape[2:]])
 
 
 def main():
@@ -40,11 +36,13 @@ def main():
     x_batch = jnp.asarray(restored["x_batch"])
     y_batch = jnp.asarray(restored["y_batch"])
 
-    model = TemporalFusionTransformer.from_config_dict(config, data_config=tft.datasets.get_config("electricity"))
-    loss_fn = make_quantile_loss_fn(config.model.quantiles)
+    model = TemporalFusionTransformer.from_config_dict(
+        config, data_config=tft.experiments.get_config("electricity"), dtype=jnp.float16
+    )
+    loss_fn = make_quantile_loss_fn(config.model.quantiles, dtype=jnp.float16)
 
     state = TrainStateContainer.create(
-        tx=make_optimizer(config.optimizer, 18000, 1),
+        tx=make_optimizer(config.optimizer, 18000),
         apply_fn=model.apply,
         params=restored["state"]["params"],
         dropout_key=restored["state"]["dropout_key"],
@@ -53,7 +51,7 @@ def main():
     state = state.replace(step=restored["state"]["step"])
     restored_optimizer = restore_optimizer_state(state.opt_state, restored["state"]["opt_state"])
     state = state.replace(opt_state=restored_optimizer)
-    single_device_train_step(state, x_batch, y_batch)
+    train_step(state, x_batch, y_batch)
 
 
 if __name__ == "__main__":

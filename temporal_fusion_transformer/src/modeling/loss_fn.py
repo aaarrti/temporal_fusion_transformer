@@ -19,7 +19,7 @@ def make_quantile_loss_fn(quantiles: Sequence[float], dtype: jnp.inexact = jnp.f
 
 
 @jaxtyped
-@functools.partial(jax.jit, static_argnums=[2, 3], static_argnames=["tau", "dtype"])
+@functools.partial(jax.jit, static_argnums=[2, 3], static_argnames=["tau", "dtype"], inline=True)
 def pinball_loss(
     y_true: Float[Array, "batch time n"],
     y_pred: Float[Array, "batch time n"],

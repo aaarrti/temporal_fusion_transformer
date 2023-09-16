@@ -291,9 +291,11 @@ def make_temporal_fusion_transformer(
         num_inputs=num_known_real_inputs + num_known_categorical_inputs,
         dtype=dtype,
     )
-    historical_rnn = nn.RNN(nn.OptimizedLSTMCell(latent_dim, dtype=dtype), return_carry=True)
+    historical_rnn = nn.RNN(
+        nn.OptimizedLSTMCell(latent_dim, dtype=dtype), return_carry=True, split_rngs={"params": False, "lstm": True}
+    )
 
-    future_rnn = nn.RNN(nn.OptimizedLSTMCell(latent_dim, dtype=dtype))
+    future_rnn = nn.RNN(nn.OptimizedLSTMCell(latent_dim, dtype=dtype), split_rngs={"params": False, "lstm": True})
 
     lstm_skip_connection = GatedLinearUnit(
         latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=True, dtype=dtype

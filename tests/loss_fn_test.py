@@ -1,7 +1,7 @@
-import jax.random
 import chex
 import jax.numpy as jnp
-from src.modeling.loss_fn import pinball_loss, quantile_loss, make_quantile_loss_fn
+import jax.random
+from src.modeling.loss_fn import make_quantile_loss_fn, pinball_loss, quantile_loss
 
 PRNG_KEY = jax.random.PRNGKey(0)
 

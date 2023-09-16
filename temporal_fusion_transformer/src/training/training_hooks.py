@@ -5,14 +5,17 @@ import os
 import platform
 from pathlib import Path
 from traceback import format_exception
+from typing import TypedDict, TYPE_CHECKING
 
 import clu.metric_writers
 import clu.periodic_actions
 import orbax.checkpoint
 import orbax.checkpoint.checkpoint_utils
 from absl import logging
-from absl_extra import flax_utils
-from clu.metric_writers import AsyncMultiWriter, SummaryWriter, create_default_writer
+from absl_extra.cuda_utils import cuda_devices_available, get_memory_info
+from absl_extra.flax_utils import TrainingHooks, combine_hooks, save_as_msgpack
+from clu.asynclib import Pool
+from clu.metric_writers import SummaryWriter, create_default_writer
 from etils import epath
 from jaxtyping import Array, Float
 from orbax.checkpoint import (
@@ -21,17 +24,29 @@ from orbax.checkpoint import (
     PyTreeCheckpointHandler,
 )
 
-from temporal_fusion_transformer.src.modeling.tft_layers import InputStruct
-from temporal_fusion_transformer.src.training.metrics import MetricContainer
 from temporal_fusion_transformer.src.training.training_lib import (
-    TrainStateContainer,
     restore_optimizer_state,
 )
+
+if TYPE_CHECKING:
+    from absl_extra.flax_utils import StepType
+    from temporal_fusion_transformer.src.training.metrics import MetricContainer
+    from temporal_fusion_transformer.src.training.training_lib import TrainStateContainer
+    from temporal_fusion_transformer.src.modeling.tft_layers import InputStruct
+
+    class LogsDict(TypedDict):
+        training_state: TrainStateContainer
+
+
+__all__ = ["make_training_hooks"]
 
 
 class CheckpointManager(orbax.checkpoint.CheckpointManager):
     def should_save(self, step: int) -> bool:
         return step % self._options.save_interval_steps == 0 or step in self._options.save_on_steps
+
+
+pool = clu.asynclib.Pool()
 
 
 def make_training_hooks(
@@ -45,39 +60,54 @@ def make_training_hooks(
     log_metrics_frequency: bool = 100,
     monitor_exception: bool = True,
     save_path: str | None = None,
-) -> flax_utils.TrainingHooks:
+    monitor_gpu_memory: bool = True,
+) -> TrainingHooks:
     hooks_list = [
-        make_metrics_hooks(num_training_steps, epochs, logdir, report_progress_frequency, log_metrics_frequency),
-        make_garbage_collection_hooks()
+        make_metrics_hooks(
+            num_training_steps=num_training_steps,
+            epochs=epochs,
+            logdir=logdir,
+            report_progress_frequency=report_progress_frequency,
+            log_metrics_frequency=log_metrics_frequency,
+        ),
+        make_garbage_collection_hooks(),
+        make_checkpoint_hooks(
+            num_training_steps=num_training_steps,
+            epochs=epochs,
+            checkpoint_directory=checkpoint_directory,
+            delete_checkpoints_after_training=delete_checkpoints_after_training,
+            save_path=save_path,
+        ),
+        make_gpu_memory_monitoring(monitor_gpu_memory),
+        make_profiler_hooks(profile, logdir),
     ]
 
-    if checkpoint_directory is not None:
-        hooks_list.append(
-            make_checkpoint_hooks(
-                num_training_steps, epochs, checkpoint_directory, delete_checkpoints_after_training, save_path
-            )
-        )
-
-    if profile:
-        hooks_list.append(make_profiler_hooks(logdir))
-
-    hooks = flax_utils.combine_hooks(*hooks_list)
+    hooks = combine_hooks(*hooks_list)
 
     if monitor_exception:
         hooks.on_error.append(persist_nan_causing_args)
 
     hooks.on_step_end.append(maybe_replace_early_stopping)
+
+    def close_pool(*args, **kwargs):
+        pool.join()
+        pool.close()
+
+    hooks.on_training_end.append(close_pool)
+
     return hooks
 
 
 def make_checkpoint_hooks(
     num_training_steps: int,
     epochs: int,
-    checkpoint_directory: str,
+    checkpoint_directory: str | None,
     delete_checkpoints_after_training: bool,
     save_path: str | None,
-) -> flax_utils.TrainingHooks:
-    hooks = flax_utils.TrainingHooks()
+) -> TrainingHooks:
+    hooks = TrainingHooks()
+    if checkpoint_directory is None:
+        return hooks
     checkpoint_directory = Path(checkpoint_directory).absolute().as_posix()
 
     options = CheckpointManagerOptions(
@@ -121,6 +151,7 @@ def make_checkpoint_hooks(
 
     if delete_checkpoints_after_training:
 
+        @pool
         def delete_checkpoints(*args, **kwargs):
             for step in mngr.all_steps():
                 mngr.delete(step)
@@ -130,7 +161,7 @@ def make_checkpoint_hooks(
     if save_path is not None:
 
         def save_weight_fn(training_state: TrainStateContainer):
-            flax_utils.save_as_msgpack(training_state.params, save_path)
+            save_as_msgpack(training_state.params, save_path)
 
         hooks.on_training_end.append(save_weight_fn)
 
@@ -143,15 +174,16 @@ def make_metrics_hooks(
     logdir: str,
     report_progress_frequency: int = 50,
     log_metrics_frequency: bool = 100,
-) -> flax_utils.TrainingHooks:
+) -> TrainingHooks:
     logging.info(f"Writing tensorboard logs to {logdir}")
 
-    hooks = flax_utils.TrainingHooks()
+    hooks = TrainingHooks()
     running_on_linux = platform.system().lower() == "linux"
 
     if running_on_linux:
         training_writer = create_writer(logdir, "training")
 
+        @pool
         def write_training_metrics_fn(step: int, *args, training_metrics: MetricContainer, **kwargs):
             training_writer.write_scalars(step, training_metrics.compute())
 
@@ -166,9 +198,11 @@ def make_metrics_hooks(
     training_logger = create_default_writer(None, just_logging=True, collection="training")
     validation_writer = create_default_writer(logdir, just_logging=not running_on_linux, collection="validation")
 
+    @pool
     def log_training_metrics_fn(step: int, *args, training_metrics: MetricContainer, **kwargs):
         training_logger.write_scalars(step, training_metrics.compute())
 
+    @pool
     def write_validation_metrics_fn(epoch: int, *args, validation_metrics: MetricContainer, **kwargs):
         validation_writer.write_scalars(epoch * num_training_steps, validation_metrics.compute())
 
@@ -183,6 +217,7 @@ def make_metrics_hooks(
         every_secs=None,
     )
 
+    @pool
     def report_progress_func(step: int, *args, **kwargs):
         report_progress(step)
 
@@ -198,8 +233,12 @@ def make_metrics_hooks(
     return hooks
 
 
-def make_profiler_hooks(logdir: str) -> flax_utils.TrainingHooks:
-    hooks = flax_utils.TrainingHooks()
+def make_profiler_hooks(profile: bool, logdir: str) -> TrainingHooks:
+    hooks = TrainingHooks()
+
+    if not profile:
+        return hooks
+
     if platform.system().lower() != "linux":
         logging.warning("Profiling is only supported for linux hosts.")
     else:
@@ -211,6 +250,7 @@ def make_profiler_hooks(logdir: str) -> flax_utils.TrainingHooks:
             every_steps=200,
         )
 
+        @pool
         def call_profiler(step: int, **kwargs):
             profiler(step)
 
@@ -219,30 +259,28 @@ def make_profiler_hooks(logdir: str) -> flax_utils.TrainingHooks:
     return hooks
 
 
-def make_garbage_collection_hooks() -> flax_utils.TrainingHooks:
+def make_garbage_collection_hooks() -> TrainingHooks:
     """We need to manually call python GC to free up XLA memory. See https://github.com/google/jax/issues/14882"""
-    
-    def func():
+
+    @pool
+    def func(*args, **kwargs):
         gc.collect()
-    
+
     periodic_action = clu.periodic_actions.PeriodicCallback(
-        every_steps=100,
-        every_secs=5*60,
-        execute_async=True,
-        callback_fn=func
+        every_steps=100, every_secs=5 * 60, execute_async=False, callback_fn=func
     )
-    
-    hooks = flax_utils.TrainingHooks()
+
+    hooks = TrainingHooks()
     hooks.on_step_end.append(periodic_action)
     hooks.on_epoch_end.append(func)
     return hooks
-    
+
 
 def persist_nan_causing_args(
     training_state: TrainStateContainer,
     x_batch: InputStruct,
     y_batch: Float[Array, "batch time n"],
-    step_type: flax_utils.StepType,
+    step_type: StepType,
     exception: Exception,
 ):
     if isinstance(exception, FloatingPointError):
@@ -257,20 +295,40 @@ def persist_nan_causing_args(
             "exception": ex_str,
             "step_type": step_type,
         }
-        flax_utils.save_as_msgpack(data, "fp_error_data.msgpack")
+        save_as_msgpack(data, "fp_error_data.msgpack")
     raise
 
 
-def create_writer(logdir: str, collection: str) -> AsyncMultiWriter:
+def create_writer(logdir: str, collection: str) -> SummaryWriter:
     logdir = epath.Path(logdir)
     logdir /= collection
-    writers = [SummaryWriter(os.fspath(logdir))]
-    return AsyncMultiWriter(writers)
+    return SummaryWriter(os.fspath(logdir))
 
 
 def maybe_replace_early_stopping(
     *args, training_state: TrainStateContainer, training_metrics: MetricContainer, **kwargs
-):
+) -> LogsDict | None:
     if training_state.early_stopping is not None:
         early_stopping = training_state.early_stopping.update(training_metrics.compute()["loss"])[1]
         return {"training_state": training_state.replace(early_stopping=early_stopping)}
+
+
+def make_gpu_memory_monitoring(
+    monitor_gpu_memory: bool,
+) -> TrainingHooks:
+    hooks = TrainingHooks()
+
+    if monitor_gpu_memory and cuda_devices_available():
+
+        @pool
+        def monitor_fn(*args, **kwargs):
+            memory = get_memory_info()
+            logging.info(f"{memory = }")
+
+        callback = clu.periodic_actions.PeriodicCallback(
+            every_steps=None, every_secs=10 * 60, on_steps=[5, 10], callback_fn=monitor_fn, pass_step_and_time=False
+        )
+
+        hooks.on_step_begin.append(callback)
+
+    return hooks

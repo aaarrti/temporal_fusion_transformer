@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import functools
-from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, Tuple, TypeVar
+from functools import partial
+from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, Tuple, TypeVar, TypedDict, no_type_check
 
 import jax
 import optax
+from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import field
 from flax.training.dynamic_scale import DynamicScale
@@ -14,29 +15,34 @@ from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 from jax.random import KeyArray
-from jaxtyping import Array, Float, PRNGKeyArray, Scalar, jaxtyped
+from jaxtyping import Array, Float, Scalar, jaxtyped
 
 from temporal_fusion_transformer.src.modeling.tft_layers import InputStruct
 from temporal_fusion_transformer.src.training.metrics import MetricContainer
 
-T = TypeVar("T", bound=optax.GradientTransformation)
-
 
 if TYPE_CHECKING:
     import tensorflow as tf
-    from src.modeling.loss_fn import QuantileLossFn
+    from temporal_fusion_transformer.src.modeling.loss_fn import QuantileLossFn
+    from flax.linen.module import CollectionFilter
 
     from temporal_fusion_transformer.src.config_dict import OptimizerConfig
+
+    class PRNGCollection(TypedDict):
+        dropout: KeyArray
+        lstm: KeyArray
 
     class ApplyFunc(Protocol):
         @jaxtyped
         def __call__(
             self,
-            params: Mapping[str, FrozenDict],
+            params: Mapping[str, ...],
             x: Float[Array, "batch time n"],
             training: bool = False,
             *,
-            rngs: Mapping[str, PRNGKeyArray] | None = None,
+            rngs: PRNGCollection | None = None,
+            mutable: CollectionFilter = False,
+            capture_intermediates: bool | Callable[[nn.Module, str], bool] = False,
         ) -> Float[Array, "batch time n q"]:
             ...
 
@@ -44,22 +50,48 @@ if TYPE_CHECKING:
 class TrainStateContainer(TrainState):
     apply_fn: ApplyFunc = field(pytree_node=False)
     loss_fn: QuantileLossFn = field(pytree_node=False)
-    dropout_key: KeyArray
+    rngs: PRNGCollection
     early_stopping: EarlyStopping | None = None
     dynamic_scale: DynamicScale | None = None
 
+    @classmethod
+    @no_type_check
+    def create(
+        cls,
+        *,
+        apply_fn: ApplyFunc,
+        params: FrozenDict[str, ...],
+        tx: optax.GradientTransformation,
+        rngs: PRNGCollection,
+        loss_fn: QuantileLossFn,
+        early_stopping: EarlyStopping | None = None,
+        dynamic_scale: DynamicScale | None = None,
+    ) -> TrainStateContainer:
+        return super().create(
+            apply_fn=apply_fn,
+            params=params,
+            rngs=rngs,
+            dynamic_scale=dynamic_scale,
+            early_stopping=early_stopping,
+            tx=tx,
+            loss_fn=loss_fn,
+        )
 
-@jax.jit
+
+@partial(
+    jax.jit,
+    donate_argnums=[0],
+)
 def train_step(
     state: TrainStateContainer,
     x_batch: InputStruct,
     y_batch: Float[Array, "batch time n"],
 ) -> Tuple[TrainStateContainer, MetricContainer]:
-    dropout_train_key = jax.random.fold_in(key=state.dropout_key, data=state.step)
+    rngs = tree_util.tree_map(lambda k: jax.random.fold_in(key=k, data=state.step), state.rngs)
 
     def loss_fn(params: FrozenDict) -> Float[Scalar]:
         # pass training=True as positional args, since flax.nn.jit does not support kwargs.
-        y = state.apply_fn({"params": params}, x_batch, True, rngs={"dropout": dropout_train_key})
+        y = state.apply_fn({"params": params}, x_batch, True, rngs=rngs)
         y_loss = state.loss_fn(y_batch, y)
         return jnp.sum(y_loss)
 
@@ -96,7 +128,7 @@ def validation_step(
     return metrics
 
 
-@functools.partial(jax.pmap, axis_name="i")
+@partial(jax.pmap, axis_name="i", donate_argnums=[0])
 def distributed_train_step(
     state: TrainStateContainer,
     x_batch: InputStruct,
@@ -129,7 +161,7 @@ def distributed_train_step(
     return state, metrics
 
 
-@functools.partial(jax.pmap, axis_name="i")
+@partial(jax.pmap, axis_name="i", donate_argnums=[0])
 def distributed_validation_step(
     state: TrainStateContainer,
     x_batch: InputStruct,
@@ -207,9 +239,15 @@ def make_optimizer(
 
     """
     learning_rate = optax.warmup_cosine_decay_schedule(
-        1.0, 2.0, warmup_steps=int(num_training_steps * 0.2), decay_steps=int(num_training_steps * 0.8), end_value=0.1
+        init_value=config.init_lr,
+        peak_value=config.peak_lr,
+        warmup_steps=int(num_training_steps * config.warmup_steps),
+        decay_steps=int(num_training_steps * config.decay_steps),
+        end_value=config.end_lr,
     )
-    tx = optax.contrib.mechanize(optax.lion(learning_rate))
+    tx = optax.lion(learning_rate)
+    if config.mechanize:
+        tx = optax.contrib.mechanize(tx)
 
     if config.clipnorm != 0:
         tx = optax.chain(optax.adaptive_grad_clip(config.clipnorm), tx)
@@ -220,7 +258,10 @@ def make_optimizer(
     return tx
 
 
-def restore_optimizer_state(opt_state: T, restored: Mapping[str, ...]) -> T:
+TX = TypeVar("TX", bound=optax.GradientTransformation)
+
+
+def restore_optimizer_state(opt_state: TX, restored: Mapping[str, ...]) -> TX:
     """Restore optimizer state from loaded checkpoint (or .msgpack file)."""
     return tree_util.tree_unflatten(tree_util.tree_structure(opt_state), tree_util.tree_leaves(restored))
 

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import functools
+from functools import partial
 from typing import TYPE_CHECKING, Sequence, Tuple, Union
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import struct
-from jax import lax
 from jaxtyping import Array, Float, Int, jaxtyped
 
 if TYPE_CHECKING:
@@ -71,7 +70,11 @@ class GatedLinearUnit(nn.Module):
             dense = TimeDistributed(dense)
             activation = TimeDistributed(activation)
 
-        x_pre_activation = dense(x)
+        try:
+            x_pre_activation = dense(x)
+        except FloatingPointError as e:
+            print(x)
+            raise
         x_gated = activation(x)
         x = x_pre_activation * x_gated
         return x, x_gated
@@ -398,7 +401,8 @@ class DecoderBlock(nn.Module):
             dropout_rate=self.attention_dropout_rate,
             # We probably can set decode=True during inference.
             # decode=not training,
-            attention_fn=self.attention_fn,
+            # attention_fn=dot_product_attention,
+            normalize_qk=True,
         )(inputs, mask=mask, deterministic=not training)
         x = x.astype(self.dtype)
         x, _ = GatedLinearUnit(
@@ -410,46 +414,6 @@ class DecoderBlock(nn.Module):
             latent_dim=self.latent_dim, dropout_rate=self.dropout_rate, time_distributed=True, dtype=self.dtype
         )(x, training=training)
         return decoded
-
-    @property
-    def attention_fn(self):
-        """
-        We force attention computations to be in f32 and high precision, to avoid f16 overflow.
-        After we cast it back to main compute dtype.
-
-        """
-
-        attention_dtype = jnp.float32 if self.dtype == jnp.float16 else self.dtype
-        attention_precision = lax.Precision.HIGH if self.dtype == jnp.float16 else lax.Precision.DEFAULT
-
-        def fn(
-            query,
-            key,
-            value,
-            bias=None,
-            mask=None,
-            broadcast_dropout=True,
-            dropout_rng=None,
-            dropout_rate=0.0,
-            deterministic=False,
-            dtype=None,
-            precision=None,
-        ):
-            return nn.attention.dot_product_attention(
-                query=query,
-                key=key,
-                value=value,
-                bias=bias,
-                mask=mask,
-                broadcast_dropout=broadcast_dropout,
-                dropout_rng=dropout_rng,
-                dropout_rate=dropout_rate,
-                deterministic=deterministic,
-                dtype=attention_dtype,
-                precision=attention_precision,
-            ).astype(self.dtype)
-
-        return fn
 
 
 # -------------------------------------------------------------------------------------------------------------
@@ -518,12 +482,12 @@ class StaticContextStruct:
 # -------------------------------------------------------------------------------------------------------------
 
 
-@jax.jit
+@partial(jax.jit, inline=True)
 def identity(arr: jnp.ndarray) -> jnp.ndarray:
     return jnp.array(arr)
 
 
-@jax.jit
+@partial(jax.jit, inline=True)
 def flatten(arr: jnp.ndarray) -> jnp.ndarray:
     """
     Flattens array preserving batch size
@@ -541,6 +505,46 @@ def flatten(arr: jnp.ndarray) -> jnp.ndarray:
     return new_arr
 
 
-@functools.partial(jax.jit, static_argnames=["dtype"])
+@partial(jax.jit, static_argnames=["dtype"], static_argnums=[1], inline=True)
 def make_causal_mask(x: jnp.ndarray, dtype: ComputeDtype = jnp.float32) -> jnp.ndarray:
     return nn.make_causal_mask(x[..., 0], dtype=dtype)
+
+
+@partial(
+    jax.jit,
+    inline=True,
+    static_argnums=[5, 7, 8, 9, 10],
+    static_argnames=["broadcast_dropout", "dropout_rate", "deterministic", "dtype", "precision"],
+)
+def dot_product_attention(
+    query,
+    key,
+    value,
+    bias=None,
+    mask=None,
+    broadcast_dropout=True,
+    dropout_rng=None,
+    dropout_rate=0.0,
+    deterministic=False,
+    dtype=None,
+    precision=None,
+):
+    """
+    We force attention computations to be in f32 to avoid f16 overflow.
+    After we cast it back to main compute dtype.
+    """
+    attention_dtype = jnp.float32 if dtype == jnp.float16 else dtype
+
+    return nn.attention.dot_product_attention(
+        query=query,
+        key=key,
+        value=value,
+        bias=bias,
+        mask=mask,
+        broadcast_dropout=broadcast_dropout,
+        dropout_rng=dropout_rng,
+        dropout_rate=dropout_rate,
+        deterministic=deterministic,
+        dtype=attention_dtype,
+        precision=precision,
+    ).astype(dtype)

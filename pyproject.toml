@@ -14,15 +14,17 @@ classifiers = [
     "Development Status :: 3 - Alpha",
 ]
 dependencies = [
-    "flax==0.7.2",
-    "jax[cpu]==0.4.14;sys_platform=='darwin'",
-    "jaxlib==0.4.14",
-    "jaxtyping==0.2.20",
+    "flax==0.7.4",
+    "jax==0.4.13;sys_platform=='darwin'",
+    "jax[cpu]==0.4.13;sys_platform=='darwin'",
+    "jaxlib==0.4.13",
+    "jaxtyping==0.2.21",
+    "numpy==1.24.3"
 ]
 [project.optional-dependencies]
 tensorflow = [
-    "tensorflow>=2.12.0<2.13.0; sys_platform == 'linux'",
-    "tensorflow_macos>=2.12.0<2.13.0; sys_platform == 'darwin'",
+    "tensorflow==2.13.0; sys_platform == 'linux'",
+    "tensorflow_macos==2.13.0; sys_platform == 'darwin'",
 ]
 training = [
     "absl-py==1.4.0",
@@ -38,8 +40,7 @@ training = [
 datasets = [
     "toolz==0.12.0",
     "polars==0.18.15",
-    "tqdm==4.65.0",
-    "ordered_set==4.1.0",
+    "tqdm==4.66.1",
     "temporal_fusion_transformer[tensorflow]"
 ]
 favorita = [
@@ -47,14 +48,15 @@ favorita = [
     "kaggle"
 ]
 tests = [
-    "pytest==7.4.0",
+    "pytest",
     "chex==0.1.7"
 ]
 dev = [
     "temporal_fusion_transformer[tests,datasets,training]",
-    "black[jupyter]==23.7.0",
-    "isort==5.12.0",
-    "jupyter==1.0.0"
+    "black[jupyter]",
+    "isort",
+    "jupyter",
+    "ruff"
 ]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"

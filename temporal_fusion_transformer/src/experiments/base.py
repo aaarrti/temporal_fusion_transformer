@@ -62,7 +62,6 @@ class TrainerBase(ABC):
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
-        save_path: str | None = None,
         verbose: bool = True,
         profile: bool = False,
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:

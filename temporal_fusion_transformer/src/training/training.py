@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+from pathlib import Path
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Generator, Literal, Tuple
 
@@ -53,7 +53,7 @@ def train(
     jit_module: bool = False,
     save_path: str | None = None,
     dynamic_scale: DynamicScaleT = None,
-    hooks: HooksT = None,
+    hooks: HooksT = "auto",
     verbose: bool = True,
     profile: bool = False,
     early_stopping: EarlyStoppingT = "auto",
@@ -109,7 +109,7 @@ def train_distributed(
     if prefetch_buffer_size != 0 and device_type == "tpu":
         logging.warning("`prefetch_buffer_size` must be 0 for TPU")
         prefetch_buffer_size = 0
-    
+
     if mixed_precision:
         if device_type == "gpu":
             compute_dtype = jnp.float16
@@ -179,10 +179,12 @@ def _train(
         early_stopping = EarlyStopping(best_metric=999, min_delta=0.1, patience=100)
 
     if hooks == "auto":
+        if tensorboard_logdir is not None:
+            tensorboard_logdir = Path(tensorboard_logdir).joinpath(make_timestamp_tag()).as_posix()
         hooks = make_training_hooks(
             num_training_steps,
             epochs,
-            logdir=f"{tensorboard_logdir}/{make_timestamp_tag()}",
+            logdir=tensorboard_logdir,
             profile=profile,
             save_path=save_path,
             delete_checkpoints_after_training=True,
@@ -193,7 +195,7 @@ def _train(
     model = make_temporal_fusion_transformer(config, data_config, jit_module=jit_module, dtype=compute_dtype)
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
-    dropout_key, params_key = jax.random.split(prng_key, 2)
+    dropout_key, params_key, lstm_key = jax.random.split(prng_key, 3)
 
     if tabulate_model:
         table = model.tabulate(params_key, first_x)
@@ -205,10 +207,10 @@ def _train(
         params=params,
         tx=tx,
         apply_fn=model.apply,
-        dropout_key=dropout_key,
         loss_fn=loss_fn,
         dynamic_scale=dynamic_scale,
         early_stopping=early_stopping,
+        rngs={"dropout": dropout_key, "lstm": lstm_key},
     )
 
     (training_metrics, validation_metrics), params = flax_utils.fit(

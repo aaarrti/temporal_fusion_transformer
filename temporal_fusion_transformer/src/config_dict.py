@@ -76,11 +76,35 @@ if TYPE_CHECKING:
         Attributes
         ----------
         ema:
-            Only applies if `use_ema==True`
+            EMA multiplier, if set to 0 will use gradients directly.
+        clipnorm:
+            The maximum allowed ratio of update norm to parameter norm.
+        init_lr:
+            Initial learning rate.
+        peak_lr:
+            Highest learning rate.
+        end_lr:
+            Learning rate at the end of the schedule.
+        warmup_steps:
+            % of training steps, after which `peak_lr` must be reached.
+        decay_steps:
+            % of training steps, after which `end_lr` must be reached.
+        mechanize:
+            If set to true, will wrap optimizer into `optax.contrib.mechanize`.
+            This optimizer requires no LR fine-tuning, however greatly increases compilation time,
+            and can cause NaN's, default=False.
+
         """
 
+        init_lr: float
+        peak_lr: float
+        warmup_steps: float
+        decay_steps: float
+        decay_alpha: float
+        end_lr: float
         ema: float
         clipnorm: float
+        mechanize: bool
 
     ConfigDict = Union[ml_collections.ConfigDict, _ConfigDictProto]
     OptimizerConfig = Union[ml_collections.ConfigDict, _OptimizerConfig]

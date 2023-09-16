@@ -1,24 +1,28 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-import flax.jax_utils
-import jax.random
-import pytest
-
-import chex
-import jax.numpy as jnp
-from flax.serialization import msgpack_restore
-import ml_collections
 import os
 from contextlib import contextmanager
-import optax
+from typing import TYPE_CHECKING
 
-from temporal_fusion_transformer.src.modeling.tft_model import make_temporal_fusion_transformer
+import chex
+import flax.jax_utils
+import jax.numpy as jnp
+import jax.random
+import ml_collections
+import optax
+import pytest
+from flax.serialization import msgpack_restore
+
 from temporal_fusion_transformer.src.experiments.config import get_config
-from temporal_fusion_transformer.src.training.training_lib import TrainStateContainer
-from temporal_fusion_transformer.src.training.training import make_attention_mesh
 from temporal_fusion_transformer.src.modeling.loss_fn import make_quantile_loss_fn
-from temporal_fusion_transformer.src.training.training_lib import distributed_validation_step
+from temporal_fusion_transformer.src.modeling.tft_model import (
+    make_temporal_fusion_transformer,
+)
+from temporal_fusion_transformer.src.training.training import make_attention_mesh
+from temporal_fusion_transformer.src.training.training_lib import (
+    TrainStateContainer,
+    distributed_validation_step,
+)
 
 if TYPE_CHECKING:
     from temporal_fusion_transformer.src.config_dict import ConfigDict
