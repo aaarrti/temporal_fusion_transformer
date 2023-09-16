@@ -321,12 +321,16 @@ def make_gpu_memory_monitoring(
     if monitor_gpu_memory and cuda_devices_available():
 
         @pool
-        def monitor_fn(*args, **kwargs):
+        def monitor_fn(*args, step: int, **kwargs):
             memory = get_memory_info()
-            logging.info(f"{memory = }")
+            usage_details = [
+                f"{i.used}/{i.total} GB"
+                for i in memory
+            ]
+            logging.info(f"{step = }, memory usage = {usage_details}")
 
         callback = clu.periodic_actions.PeriodicCallback(
-            every_steps=None, every_secs=10 * 60, on_steps=[5, 10], callback_fn=monitor_fn, pass_step_and_time=False
+            every_steps=None, every_secs=10 * 60, on_steps=[0, 5], callback_fn=monitor_fn, pass_step_and_time=False
         )
 
         hooks.on_step_begin.append(callback)
