@@ -140,16 +140,31 @@ class DataPreprocessor(DataPreprocessorBase):
             y_batch: Float["batch 1"]
     ) -> pl.DataFrame:
         
-        # 5 is the index of id input
+        # see config.py for indexes
+        # 1 -> month
+        # 2 -> day
+        # 3 -> hour
+        # 4 ->  day of week
+        # 5 -> id
         encoded_ids = x_batch[..., 5]
         ids = self.preprocessor["categorical"]["id"].inverse_transform(encoded_ids)
-        day = self.preprocessor["categorical"]["day"].inverse_transform(x_batch[...,])
-        day_of_week = self.preprocessor["categorical"]["day_of_week"].inverse_transform(x_batch[...,])
+        day = self.preprocessor["categorical"]["day"].inverse_transform(x_batch[...,2])
+        hour = self.preprocessor["categorical"]["hour"].inverse_transform(x_batch[..., 3])
+        day_of_week = self.preprocessor["categorical"]["day_of_week"].inverse_transform(x_batch[...,4])
+        
+        year_encoded = x_batch[...,0]
         
         df_list = []
         
-        for i in ids:
-            idx = np.argwhere(x_batch[...,5] == i)
+        for i, id_i in enumerate(ids):
+            idx = np.argwhere(encoded_ids == id_i)
+            day_i = day[idx]
+            hour_i = day_i
+            
+            df = pl.DataFrame().with_cols(
+                id=ids[i],
+                
+            )
             
         
         
@@ -174,7 +189,7 @@ class Trainer(TrainerBase):
         data_config = get_config("electricity")
 
         data = load_dataset(
-            f"{data_dir}/electricity",
+            data_dir,
             batch_size,
             prng_seed=config.prng_seed,
             dtype=jnp.float16 if mixed_precision else jnp.float32,
@@ -188,7 +203,6 @@ class Trainer(TrainerBase):
             data_config=data_config,
             mixed_precision=mixed_precision,
             epochs=epochs,
-            tensorboard_logdir="tensorboard/electricity/",
             verbose=verbose,
             save_path=save_path,
         )
