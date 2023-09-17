@@ -134,16 +134,16 @@ def distributed_train_step(
     x_batch: InputStruct,
     y_batch: Float[Array, "batch time n"],
 ) -> Tuple[TrainStateContainer, MetricContainer]:
-    dropout_train_key = jax.random.fold_in(key=state.dropout_key, data=state.step)
+    rngs = tree_util.tree_map(lambda k: jax.random.fold_in(key=k, data=state.step), state.rngs)
 
     def loss_fn(params: FrozenDict) -> float:
-        y = state.apply_fn({"params": params}, x_batch, True, rngs={"dropout": dropout_train_key})
+        y = state.apply_fn({"params": params}, x_batch, True, rngs=rngs)
         y_loss = state.loss_fn(y_batch, y)
         return jnp.sum(y_loss)
 
     if state.dynamic_scale is not None:
         dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn, axis_name="i")(state.params)
-        state.replace(dynamic_scale=dynamic_scale)
+        state = state.replace(dynamic_scale=dynamic_scale)
     else:
         dynamic_scale, is_fin = None, None
         loss, grads = jax.value_and_grad(loss_fn)(state.params)
@@ -161,7 +161,7 @@ def distributed_train_step(
     return state, metrics
 
 
-@partial(jax.pmap, axis_name="i", donate_argnums=[0])
+@partial(jax.pmap, axis_name="i")
 def distributed_validation_step(
     state: TrainStateContainer,
     x_batch: InputStruct,
@@ -239,7 +239,9 @@ def make_optimizer(
 
     """
     learning_rate = optax.cosine_decay_schedule(
-        init_value=config.init_lr, decay_steps=config.decay_steps, alpha=config.alpha
+        init_value=config.init_lr,
+        decay_steps=int(num_training_steps * config.decay_steps),
+        alpha=config.alpha
     )
     tx = optax.lion(learning_rate)
     if config.mechanize:

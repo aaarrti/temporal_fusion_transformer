@@ -177,7 +177,7 @@ class Trainer(TrainerBase):
         verbose: bool = True,
         profile: bool = False,
         device_type: DeviceTypeT = "gpu",
-        prefetch_buffer_size: int = 2,
+        prefetch_buffer_size: int = 0,
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         from temporal_fusion_transformer.src.training.training import train_distributed
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
