@@ -23,7 +23,7 @@ from temporal_fusion_transformer.src.experiments.config import get_config
 from temporal_fusion_transformer.src.experiments.util import (
     deserialize_preprocessor,
     time_series_dataset_from_dataframe,
-    persist_dataset
+    persist_dataset,
 )
 
 if TYPE_CHECKING:
@@ -87,10 +87,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         return Trainer()
 
     def make_dataset(
-        self,
-        data_dir: str,
-        persist: bool = False,
-        save_dir: str | None = None
+        self, data_dir: str, persist: bool = False, save_dir: str | None = None
     ) -> None | Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
         if save_dir is None:
             save_dir = data_dir
@@ -130,16 +127,10 @@ class DataPreprocessor(DataPreprocessorBase):
             targets=_TARGETS,
             id_column=_ID_COLUMN,
             preprocess_fn=self.apply,
-            total_time_steps=self.total_time_steps
-            
+            total_time_steps=self.total_time_steps,
         )
 
-    def inverse_transform(
-            self,
-            x_batch: Float[Array, "batch n"],
-            y_batch: Float["batch 1"]
-    ) -> pl.DataFrame:
-        
+    def inverse_transform(self, x_batch: Float[Array, "batch n"], y_batch: Float["batch 1"]) -> pl.DataFrame:
         # see config.py for indexes
         # 1 -> month
         # 2 -> day
@@ -148,26 +139,22 @@ class DataPreprocessor(DataPreprocessorBase):
         # 5 -> id
         encoded_ids = x_batch[..., 5]
         ids = self.preprocessor["categorical"]["id"].inverse_transform(encoded_ids)
-        day = self.preprocessor["categorical"]["day"].inverse_transform(x_batch[...,2])
+        day = self.preprocessor["categorical"]["day"].inverse_transform(x_batch[..., 2])
         hour = self.preprocessor["categorical"]["hour"].inverse_transform(x_batch[..., 3])
-        day_of_week = self.preprocessor["categorical"]["day_of_week"].inverse_transform(x_batch[...,4])
-        
-        year_encoded = x_batch[...,0]
-        
+        day_of_week = self.preprocessor["categorical"]["day_of_week"].inverse_transform(x_batch[..., 4])
+
+        year_encoded = x_batch[..., 0]
+
         df_list = []
-        
+
         for i, id_i in enumerate(ids):
             idx = np.argwhere(encoded_ids == id_i)
             day_i = day[idx]
             hour_i = day_i
-            
+
             df = pl.DataFrame().with_cols(
                 id=ids[i],
-                
             )
-            
-        
-        
 
 
 class Trainer(TrainerBase):
@@ -259,20 +246,20 @@ _TARGETS = ["power_usage"]
 
 
 if TYPE_CHECKING:
-    
+
     class CategoricalPreprocessorDict(TypedDict):
         day: LabelEncoder
         day_of_week: LabelEncoder
         hour: LabelEncoder
         id: LabelEncoder
         month: LabelEncoder
-    
-    
+
     class PreprocessorDict(TypedDict):
         """
         real and target have keys [MT_001 ... MT_370]
-        
+
         """
+
         real: Mapping[str, StandardScaler]
         target: Mapping[str, StandardScaler]
         categorical: CategoricalPreprocessorDict
@@ -307,7 +294,7 @@ def make_dataset(
 
 def convert_to_parquet(data_dir: str):
     import polars as pl
-    
+
     # FIXME: save in tmp dir
 
     if Path(f"{data_dir}/LD2011_2014.parquet").exists():

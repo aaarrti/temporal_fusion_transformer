@@ -239,9 +239,7 @@ def make_optimizer(
 
     """
     learning_rate = optax.cosine_decay_schedule(
-        init_value=config.init_lr,
-        decay_steps=int(num_training_steps * config.decay_steps),
-        alpha=config.alpha
+        init_value=config.init_lr, decay_steps=int(num_training_steps * config.decay_steps), alpha=config.alpha
     )
     tx = optax.lion(learning_rate)
     if config.mechanize:

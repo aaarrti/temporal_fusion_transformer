@@ -169,11 +169,11 @@ def time_series_dataset_from_dataframe(
 
 
 def persist_dataset(
-        training_ds: tf.data.Dataset,
-        validation_ds: tf.data.Dataset,
-        test_df: pl.DataFrame,
-        preprocessor: Mapping[str, ...],
-        save_dir: str
+    training_ds: tf.data.Dataset,
+    validation_ds: tf.data.Dataset,
+    test_df: pl.DataFrame,
+    preprocessor: Mapping[str, ...],
+    save_dir: str,
 ):
     logging.info("Saving (preprocessed) train split")
     training_ds.save(f"{save_dir}/training", compression="GZIP")
@@ -183,4 +183,3 @@ def persist_dataset(
     test_df.write_parquet(f"{save_dir}/test.parquet")
     logging.info("Saving preprocessor state")
     serialize_preprocessor(preprocessor, save_dir)
-    
