@@ -39,8 +39,6 @@ class MultiHeadDotProductAttention(Module):
     # Deprecated, will be removed.
     qkv_dot_general: DotGeneralT = lax.dot_general
     out_dot_general: DotGeneralT = lax.dot_general
-    qkv_dot_general_cls: Any = None
-    out_dot_general_cls: Any = None
 
     @compact
     def __call__(
@@ -85,7 +83,6 @@ class MultiHeadDotProductAttention(Module):
             use_bias=self.use_bias,
             precision=self.precision,
             dot_general=self.qkv_dot_general,
-            dot_general_cls=self.qkv_dot_general_cls,
         )
         # project inputs_q to multi-headed q/k/v
         # dimensions are then [batch..., length, n_heads, n_features_per_head]
@@ -179,7 +176,6 @@ class MultiHeadDotProductAttention(Module):
             param_dtype=self.param_dtype,
             precision=self.precision,
             dot_general=self.out_dot_general,
-            dot_general_cls=self.out_dot_general_cls,
             name="out",  # type: ignore[call-arg]
         )(x)
         return out
