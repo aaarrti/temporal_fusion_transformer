@@ -102,7 +102,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             cutoff_days=self.cutoff_days,
         )
         if persist:
-            persist_dataset(training_ds, validation_ds, test_df, preprocessor, save_dir)
+            persist_dataset(training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir)
         else:
             return training_ds, validation_ds, test_df, preprocessor
 
