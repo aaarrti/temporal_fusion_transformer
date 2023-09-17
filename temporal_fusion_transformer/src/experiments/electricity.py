@@ -228,7 +228,7 @@ class Trainer(TrainerBase):
         num_devices = jax.device_count()
 
         data = load_dataset(
-            f"{data_dir}/electricity",
+            data_dir,
             batch_size * num_devices,
             prng_seed=config.prng_seed,
             dtype=jnp.float16 if mixed_precision else jnp.float32,
@@ -307,6 +307,8 @@ def make_dataset(
 
 def convert_to_parquet(data_dir: str):
     import polars as pl
+    
+    # FIXME: save in tmp dir
 
     if Path(f"{data_dir}/LD2011_2014.parquet").exists():
         logging.info(f"Found {data_dir}/LD2011_2014.parquet locally, will skip download.")
