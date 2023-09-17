@@ -159,7 +159,9 @@ def make_checkpoint_hooks(
     )
     mngr = CheckpointManager(
         checkpoint_directory,
-        AsyncCheckpointer(PyTreeCheckpointHandler(use_ocdbt=True, write_tree_metadata=True)),
+        #AsyncCheckpointer(PyTreeCheckpointHandler(use_ocdbt=True, write_tree_metadata=True)),
+        # FIXME: for some reason TPU runtime on kaggle fails here
+        AsyncCheckpointer(PyTreeCheckpointHandler(use_ocdbt=True)),
         options,
     )
 
