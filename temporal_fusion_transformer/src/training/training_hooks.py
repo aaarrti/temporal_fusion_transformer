@@ -149,6 +149,7 @@ def make_checkpoint_hooks(
 
     options = CheckpointManagerOptions(
         save_interval_steps=200,
+        # FIXME: for some reason TPU runtime on kaggle fails here
         # save_on_steps=[num_training_steps * i for i in range(1, epochs)],
         max_to_keep=5,
         cleanup_tmp_directories=True,
