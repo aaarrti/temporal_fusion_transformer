@@ -5,6 +5,7 @@ import os
 import sys
 import platform
 from pathlib import Path
+from functools import partial
 from traceback import format_exception
 from typing import TypedDict, TYPE_CHECKING
 from dataclasses import dataclass
@@ -148,7 +149,7 @@ def make_checkpoint_hooks(
 
     options = CheckpointManagerOptions(
         save_interval_steps=200,
-        save_on_steps=[num_training_steps * i for i in range(1, epochs)],
+        # save_on_steps=[num_training_steps * i for i in range(1, epochs)],
         max_to_keep=5,
         cleanup_tmp_directories=True,
         create=True,

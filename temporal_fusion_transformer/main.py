@@ -97,7 +97,7 @@ def train_model():
         raise RuntimeError("this is unexpected")
 
     trainer.run(
-        data_dir=FLAGS.data_dir,
+        data_dir=f"{FLAGS.data_dir}/{experiment_name}",
         epochs=FLAGS.epochs,
         batch_size=FLAGS.batch_size,
         config=CONFIG.value,
