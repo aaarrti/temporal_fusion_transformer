@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Literal, Mapping, Tuple, TypedDict, overload, Callable
+from typing import TYPE_CHECKING, List, Mapping, Tuple, TypedDict, Callable
 
 import jax
 import jax.numpy as jnp
@@ -21,8 +21,8 @@ from temporal_fusion_transformer.src.experiments.base import (
 from temporal_fusion_transformer.src.experiments.config import get_config
 from temporal_fusion_transformer.src.experiments.util import (
     deserialize_preprocessor,
-    serialize_preprocessor,
     time_series_dataset_from_dataframe,
+    persist_dataset
 )
 
 if TYPE_CHECKING:
@@ -85,32 +85,30 @@ class Electricity(MultiHorizonTimeSeriesDataset):
     def trainer(self) -> Trainer:
         return Trainer()
 
-    @overload
-    def make_dataset(self, data_dir: str, mode: Literal["persist"]) -> None:
-        ...
-
-    @overload
     def make_dataset(
-        self, data_dir: str, mode: Literal["return"]
-    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
-        ...
-
-    def make_dataset(
-        self, data_dir: str, mode: Literal["persist", "return"]
+        self,
+        data_dir: str,
+        persist: bool = False,
+        save_dir: str | None = None
     ) -> None | Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
-        return make_dataset(
+        if save_dir is None:
+            save_dir = data_dir
+        training_ds, validation_ds, test_df, preprocessor = make_dataset(
             data_dir,
             validation_boundary=self.validation_boundary,
             test_boundary=self.test_boundary,
             total_time_steps=self.total_time_steps,
-            mode=mode,
             split_overlap_days=self.split_overlap_days,
             cutoff_days=self.cutoff_days,
         )
+        if persist:
+            persist_dataset(training_ds, validation_ds, test_df, preprocessor, save_dir)
+        else:
+            return training_ds, validation_ds, test_df, preprocessor
 
 
 class DataPreprocessor(DataPreprocessorBase):
-    def __init__(self, preprocessor: PreprocessorDict, total_time_steps: int = 192):
+    def __init__(self, preprocessor: PreprocessorDict, total_time_steps:        int = 192):
         self.preprocessor = preprocessor
         self.total_time_steps = total_time_steps
 
@@ -218,32 +216,6 @@ class PreprocessorDict(TypedDict):
     categorical: Mapping[str, LabelEncoder]
 
 
-@overload
-def make_dataset(
-    data_dir: str,
-    validation_boundary: datetime,
-    test_boundary: datetime,
-    split_overlap_days: int,
-    cutoff_days: Tuple[datetime, datetime],
-    total_time_steps: int,
-    mode: Literal["persist"],
-) -> None:
-    ...
-
-
-@overload
-def make_dataset(
-    data_dir: str,
-    validation_boundary: datetime,
-    test_boundary: datetime,
-    split_overlap_days: int,
-    cutoff_days: Tuple[datetime, datetime],
-    total_time_steps: int,
-    mode: Literal["return"],
-) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
-    ...
-
-
 def make_dataset(
     data_dir: str,
     validation_boundary: datetime = datetime(2014, 8, 8),
@@ -251,7 +223,6 @@ def make_dataset(
     split_overlap_days: int = 7,
     cutoff_days: Tuple[datetime, datetime] = (datetime(2014, 1, 1), datetime(2014, 9, 8)),
     total_time_steps: int = 192,
-    mode: Literal["persist", "return"] = "return",
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor] | None:
     convert_to_parquet(data_dir)
     df = read_parquet(data_dir, cutoff_days=cutoff_days)
@@ -269,13 +240,7 @@ def make_dataset(
     )
     training_time_series: tf.data.Dataset = make_dataset_fn(training_df)
     validation_time_series: tf.data.Dataset = make_dataset_fn(validation_df)
-    if mode == "return":
-        return training_time_series, validation_time_series, test_df, DataPreprocessor(preprocessor)
-
-    training_time_series.save(f"{data_dir}/training", compression="GZIP")
-    validation_time_series.save(f"{data_dir}/validation", compression="GZIP")
-    test_df.write_parquet(f"{data_dir}/test.parquet")
-    serialize_preprocessor(preprocessor, data_dir)
+    return training_time_series, validation_time_series, test_df, DataPreprocessor(preprocessor)
 
 
 def convert_to_parquet(data_dir: str):

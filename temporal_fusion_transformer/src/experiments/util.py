@@ -166,3 +166,17 @@ def time_series_dataset_from_dataframe(
         time_series_list.append(time_series_i)
 
     return functoolz.reduce(lambda a, b: a.concatenate(b), time_series_list)
+
+
+def persist_dataset(
+        training_ds: tf.data.Dataset,
+        validation_ds: tf.data.Dataset,
+        test_df: pl.DataFrame,
+        preprocessor: Mapping[str, ...],
+        save_dir: str
+):
+    training_ds.save(f"{save_dir}/training", compression="GZIP")
+    validation_ds.save(f"{save_dir}/validation", compression="GZIP")
+    test_df.write_parquet(f"{save_dir}/test.parquet")
+    serialize_preprocessor(preprocessor, save_dir)
+    
