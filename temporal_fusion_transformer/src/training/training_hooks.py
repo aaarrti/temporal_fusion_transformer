@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import os
+import sys
 import platform
 from pathlib import Path
 from traceback import format_exception
@@ -49,8 +50,13 @@ class CheckpointManager(orbax.checkpoint.CheckpointManager):
 
 pool = clu.asynclib.Pool()
 
+if sys.version_info >= (3, 10):
+    dataclass_fn = partial(dataclass, slots=True)
+else:
+    dataclass_fn = dataclass
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass_fn(frozen=True)
 class HooksConfig:
     logdir: str | None
     profile: bool

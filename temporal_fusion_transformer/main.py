@@ -20,6 +20,7 @@ import temporal_fusion_transformer as tft
 
 jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
+jax.config.update("jax_softmax_custom_jvp", True)
 # jax.config.update("jax_default_matmul_precision", "tensorfloat32")
 # jax.config.update("jax_log_compiles", True)
 # jax.config.update("jax_disable_jit", True)

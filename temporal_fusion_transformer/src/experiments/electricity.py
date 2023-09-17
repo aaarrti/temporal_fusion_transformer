@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from absl import logging
 from tqdm.auto import tqdm
+from jaxtyping import Float, Array
 
 from temporal_fusion_transformer.src.experiments.base import (
     DataPreprocessorBase,
@@ -108,7 +109,9 @@ class Electricity(MultiHorizonTimeSeriesDataset):
 
 
 class DataPreprocessor(DataPreprocessorBase):
-    def __init__(self, preprocessor: PreprocessorDict, total_time_steps:        int = 192):
+    def __init__(self, preprocessor: PreprocessorDict, total_time_steps: int | None = None):
+        if total_time_steps is None:
+            total_time_steps = get_config("electricity").total_time_steps
         self.preprocessor = preprocessor
         self.total_time_steps = total_time_steps
 
@@ -118,13 +121,38 @@ class DataPreprocessor(DataPreprocessorBase):
         return DataPreprocessor(preprocessor)
 
     def apply(self, df: pl.DataFrame) -> pl.DataFrame:
-        pass
+        return apply_preprocessor(df, self.preprocessor)
 
     def convert_dataframe_to_tf_dataset(self, df: pl.DataFrame) -> tf.data.Dataset:
-        return convert_dataframe_to_tf_dataset(df, self.preprocessor, total_time_steps=self.total_time_steps)
+        return time_series_dataset_from_dataframe(
+            df,
+            inputs=_INPUTS,
+            targets=_TARGETS,
+            id_column=_ID_COLUMN,
+            preprocess_fn=self.apply,
+            total_time_steps=self.total_time_steps
+            
+        )
 
-    def inverse_transform(self, arr: np.ndarray) -> np.ndarray:
-        pass
+    def inverse_transform(
+            self,
+            x_batch: Float[Array, "batch n"],
+            y_batch: Float["batch 1"]
+    ) -> pl.DataFrame:
+        
+        # 5 is the index of id input
+        encoded_ids = x_batch[..., 5]
+        ids = self.preprocessor["categorical"]["id"].inverse_transform(encoded_ids)
+        day = self.preprocessor["categorical"]["day"].inverse_transform(x_batch[...,])
+        day_of_week = self.preprocessor["categorical"]["day_of_week"].inverse_transform(x_batch[...,])
+        
+        df_list = []
+        
+        for i in ids:
+            idx = np.argwhere(x_batch[...,5] == i)
+            
+        
+        
 
 
 class Trainer(TrainerBase):
@@ -209,11 +237,31 @@ class Trainer(TrainerBase):
 
 # -------------- actual implementations -----------------
 
+_ID_COLUMN = "id"
+_REAL_INPUTS = ["year"]
+_CATEGORICAL_INPUTS = ["month", "day", "hour", "day_of_week"]
+_INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
+_TARGETS = ["power_usage"]
 
-class PreprocessorDict(TypedDict):
-    real: Mapping[str, StandardScaler]
-    target: Mapping[str, StandardScaler]
-    categorical: Mapping[str, LabelEncoder]
+
+if TYPE_CHECKING:
+    
+    class CategoricalPreprocessorDict(TypedDict):
+        day: LabelEncoder
+        day_of_week: LabelEncoder
+        hour: LabelEncoder
+        id: LabelEncoder
+        month: LabelEncoder
+    
+    
+    class PreprocessorDict(TypedDict):
+        """
+        real and target have keys [MT_001 ... MT_370]
+        
+        """
+        real: Mapping[str, StandardScaler]
+        target: Mapping[str, StandardScaler]
+        categorical: CategoricalPreprocessorDict
 
 
 def make_dataset(
@@ -223,7 +271,7 @@ def make_dataset(
     split_overlap_days: int = 7,
     cutoff_days: Tuple[datetime, datetime] = (datetime(2014, 1, 1), datetime(2014, 9, 8)),
     total_time_steps: int = 192,
-) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor] | None:
+) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
     convert_to_parquet(data_dir)
     df = read_parquet(data_dir, cutoff_days=cutoff_days)
     logging.info(f"{df.columns = }")
@@ -232,10 +280,10 @@ def make_dataset(
 
     make_dataset_fn: Callable[[pl.DataFrame], tf.data.Dataset] = partial(
         time_series_dataset_from_dataframe,
-        inputs=["year"] + ["month", "day", "hour", "day_of_week"] + ["id"],
-        targets=["power_usage"],
+        inputs=_INPUTS,
+        targets=_TARGETS,
         total_time_steps=total_time_steps,
-        id_column="id",
+        id_column=_ID_COLUMN,
         preprocess_fn=partial(apply_preprocessor, preprocessor=preprocessor),
     )
     training_time_series: tf.data.Dataset = make_dataset_fn(training_df)
@@ -342,10 +390,10 @@ def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
     label_encoders["id"].fit(df["id"].to_numpy())
 
     for i, sub_df in tqdm(df.groupby("id"), desc="Training scalers", total=370):
-        target_scalers[i].fit(df[["power_usage"]].to_numpy(order="c"))
-        real_scalers[i].fit(df[["year"]].to_numpy(order="c"))
+        target_scalers[i].fit(df[_TARGETS].to_numpy(order="c"))
+        real_scalers[i].fit(df[_REAL_INPUTS].to_numpy(order="c"))
 
-    for i in tqdm(["month", "day", "hour", "day_of_week"], desc="Fitting label encoders"):
+    for i in tqdm(_CATEGORICAL_INPUTS, desc="Fitting label encoders"):
         label_encoders[i].fit(df[i].to_numpy())
 
     return {"real": dict(**real_scalers), "target": dict(**target_scalers), "categorical": dict(**label_encoders)}
@@ -356,28 +404,26 @@ def apply_preprocessor(
     preprocessor: PreprocessorDict,
 ) -> pl.DataFrame:
     # We don't declare them as constants, to avoid depending on external state.
-    real_inputs = ["year"]
-    targets = ["power_usage"]
     lf_list = []
 
     for i, sub_df in tqdm(df.groupby("id"), total=370, desc="Applying scalers..."):
         sub_df: pl.DataFrame
         sub_lf: pl.LazyFrame = sub_df.lazy()
 
-        x_real = df[real_inputs].to_numpy(order="c")
-        x_target = df[targets].to_numpy(order="c")
+        x_real = df[_REAL_INPUTS].to_numpy(order="c")
+        x_target = df[_TARGETS].to_numpy(order="c")
 
         x_real = preprocessor["real"][i].transform(x_real)
         x_target = preprocessor["target"][i].transform(x_target)
 
         sub_lf = sub_lf.with_columns(
-            [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real, real_inputs)]
-        ).with_columns(pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target, targets))
+            [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real, _REAL_INPUTS)]
+        ).with_columns(pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target, _TARGETS))
         lf_list.append(sub_lf)
 
     df: pl.DataFrame = pl.concat(lf_list).collect()
 
-    for i in tqdm(["month", "day", "hour", "day_of_week"], desc="Applying label encoders..."):
+    for i in tqdm(_CATEGORICAL_INPUTS, desc="Applying label encoders..."):
         x = df[i].to_numpy()
         x = preprocessor["categorical"][i].transform(x)
         df = df.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))

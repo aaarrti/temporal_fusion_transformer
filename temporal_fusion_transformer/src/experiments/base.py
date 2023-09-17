@@ -48,7 +48,7 @@ class DataPreprocessorBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def inverse_transform(self, arr: np.ndarray) -> np.ndarray:
+    def inverse_transform(self, *args, **kwargs) -> np.ndarray:
         raise NotImplementedError
 
 

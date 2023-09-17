@@ -175,8 +175,12 @@ def persist_dataset(
         preprocessor: Mapping[str, ...],
         save_dir: str
 ):
+    logging.info("Saving (preprocessed) train split")
     training_ds.save(f"{save_dir}/training", compression="GZIP")
+    logging.info("Saving (preprocessed) validation split")
     validation_ds.save(f"{save_dir}/validation", compression="GZIP")
+    logging.info("Saving (not preprocessed) test split (as parquet)")
     test_df.write_parquet(f"{save_dir}/test.parquet")
+    logging.info("Saving preprocessor state")
     serialize_preprocessor(preprocessor, save_dir)
     
