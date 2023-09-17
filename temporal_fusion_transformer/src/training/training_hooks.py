@@ -6,6 +6,7 @@ import platform
 from pathlib import Path
 from traceback import format_exception
 from typing import TypedDict, TYPE_CHECKING
+from dataclasses import dataclass
 
 import clu.metric_writers
 import clu.periodic_actions
@@ -49,6 +50,38 @@ class CheckpointManager(orbax.checkpoint.CheckpointManager):
 pool = clu.asynclib.Pool()
 
 
+@dataclass(frozen=True, slots=True)
+class HooksConfig:
+    logdir: str | None
+    profile: bool
+    checkpoint_directory: str | None
+    delete_checkpoints_after_training: bool
+    report_progress_frequency: int
+    log_metrics_frequency: int
+    monitor_exception: bool
+    save_path: str
+    monitor_gpu_memory: bool
+
+    def make_training_hooks(
+        self,
+        num_training_steps: int,
+        epochs: int,
+    ) -> TrainingHooks:
+        return make_training_hooks(
+            num_training_steps=num_training_steps,
+            epochs=epochs,
+            checkpoint_directory=self.checkpoint_directory,
+            logdir=self.logdir,
+            log_metrics_frequency=self.log_metrics_frequency,
+            report_progress_frequency=self.report_progress_frequency,
+            profile=self.profile,
+            monitor_exception=self.monitor_exception,
+            monitor_gpu_memory=self.monitor_gpu_memory,
+            save_path=self.save_path,
+            delete_checkpoints_after_training=self.delete_checkpoints_after_training,
+        )
+
+
 def make_training_hooks(
     num_training_steps: int,
     epochs: int,
@@ -57,7 +90,7 @@ def make_training_hooks(
     checkpoint_directory: str = "checkpoints",
     delete_checkpoints_after_training: bool = False,
     report_progress_frequency: int = 50,
-    log_metrics_frequency: bool = 100,
+    log_metrics_frequency: int = 100,
     monitor_exception: bool = True,
     save_path: str | None = None,
     monitor_gpu_memory: bool = True,
@@ -78,16 +111,13 @@ def make_training_hooks(
             delete_checkpoints_after_training=delete_checkpoints_after_training,
             save_path=save_path,
         ),
-        make_gpu_memory_monitoring(monitor_gpu_memory),
-        make_profiler_hooks(profile, logdir),
+        make_gpu_memory_monitoring_hook(monitor_gpu_memory),
+        make_profiler_hook(profile, logdir),
+        make_early_stopping_hook(),
+        make_fp_error_hook(monitor_exception),
     ]
 
     hooks = combine_hooks(*hooks_list)
-
-    if monitor_exception:
-        hooks.on_error.append(persist_nan_causing_args)
-
-    hooks.on_step_end.append(maybe_replace_early_stopping)
 
     def close_pool(*args, **kwargs):
         pool.join()
@@ -139,7 +169,7 @@ def make_checkpoint_hooks(
 
         restored_optimizer = restore_optimizer_state(training_state.opt_state, restored_dict["opt_state"])
         return training_state.replace(
-            dropout_key=restored_dict["dropout_key"],
+            rngs=restored_dict["rngs"],
             params=restored_dict["params"],
             step=restored_dict["step"],
             dynamic_scale=restored_dict["dynamic_scale"],
@@ -149,20 +179,18 @@ def make_checkpoint_hooks(
     hooks.on_training_begin.append(restore_checkpoint)
     hooks.on_step_end.append(checkpoint_fn)
 
+    @pool
+    def delete_checkpoints(*args, **kwargs):
+        for step in mngr.all_steps():
+            mngr.delete(step)
+
     if delete_checkpoints_after_training:
-
-        @pool
-        def delete_checkpoints(*args, **kwargs):
-            for step in mngr.all_steps():
-                mngr.delete(step)
-
         hooks.on_training_end.append(delete_checkpoints)
 
+    def save_weight_fn(training_state: TrainStateContainer):
+        save_as_msgpack(training_state.params, save_path)
+
     if save_path is not None:
-
-        def save_weight_fn(training_state: TrainStateContainer):
-            save_as_msgpack(training_state.params, save_path)
-
         hooks.on_training_end.append(save_weight_fn)
 
     return hooks
@@ -180,19 +208,18 @@ def make_metrics_hooks(
     hooks = TrainingHooks()
     running_on_linux = platform.system().lower() == "linux"
 
+    @pool
+    def write_training_metrics_fn(step: int, *args, training_metrics: MetricContainer, **kwargs):
+        training_writer.write_scalars(step, training_metrics.compute())
+
+    write_training_metrics = clu.periodic_actions.PeriodicCallback(
+        every_steps=10,
+        callback_fn=write_training_metrics_fn,
+        execute_async=True,
+    )
+
     if running_on_linux:
-        training_writer = create_writer(logdir, "training")
-
-        @pool
-        def write_training_metrics_fn(step: int, *args, training_metrics: MetricContainer, **kwargs):
-            training_writer.write_scalars(step, training_metrics.compute())
-
-        write_training_metrics = clu.periodic_actions.PeriodicCallback(
-            every_steps=10,
-            callback_fn=write_training_metrics_fn,
-            execute_async=True,
-        )
-
+        training_writer = _create_writer(logdir, "training")
         hooks.on_step_end.append(write_training_metrics)
 
     training_logger = create_default_writer(None, just_logging=True, collection="training")
@@ -233,28 +260,26 @@ def make_metrics_hooks(
     return hooks
 
 
-def make_profiler_hooks(profile: bool, logdir: str) -> TrainingHooks:
+def make_profiler_hook(profile: bool, logdir: str) -> TrainingHooks:
     hooks = TrainingHooks()
 
-    if not profile:
-        return hooks
+    profiler = clu.periodic_actions.Profile(
+        logdir=logdir,
+        profile_duration_ms=None,
+        every_secs=None,
+        first_profile=5,
+        every_steps=200,
+    )
 
-    if platform.system().lower() != "linux":
-        logging.warning("Profiling is only supported for linux hosts.")
-    else:
-        profiler = clu.periodic_actions.Profile(
-            logdir=logdir,
-            profile_duration_ms=None,
-            every_secs=None,
-            first_profile=5,
-            every_steps=200,
-        )
+    @pool
+    def call_profiler(step: int, **kwargs):
+        profiler(step)
 
-        @pool
-        def call_profiler(step: int, **kwargs):
-            profiler(step)
-
-        hooks.on_step_begin.append(call_profiler)
+    if profile:
+        if platform.system().lower() != "linux":
+            logging.warning("Profiling is only supported for linux hosts.")
+        else:
+            hooks.on_step_begin.append(call_profiler)
 
     return hooks
 
@@ -263,76 +288,82 @@ def make_garbage_collection_hooks() -> TrainingHooks:
     """We need to manually call python GC to free up XLA memory. See https://github.com/google/jax/issues/14882"""
 
     @pool
-    def func(*args, **kwargs):
+    def gc_func(*args, **kwargs):
         gc.collect()
 
     periodic_action = clu.periodic_actions.PeriodicCallback(
-        every_steps=100, every_secs=5 * 60, execute_async=False, callback_fn=func
+        every_steps=100, every_secs=5 * 60, execute_async=False, callback_fn=gc_func
     )
 
     hooks = TrainingHooks()
     hooks.on_step_end.append(periodic_action)
-    hooks.on_epoch_end.append(func)
+    hooks.on_epoch_end.append(gc_func)
     return hooks
 
 
-def persist_nan_causing_args(
-    training_state: TrainStateContainer,
-    x_batch: InputStruct,
-    y_batch: Float[Array, "batch time n"],
-    step_type: StepType,
-    exception: Exception,
-):
-    if isinstance(exception, FloatingPointError):
-        logging.error(
-            f"Step number {int(training_state.step)} failed with on {step_type}_step with {exception} for {x_batch = }, {y_batch = }"
-        )
-        ex_str = format_exception(exception)
-        data = {
-            "state": training_state,
-            "x_batch": x_batch,
-            "y_batch": y_batch,
-            "exception": ex_str,
-            "step_type": step_type,
-        }
-        save_as_msgpack(data, "fp_error_data.msgpack")
-    raise
+def make_fp_error_hook(monitor_error: bool) -> TrainingHooks:
+    def persist_nan_causing_args(
+        training_state: TrainStateContainer,
+        x_batch: InputStruct,
+        y_batch: Float[Array, "batch time n"],
+        step_type: StepType,
+        exception: Exception,
+    ):
+        if isinstance(exception, FloatingPointError):
+            logging.error(
+                f"Step number {int(training_state.step)} failed with on {step_type}_step with {exception} for {x_batch = }, {y_batch = }"
+            )
+            ex_str = format_exception(exception)
+            data = {
+                "state": training_state,
+                "x_batch": x_batch,
+                "y_batch": y_batch,
+                "exception": ex_str,
+                "step_type": step_type,
+            }
+            save_as_msgpack(data, "fp_error_data.msgpack")
+        raise
+
+    hooks = TrainingHooks()
+    if monitor_error:
+        hooks.on_error.append(persist_nan_causing_args)
+    return hooks
 
 
-def create_writer(logdir: str, collection: str) -> SummaryWriter:
+def _create_writer(logdir: str, collection: str) -> SummaryWriter:
     logdir = epath.Path(logdir)
     logdir /= collection
     return SummaryWriter(os.fspath(logdir))
 
 
-def maybe_replace_early_stopping(
-    *args, training_state: TrainStateContainer, training_metrics: MetricContainer, **kwargs
-) -> LogsDict | None:
-    if training_state.early_stopping is not None:
-        early_stopping = training_state.early_stopping.update(training_metrics.compute()["loss"])[1]
-        return {"training_state": training_state.replace(early_stopping=early_stopping)}
+def make_early_stopping_hook() -> TrainingHooks:
+    def replace_early_stopping(
+        *args, training_state: TrainStateContainer, training_metrics: MetricContainer, **kwargs
+    ) -> LogsDict | None:
+        if training_state.early_stopping is not None:
+            early_stopping = training_state.early_stopping.update(training_metrics.compute()["loss"])[1]
+            return {"training_state": training_state.replace(early_stopping=early_stopping)}
+
+    hooks = TrainingHooks()
+    hooks.on_step_end.append(replace_early_stopping)
+
+    return hooks
 
 
-def make_gpu_memory_monitoring(
-    monitor_gpu_memory: bool,
-) -> TrainingHooks:
+def make_gpu_memory_monitoring_hook(monitor_gpu_memory: bool) -> TrainingHooks:
     hooks = TrainingHooks()
 
+    @pool
+    def monitor_fn(*args, step: int, **kwargs):
+        memory = get_memory_info()
+        usage_details = [f"{float(i.used):.2f}/{i.total} GB" for i in memory]
+        logging.info(f"{step = }, memory usage = {usage_details}")
+
+    callback = clu.periodic_actions.PeriodicCallback(
+        every_steps=None, every_secs=10 * 60, on_steps=[0, 5], callback_fn=monitor_fn, pass_step_and_time=True
+    )
+
     if monitor_gpu_memory and cuda_devices_available():
-
-        @pool
-        def monitor_fn(*args, step: int, **kwargs):
-            memory = get_memory_info()
-            usage_details = [
-                f"{i.used}/{i.total} GB"
-                for i in memory
-            ]
-            logging.info(f"{step = }, memory usage = {usage_details}")
-
-        callback = clu.periodic_actions.PeriodicCallback(
-            every_steps=None, every_secs=10 * 60, on_steps=[0, 5], callback_fn=monitor_fn, pass_step_and_time=False
-        )
-
         hooks.on_step_begin.append(callback)
 
     return hooks

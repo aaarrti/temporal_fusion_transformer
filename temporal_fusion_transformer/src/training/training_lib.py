@@ -238,12 +238,8 @@ def make_optimizer(
     -------
 
     """
-    learning_rate = optax.warmup_cosine_decay_schedule(
-        init_value=config.init_lr,
-        peak_value=config.peak_lr,
-        warmup_steps=int(num_training_steps * config.warmup_steps),
-        decay_steps=int(num_training_steps * config.decay_steps),
-        end_value=config.end_lr,
+    learning_rate = optax.cosine_decay_schedule(
+        init_value=config.init_lr, decay_steps=config.decay_steps, alpha=config.alpha
     )
     tx = optax.lion(learning_rate)
     if config.mechanize:
@@ -258,7 +254,7 @@ def make_optimizer(
     return tx
 
 
-TX = TypeVar("TX", bound=optax.GradientTransformation)
+TX = TypeVar("TX", bound=optax.OptState)
 
 
 def restore_optimizer_state(opt_state: TX, restored: Mapping[str, ...]) -> TX:

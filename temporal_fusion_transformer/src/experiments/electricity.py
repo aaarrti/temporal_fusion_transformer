@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Literal, Mapping, Tuple, TypedDict, overload
+from typing import TYPE_CHECKING, List, Literal, Mapping, Tuple, TypedDict, overload, Callable
 
 import jax
 import jax.numpy as jnp
@@ -259,7 +259,7 @@ def make_dataset(
     preprocessor = train_preprocessor(df)
     training_df, validation_df, test_df = split_data(df, validation_boundary, test_boundary, split_overlap_days)
 
-    make_dataset_fn = partial(
+    make_dataset_fn: Callable[[pl.DataFrame], tf.data.Dataset] = partial(
         time_series_dataset_from_dataframe,
         inputs=["year"] + ["month", "day", "hour", "day_of_week"] + ["id"],
         targets=["power_usage"],

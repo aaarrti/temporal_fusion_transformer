@@ -42,10 +42,8 @@ def get_optimizer_config(choice: Choice):
     config = {
         "electricity": {
             "init_lr": 1e-4,
-            "peak_lr": 1e-3,
-            "end_lr": 1e-5,
-            "warmup_steps": 0.2,
             "decay_steps": 0.8,
+            "alpha": 0.8,
             "mechanize": False,
             "clipnorm": 0.0,
             "ema": 0.99,

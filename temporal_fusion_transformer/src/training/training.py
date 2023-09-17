@@ -17,7 +17,7 @@ from temporal_fusion_transformer.src.modeling.tft_model import (
     make_temporal_fusion_transformer,
 )
 from temporal_fusion_transformer.src.training.metrics import MetricContainer
-from temporal_fusion_transformer.src.training.training_hooks import make_training_hooks
+from temporal_fusion_transformer.src.training.training_hooks import HooksConfig, make_training_hooks
 from temporal_fusion_transformer.src.training.training_lib import (
     TrainStateContainer,
     distributed_train_step,
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
         ValidationFn,
     )
 
-    HooksT = flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | Literal["auto"] | None
+    HooksT = flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | Literal["auto"] | HooksConfig | None
     DynamicScaleT = DynamicScale | None | Literal["auto"]
     EarlyStoppingT = EarlyStopping | None | Literal["auto"]
     DeviceTypeT = Literal["gpu", "tpu"]
@@ -189,6 +189,8 @@ def _train(
             save_path=save_path,
             delete_checkpoints_after_training=True,
         )
+    elif isinstance(hooks, HooksConfig):
+        hooks = hooks.make_training_hooks(num_training_steps=num_training_steps, epochs=epochs)
     elif isinstance(hooks, Callable):
         hooks = hooks(num_training_steps)
 

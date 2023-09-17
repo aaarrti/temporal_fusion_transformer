@@ -81,12 +81,6 @@ if TYPE_CHECKING:
             The maximum allowed ratio of update norm to parameter norm.
         init_lr:
             Initial learning rate.
-        peak_lr:
-            Highest learning rate.
-        end_lr:
-            Learning rate at the end of the schedule.
-        warmup_steps:
-            % of training steps, after which `peak_lr` must be reached.
         decay_steps:
             % of training steps, after which `end_lr` must be reached.
         mechanize:
@@ -97,11 +91,8 @@ if TYPE_CHECKING:
         """
 
         init_lr: float
-        peak_lr: float
-        warmup_steps: float
         decay_steps: float
-        decay_alpha: float
-        end_lr: float
+        alpha: float
         ema: float
         clipnorm: float
         mechanize: bool

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
+from functools import partial
 from datetime import datetime, timedelta
 from glob import glob
-from typing import TYPE_CHECKING, Literal, Mapping, Tuple, TypedDict, overload
+from typing import TYPE_CHECKING, Literal, Mapping, Tuple, TypedDict, overload, Callable
 
 import numpy as np
 from absl import logging
@@ -69,9 +70,17 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         ...
 
     def make_dataset(
-        self, data_dir: str, mode: Literal["persist", "return"]
+        self, data_dir: str, mode: Literal["persist", "return"] = "return"
     ) -> None | Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessorBase]:
-        pass
+        return make_dataset(
+            data_dir=data_dir,
+            mode=mode,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            validation_boundary=self.validation_boundary,
+            total_time_steps=self.total_time_steps,
+            num_encoder_steps=self.num_encoder_steps,
+        )
 
 
 class DataPreprocessor(DataPreprocessorBase):
@@ -206,25 +215,29 @@ def make_dataset(
     convert_to_parquet(data_dir)
 
     df = read_parquet(data_dir, start_date, end_date)
-    logging.debug(f"{df.columns = }")
+    logging.debug(f"{df.describe() = }")
     preprocessor = train_preprocessor(df)
     training_df, validation_df, test_df = split_data(
         df, validation_boundary, total_time_steps=total_time_steps, num_encoder_steps=num_encoder_steps
     )
-    training_df = convert_dataframe_to_tf_dataset(training_df, preprocessor, total_time_steps)
-    validation_df = apply_preprocessor(validation_df, preprocessor)
-    test_df = apply_preprocessor(test_df, preprocessor)
 
-    training_time_series = convert_dataframe_to_tf_dataset(training_df, preprocessor, total_time_steps=total_time_steps)
-    validation_time_series = convert_dataframe_to_tf_dataset(
-        validation_df, preprocessor, total_time_steps=total_time_steps
+    make_dataset_fn: Callable[[pl.DataFrame], tf.data.Dataset] = partial(
+        time_series_dataset_from_dataframe,
+        inputs=_REAL_INPUTS + _CATEGORICAL_INPUTS,
+        targets=["log_sales"],
+        total_time_steps=total_time_steps,
+        id_column="traj_id",
+        preprocess_fn=partial(apply_preprocessor, preprocessor=preprocessor),
     )
 
-    if mode == "return":
-        return training_time_series, validation_time_series, test_df, DataPreprocessor(preprocessor)
+    training_ds = make_dataset_fn(training_df)
+    validation_ds = make_dataset_fn(validation_df)
 
-    training_time_series.save(f"{data_dir}/training", compression="GZIP")
-    validation_time_series.save(f"{data_dir}/validation", compression="GZIP")
+    if mode == "return":
+        return training_ds, validation_ds, test_df
+
+    training_ds.save(f"{data_dir}/training", compression="GZIP")
+    validation_ds.save(f"{data_dir}/validation", compression="GZIP")
     test_df.write_parquet(f"{data_dir}/test.parquet")
     serialize_preprocessor(preprocessor, data_dir)
 
@@ -270,7 +283,7 @@ def split_data(
     validation_df = filter_ids(validation_df["valid"])
     test_df = filter_ids(test_df["test"])
 
-    return training_df.drop("traj_id"), validation_df.drop("traj_id"), test_df.drop("traj_id")
+    return training_df, validation_df, test_df
 
 
 def read_parquet(

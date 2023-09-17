@@ -36,20 +36,28 @@ flags.DEFINE_boolean("profile", default=False, help="Run with profiling")
 flags.DEFINE_boolean("verbose", default=True, help="Verbose mode for training")
 CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
-setup_logging(log_level="INFO")
 
 
-@register_task(name="data")
+def make_setup_logging(log_level):
+    def fn(*args, **kwargs):
+        setup_logging(log_level=log_level)
+
+    return fn
+
+
+@register_task(name="data", notifier=NoOpNotifier(), init_callbacks=[make_setup_logging("DEBUG")], post_callbacks=[])
 def make_dataset():
     data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
     data_dir = f"{data_dir}/{experiment_name}"
 
     if experiment_name == "electricity":
-        tft.experiments.Electricity().make_dataset(data_dir, mode="persist")
-    # elif experiment_name == "favorita":
-    #    tft.experiments.favorita.make_dataset(data_dir)
+        ex = tft.experiments.Electricity()
+    elif experiment_name == "favorita":
+        ex = tft.experiments.Favorita()
     else:
         raise RuntimeError("this is unexpected")
+
+    ex.make_dataset(data_dir, mode="persist")
 
 
 # @register_task(name="hyperparams")
@@ -74,7 +82,7 @@ def make_notifier() -> SlackNotifier | None:
         return NoOpNotifier()
 
 
-@register_task(name="model", notifier=make_notifier)
+@register_task(name="model", notifier=make_notifier, init_callbacks=[make_setup_logging("INFO")])
 def train_model():
     experiment_name = FLAGS.experiment
 
@@ -82,6 +90,8 @@ def train_model():
 
     if experiment_name == "electricity":
         trainer = tft.experiments.Electricity().trainer
+    elif experiment_name == "favorita":
+        trainer = None
     else:
         raise RuntimeError("this is unexpected")
 
@@ -99,7 +109,7 @@ def train_model():
 
 
 @register_task(name="model_distributed", notifier=make_notifier)
-def train_model():
+def train_model_dsitributed():
     experiment_name = FLAGS.experiment
     if experiment_name == "electricity":
         trainer = tft.experiments.Electricity().trainer

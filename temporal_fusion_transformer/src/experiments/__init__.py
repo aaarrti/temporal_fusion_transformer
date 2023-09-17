@@ -1,2 +1,3 @@
 from temporal_fusion_transformer.src.experiments.electricity import Electricity
+from temporal_fusion_transformer.src.experiments.favorita import Favorita
 from temporal_fusion_transformer.src.experiments.config import get_config
