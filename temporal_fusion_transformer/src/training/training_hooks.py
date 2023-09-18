@@ -12,8 +12,6 @@ from dataclasses import dataclass
 
 import clu.metric_writers
 import clu.periodic_actions
-import orbax.checkpoint
-import orbax.checkpoint.checkpoint_utils
 from absl import logging
 from absl_extra.cuda_utils import cuda_devices_available, get_memory_info
 from absl_extra.flax_utils import TrainingHooks, combine_hooks, save_as_msgpack
@@ -25,6 +23,8 @@ from orbax.checkpoint import (
     AsyncCheckpointer,
     CheckpointManagerOptions,
     PyTreeCheckpointHandler,
+    CheckpointManager,
+    checkpoint_utils
 )
 
 from temporal_fusion_transformer.src.training.training_lib import (
@@ -42,11 +42,6 @@ if TYPE_CHECKING:
 
 
 __all__ = ["make_training_hooks"]
-
-
-class CheckpointManager(orbax.checkpoint.CheckpointManager):
-    def should_save(self, step: int) -> bool:
-        return step % self._options.save_interval_steps == 0 or step in self._options.save_on_steps
 
 
 pool = clu.asynclib.Pool()
@@ -174,7 +169,7 @@ def make_checkpoint_hooks(
             return None
 
         latest_step = max(all_steps)
-        restore_args = orbax.checkpoint.checkpoint_utils.construct_restore_args(training_state)
+        restore_args = checkpoint_utils.construct_restore_args(training_state)
         restored_dict = mngr.restore(latest_step, restore_kwargs={"restore_args": restore_args})
 
         restored_optimizer = restore_optimizer_state(training_state.opt_state, restored_dict["opt_state"])

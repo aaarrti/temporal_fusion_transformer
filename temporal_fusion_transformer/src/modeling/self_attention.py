@@ -1,23 +1,29 @@
 from __future__ import annotations
 
-import jax
 import functools
-import jax.numpy as jnp
+from typing import Any, Callable, Optional, Tuple, Union
+
+from flax.linen import initializers
+from flax.linen.linear import default_kernel_init
+from flax.linen.linear import DenseGeneral
+from flax.linen.linear import DotGeneralT
+from flax.linen.linear import PrecisionLike
+from flax.linen.module import compact
+from flax.linen.module import merge_param
+from flax.linen.module import Module
+from flax.linen.attention import combine_masks, dot_product_attention
+from flax.linen.normalization import LayerNorm
+import jax
 from jax import lax
-from flax.linen import Module, compact, DenseGeneral, merge_param, LayerNorm
-from flax.linen.attention import (
-    default_kernel_init,
-    dot_product_attention,
-    initializers,
-    DotGeneralT,
-    Dtype,
-    Array,
-    PRNGKey,
-    PrecisionLike,
-    Shape,
-    combine_masks
-)
-from typing import Optional, Callable, Any, Union
+import jax.numpy as jnp
+from jax.random import PRNGKey
+
+
+Shape = Tuple[int, ...]
+Dtype = Any
+Array = jnp.ndarray
+
+# For python 3.8, `normalize_qk` is not available, so we just copy-paste if from newer source code.
 
 
 class MultiHeadDotProductAttention(Module):
@@ -48,23 +54,6 @@ class MultiHeadDotProductAttention(Module):
         mask: Optional[Array] = None,
         deterministic: Optional[bool] = None,
     ):
-        """Applies multi-head dot product attention on the input data.
-
-        Projects the inputs into multi-headed query, key, and value vectors,
-        applies dot-product attention and project the results to an output vector.
-
-        Args:
-          inputs_q: input queries of shape `[batch_sizes..., length, features]`.
-          inputs_kv: key/values of shape `[batch_sizes..., length, features]`.
-          mask: attention mask of shape `[batch_sizes..., num_heads, query_length,
-            key/value_length]`. Attention weights are masked out if their
-            corresponding mask value is `False`.
-          deterministic: if false, the attention weight is masked randomly using
-            dropout, whereas if true, the attention weights are deterministic.
-
-        Returns:
-          output of shape `[batch_sizes..., length, features]`.
-        """
         features = self.out_features or inputs_q.shape[-1]
         qkv_features = self.qkv_features or inputs_q.shape[-1]
         assert qkv_features % self.num_heads == 0, (
@@ -182,7 +171,6 @@ class MultiHeadDotProductAttention(Module):
 
 
 class SelfAttention(MultiHeadDotProductAttention):
-    """Self-attention special case of multi-head dot-product attention."""
 
     @compact
     def __call__(  # type: ignore

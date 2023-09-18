@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from flax import struct
 from jaxtyping import Array, Float, Int, jaxtyped
 
-from temporal_fusion_transformer.src.modeling.mha import SelfAttention
+from temporal_fusion_transformer.src.modeling.self_attention import SelfAttention
 
 if TYPE_CHECKING:
     ComputeDtype = Union[jnp.float32, jnp.float16, jnp.bfloat16]
@@ -403,7 +403,7 @@ class DecoderBlock(nn.Module):
             dropout_rate=self.attention_dropout_rate,
             # We probably can set decode=True during inference.
             # decode=not training,
-            # attention_fn=dot_product_attention,
+            attention_fn=dot_product_attention,
             normalize_qk=True,
         )(inputs, mask=mask, deterministic=not training)
         x = x.astype(self.dtype)
