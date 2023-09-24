@@ -24,7 +24,7 @@ from orbax.checkpoint import (
     CheckpointManagerOptions,
     PyTreeCheckpointHandler,
     CheckpointManager,
-    checkpoint_utils
+    checkpoint_utils,
 )
 
 from temporal_fusion_transformer.src.training.training_lib import (
@@ -41,18 +41,15 @@ if TYPE_CHECKING:
         training_state: TrainStateContainer
 
 
-__all__ = ["make_training_hooks"]
-
-
 pool = clu.asynclib.Pool()
 
 if sys.version_info >= (3, 10):
-    dataclass_fn = partial(dataclass, slots=True)
+    dc_kw = dict(slots=True)
 else:
-    dataclass_fn = dataclass
+    dc_kw = dict()
 
 
-@dataclass_fn(frozen=True)
+@dataclass(frozen=True, **dc_kw)
 class HooksConfig:
     logdir: str | None
     profile: bool
@@ -83,6 +80,20 @@ class HooksConfig:
             delete_checkpoints_after_training=self.delete_checkpoints_after_training,
         )
 
+    @staticmethod
+    def default() -> HooksConfig:
+        return HooksConfig(
+            save_path="model.msgpack",
+            checkpoint_directory="checkpoints",
+            profile=False,
+            monitor_gpu_memory=True,
+            monitor_exception=True,
+            log_metrics_frequency=100,
+            report_progress_frequency=50,
+            logdir="tensorboard",
+            delete_checkpoints_after_training=True,
+        )
+
 
 def make_training_hooks(
     num_training_steps: int,
@@ -107,8 +118,6 @@ def make_training_hooks(
         ),
         make_garbage_collection_hooks(),
         make_checkpoint_hooks(
-            num_training_steps=num_training_steps,
-            epochs=epochs,
             checkpoint_directory=checkpoint_directory,
             delete_checkpoints_after_training=delete_checkpoints_after_training,
             save_path=save_path,
@@ -131,8 +140,6 @@ def make_training_hooks(
 
 
 def make_checkpoint_hooks(
-    num_training_steps: int,
-    epochs: int,
     checkpoint_directory: str | None,
     delete_checkpoints_after_training: bool,
     save_path: str | None,

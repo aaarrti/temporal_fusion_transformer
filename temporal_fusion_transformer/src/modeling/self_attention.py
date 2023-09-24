@@ -171,7 +171,6 @@ class MultiHeadDotProductAttention(Module):
 
 
 class SelfAttention(MultiHeadDotProductAttention):
-
     @compact
     def __call__(  # type: ignore
         self,

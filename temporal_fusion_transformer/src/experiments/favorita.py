@@ -20,6 +20,7 @@ from temporal_fusion_transformer.src.experiments.config import get_config
 from temporal_fusion_transformer.src.experiments.util import (
     serialize_preprocessor,
     time_series_dataset_from_dataframe,
+    persist_dataset,
 )
 
 if TYPE_CHECKING:
@@ -59,28 +60,24 @@ class Favorita(MultiHorizonTimeSeriesDataset):
     def trainer(self) -> TrainerBase:
         return Trainer()
 
-    @overload
-    def make_dataset(self, data_dir: str, mode: Literal["persist"]) -> None:
-        ...
-
-    @overload
     def make_dataset(
-        self, data_dir: str, mode: Literal["return"]
-    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
-        ...
-
-    def make_dataset(
-        self, data_dir: str, mode: Literal["persist", "return"] = "return"
+        self, data_dir: str, save_dir: str | None = None
     ) -> None | Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessorBase]:
-        return make_dataset(
+        training_ds, validation_ds, test_df, preprocessor = make_dataset(
             data_dir=data_dir,
-            mode=mode,
             start_date=self.start_date,
             end_date=self.end_date,
             validation_boundary=self.validation_boundary,
             total_time_steps=self.total_time_steps,
             num_encoder_steps=self.num_encoder_steps,
         )
+        if save_dir is not None:
+            persist_dataset(training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir)
+        else:
+            return training_ds, validation_ds, test_df, preprocessor
+
+    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None):
+        convert_to_parquet(download_dir, output_dir)
 
 
 class DataPreprocessor(DataPreprocessorBase):
@@ -177,32 +174,6 @@ _CATEGORICAL_INPUTS = [
 ]
 
 
-@overload
-def make_dataset(
-    data_dir: str,
-    start_date: datetime | None,
-    end_date: datetime | None,
-    validation_boundary: datetime,
-    total_time_steps: int,
-    num_encoder_steps: int,
-    mode: Literal["return"],
-) -> Tuple[Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset], PreprocessorDict]:
-    ...
-
-
-@overload
-def make_dataset(
-    data_dir: str,
-    start_date: datetime | None,
-    end_date: datetime | None,
-    validation_boundary: datetime,
-    total_time_steps: int,
-    num_encoder_steps: int,
-    mode: Literal["persist"],
-) -> None:
-    ...
-
-
 def make_dataset(
     data_dir: str,
     start_date: datetime | None = datetime(2016, 1, 1),
@@ -210,10 +181,7 @@ def make_dataset(
     validation_boundary: datetime = datetime(2016, 4, 1),
     total_time_steps: int = 120,
     num_encoder_steps: int = 90,
-    mode: Literal["return", "persist"] = "return",
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, PreprocessorDict]:
-    convert_to_parquet(data_dir)
-
     df = read_parquet(data_dir, start_date, end_date)
     logging.debug(f"{df.describe() = }")
     preprocessor = train_preprocessor(df)
@@ -232,31 +200,19 @@ def make_dataset(
 
     training_ds = make_dataset_fn(training_df)
     validation_ds = make_dataset_fn(validation_df)
-
-    if mode == "return":
-        return training_ds, validation_ds, test_df
-
-    training_ds.save(f"{data_dir}/training", compression="GZIP")
-    validation_ds.save(f"{data_dir}/validation", compression="GZIP")
-    test_df.write_parquet(f"{data_dir}/test.parquet")
-    serialize_preprocessor(preprocessor, data_dir)
+    return training_ds, validation_ds, test_df
 
 
-def convert_to_parquet(data_dir: str):
-    files = glob(f"{data_dir}/*.parquet")
-
-    filenames = {i.rpartition("/")[-1] for i in files}
-    missing_files = list(set(_REQUIRED_FILES).difference(filenames))
-
-    if len(missing_files) == 0:
-        logging.info(f"Found {files} locally.")
-        return
+def convert_to_parquet(data_dir: str, output_dir: str | None = None):
+    if output_dir is None:
+        output_dir = data_dir
 
     files = glob(f"{data_dir}/*.csv")
-    for f in tqdm(files, desc="Converting to parquet"):
-        f: str
-        pl.scan_csv(f, try_parse_dates=True).sink_parquet(f.replace("csv", "parquet"))
-        os.remove(f)
+    for file in tqdm(files, desc="Converting to parquet"):
+        file: str
+        target_file = file.replace(data_dir, output_dir).replace("csv", "parquet")
+        pl.scan_csv(file, try_parse_dates=True).sink_parquet(target_file)
+        os.remove(file)
 
 
 def split_data(

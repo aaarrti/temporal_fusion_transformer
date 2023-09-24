@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Literal, Tuple
+from typing import TYPE_CHECKING, Tuple, overload
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
@@ -18,9 +18,57 @@ if TYPE_CHECKING:
 
 class MultiHorizonTimeSeriesDataset(ABC):
     @abstractmethod
+    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None):
+        """
+        Convert data to parquet format to reduce memory requirement.
+
+        Parameters
+        ----------
+        download_dir:
+            Directory with downloaded CSV files.
+        output_dir
+            Directory, in which .parquet file must be written,
+
+        Returns
+        -------
+
+        """
+        raise NotImplementedError
+
+    @overload
     def make_dataset(
-        self, data_dir: str, mode: Literal["persist", "return"]
-    ) -> None | Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessorBase]:
+        self, data_dir: str, save_dir: str
+    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessorBase]:
+        ...
+
+    @overload
+    def make_dataset(self, data_dir: str, save_dir: None = None) -> None:
+        ...
+
+    @abstractmethod
+    def make_dataset(
+        self, data_dir: str, save_dir: str | None = None
+    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessorBase] | None:
+        """
+        This method expect data to be in parquet format.
+
+        Parameters
+        ----------
+        data_dir:
+            Directory containing parquet files.
+        save_dir:
+            If not None, instead of returning data splits, will persist them to  `save_dir`
+
+        Returns
+        -------
+
+        retval:
+            - train split (tf.data.Dataset, ready to use)
+            - validation split (tf.data.Dataset, ready to use)
+            - test split (pl.Dataframe, must apply preprocessor before passing data to model)
+            - experiment specific preprocessor
+
+        """
         raise NotImplementedError
 
     @classmethod
@@ -68,18 +116,5 @@ class TrainerBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def run_distributed(
-        self,
-        data_dir: str,
-        batch_size: int,
-        config: ConfigDict,
-        epochs: int = 1,
-        mixed_precision: bool = False,
-        jit_module: bool = False,
-        save_path: str | None = None,
-        verbose: bool = True,
-        profile: bool = False,
-        device_type: Literal["gpu", "tpu"] = "gpu",
-        prefetch_buffer_size: int = 2,
-    ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
+    def run_distributed(self, *args, **kwargs) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         raise NotImplementedError

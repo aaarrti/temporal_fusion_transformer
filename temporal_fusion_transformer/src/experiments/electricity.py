@@ -4,7 +4,6 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING, List, Mapping, Tuple, TypedDict, Callable
 
 import jax
@@ -25,6 +24,7 @@ from temporal_fusion_transformer.src.experiments.util import (
     time_series_dataset_from_dataframe,
     persist_dataset,
 )
+from temporal_fusion_transformer.src.training.training_hooks import HooksConfig
 
 if TYPE_CHECKING:
     import polars as pl
@@ -51,6 +51,10 @@ except ModuleNotFoundError as ex:
 
 
 class Electricity(MultiHorizonTimeSeriesDataset):
+    @property
+    def trainer(self) -> Trainer:
+        return Trainer()
+
     def __init__(
         self,
         validation_boundary: datetime = datetime(2014, 8, 8),
@@ -82,15 +86,9 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         self.total_time_steps = total_time_steps
         self.split_overlap_days = split_overlap_days
 
-    @property
-    def trainer(self) -> Trainer:
-        return Trainer()
-
     def make_dataset(
-        self, data_dir: str, persist: bool = False, save_dir: str | None = None
-    ) -> None | Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
-        if save_dir is None:
-            save_dir = data_dir
+        self, data_dir: str, save_dir: str | None = None
+    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
         training_ds, validation_ds, test_df, preprocessor = make_dataset(
             data_dir,
             validation_boundary=self.validation_boundary,
@@ -99,10 +97,13 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             split_overlap_days=self.split_overlap_days,
             cutoff_days=self.cutoff_days,
         )
-        if persist:
+        if save_dir is not None:
             persist_dataset(training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir)
         else:
             return training_ds, validation_ds, test_df, preprocessor
+
+    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None):
+        return convert_to_parquet(download_dir, output_dir)
 
 
 class DataPreprocessor(DataPreprocessorBase):
@@ -166,12 +167,14 @@ class Trainer(TrainerBase):
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
-        save_path: str | None = None,
         verbose: bool = True,
-        profile: bool = False,
+        hooks_config: HooksConfig | None = None,
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         from temporal_fusion_transformer.src.training.training import train
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
+
+        if hooks_config is None:
+            hooks_config = HooksConfig.default()
 
         data_config = get_config("electricity")
 
@@ -191,7 +194,7 @@ class Trainer(TrainerBase):
             mixed_precision=mixed_precision,
             epochs=epochs,
             verbose=verbose,
-            save_path=save_path,
+            hooks=hooks_config,
         )
 
     def run_distributed(
@@ -202,14 +205,16 @@ class Trainer(TrainerBase):
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
-        save_path: str | None = None,
         verbose: bool = True,
-        profile: bool = False,
         device_type: DeviceTypeT = "gpu",
         prefetch_buffer_size: int = 0,
+        hooks_config: HooksConfig | None = None,
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         from temporal_fusion_transformer.src.training.training import train_distributed
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
+
+        if hooks_config is None:
+            hooks_config = HooksConfig.default()
 
         data_config = get_config("electricity")
         num_devices = jax.device_count()
@@ -231,8 +236,8 @@ class Trainer(TrainerBase):
             epochs=epochs,
             device_type=device_type,
             prefetch_buffer_size=prefetch_buffer_size,
-            tensorboard_logdir="tensorboard/electricity/",
             verbose=verbose,
+            hooks=hooks_config,
         )
 
 
@@ -273,7 +278,6 @@ def make_dataset(
     cutoff_days: Tuple[datetime, datetime] = (datetime(2014, 1, 1), datetime(2014, 9, 8)),
     total_time_steps: int = 192,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
-    convert_to_parquet(data_dir)
     df = read_parquet(data_dir, cutoff_days=cutoff_days)
     logging.info(f"{df.columns = }")
     preprocessor = train_preprocessor(df)
@@ -292,15 +296,12 @@ def make_dataset(
     return training_time_series, validation_time_series, test_df, DataPreprocessor(preprocessor)
 
 
-def convert_to_parquet(data_dir: str):
+def convert_to_parquet(data_dir: str, output_dir: str | None = None):
     import polars as pl
 
-    # FIXME: save in tmp dir
+    if output_dir is None:
+        output_dir = data_dir
 
-    if Path(f"{data_dir}/LD2011_2014.parquet").exists():
-        logging.info(f"Found {data_dir}/LD2011_2014.parquet locally, will skip download.")
-        return
-    Path(data_dir).mkdir(exist_ok=True)
     with open(f"{data_dir}/LD2011_2014.txt", "r") as file:
         txt_content = file.read()
 
@@ -311,7 +312,7 @@ def convert_to_parquet(data_dir: str):
 
     pl.scan_csv(f"{data_dir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True).rename(
         {"": "timestamp"}
-    ).sink_parquet(f"{data_dir}/LD2011_2014.parquet")
+    ).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
 
     os.remove(f"{data_dir}/LD2011_2014.txt")
     os.remove(f"{data_dir}/LD2011_2014.csv")

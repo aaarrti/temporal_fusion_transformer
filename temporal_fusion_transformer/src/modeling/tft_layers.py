@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from flax import struct
 from jaxtyping import Array, Float, Int, jaxtyped
 
-from temporal_fusion_transformer.src.modeling.self_attention import SelfAttention
+# from temporal_fusion_transformer.src.modeling.self_attention import SelfAttention
 
 if TYPE_CHECKING:
     ComputeDtype = Union[jnp.float32, jnp.float16, jnp.bfloat16]
@@ -397,7 +397,7 @@ class DecoderBlock(nn.Module):
 
     @nn.compact
     def __call__(self, inputs: jnp.ndarray, training: bool, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-        x = SelfAttention(
+        x = nn.SelfAttention(
             num_heads=self.num_attention_heads,
             dtype=self.dtype,
             dropout_rate=self.attention_dropout_rate,
