@@ -1,9 +1,7 @@
 from clu.metrics import Average, Collection
 from flax.struct import dataclass
-from jaxtyping import jaxtyped
 
 
-@jaxtyped
 @dataclass
 class MetricContainer(Collection):
     """We define this simple container in separate file, because it is not compatible

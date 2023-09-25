@@ -154,7 +154,7 @@ def make_checkpoint_hooks(
         # FIXME: for some reason TPU runtime on kaggle fails here
         # save_on_steps=[num_training_steps * i for i in range(1, epochs)],
         max_to_keep=5,
-        cleanup_tmp_directories=True,
+        # cleanup_tmp_directories=True,
         create=True,
         best_mode="min",
         best_fn=lambda metrics: metrics["loss"],
