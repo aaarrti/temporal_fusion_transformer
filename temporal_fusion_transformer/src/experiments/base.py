@@ -18,7 +18,9 @@ if TYPE_CHECKING:
 
 class MultiHorizonTimeSeriesDataset(ABC):
     @abstractmethod
-    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None):
+    def convert_to_parquet(
+        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
+    ):
         """
         Convert data to parquet format to reduce memory requirement.
 
@@ -27,7 +29,9 @@ class MultiHorizonTimeSeriesDataset(ABC):
         download_dir:
             Directory with downloaded CSV files.
         output_dir
-            Directory, in which .parquet file must be written,
+            Directory, in which .parquet file must be written
+        delete_processed:
+
 
         Returns
         -------

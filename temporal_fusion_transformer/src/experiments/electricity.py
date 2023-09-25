@@ -12,6 +12,7 @@ import numpy as np
 from absl import logging
 from tqdm.auto import tqdm
 from jaxtyping import Float, Array
+from tempfile import TemporaryDirectory
 
 from temporal_fusion_transformer.src.experiments.base import (
     DataPreprocessorBase,
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
     from temporal_fusion_transformer.src.training.training_lib import (
         TrainStateContainer,
     )
-
 
 try:
     import polars as pl
@@ -104,8 +104,10 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         else:
             return training_ds, validation_ds, test_df, preprocessor
 
-    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None):
-        return convert_to_parquet(download_dir, output_dir)
+    def convert_to_parquet(
+        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
+    ):
+        return convert_to_parquet(download_dir, output_dir, delete_processed=delete_processed)
 
 
 class DataPreprocessor(DataPreprocessorBase):
@@ -255,7 +257,6 @@ _CATEGORICAL_INPUTS = ["month", "day", "hour", "day_of_week"]
 _INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
 _TARGETS = ["power_usage"]
 
-
 if TYPE_CHECKING:
 
     class CategoricalPreprocessorDict(TypedDict):
@@ -304,7 +305,7 @@ def make_dataset(
     return training_time_series, validation_time_series, test_df, DataPreprocessor(preprocessor)
 
 
-def convert_to_parquet(data_dir: str, output_dir: str | None = None):
+def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_processed: bool = True):
     import polars as pl
 
     if output_dir is None:
@@ -315,15 +316,16 @@ def convert_to_parquet(data_dir: str, output_dir: str | None = None):
 
     csv_content = txt_content.replace(",", ".").replace(";", ",")
 
-    with open(f"{data_dir}/LD2011_2014.csv", "w+") as file:
-        file.write(csv_content)
+    with TemporaryDirectory() as tmpdir:
+        with open(f"{tmpdir}/LD2011_2014.csv", "w+") as file:
+            file.write(csv_content)
 
-    pl.scan_csv(
-        f"{data_dir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True
-    ).rename({"": "timestamp"}).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
+        pl.scan_csv(
+            f"{tmpdir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True
+        ).rename({"": "timestamp"}).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
 
-    os.remove(f"{data_dir}/LD2011_2014.txt")
-    os.remove(f"{data_dir}/LD2011_2014.csv")
+    if delete_processed:
+        os.remove(f"{data_dir}/LD2011_2014.txt")
 
 
 def read_parquet(data_dir: str, cutoff_days: Tuple[datetime, datetime]) -> pl.DataFrame:
