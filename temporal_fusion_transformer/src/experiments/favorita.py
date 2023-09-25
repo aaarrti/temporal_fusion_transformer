@@ -78,8 +78,10 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         else:
             return training_ds, validation_ds, test_df, preprocessor
 
-    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None):
-        convert_to_parquet(download_dir, output_dir)
+    def convert_to_parquet(
+        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
+    ):
+        convert_to_parquet(download_dir, output_dir, delete_processed=delete_processed)
 
 
 class DataPreprocessor(DataPreprocessorBase):
@@ -221,7 +223,7 @@ def make_dataset(
     return training_ds, validation_ds, test_df
 
 
-def convert_to_parquet(data_dir: str, output_dir: str | None = None):
+def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_processed: bool = True):
     if output_dir is None:
         output_dir = data_dir
 
@@ -230,7 +232,8 @@ def convert_to_parquet(data_dir: str, output_dir: str | None = None):
         file: str
         target_file = file.replace(data_dir, output_dir).replace("csv", "parquet")
         pl.scan_csv(file, try_parse_dates=True).sink_parquet(target_file)
-        os.remove(file)
+        if delete_processed:
+            os.remove(file)
 
 
 def split_data(

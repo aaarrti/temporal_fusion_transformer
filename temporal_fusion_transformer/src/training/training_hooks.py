@@ -5,7 +5,6 @@ import os
 import sys
 import platform
 from pathlib import Path
-from functools import partial
 from traceback import format_exception
 from typing import TypedDict, TYPE_CHECKING
 from dataclasses import dataclass
@@ -61,25 +60,6 @@ class HooksConfig:
     save_path: str
     monitor_gpu_memory: bool
 
-    def make_training_hooks(
-        self,
-        num_training_steps: int,
-        epochs: int,
-    ) -> TrainingHooks:
-        return make_training_hooks(
-            num_training_steps=num_training_steps,
-            epochs=epochs,
-            checkpoint_directory=self.checkpoint_directory,
-            logdir=self.logdir,
-            log_metrics_frequency=self.log_metrics_frequency,
-            report_progress_frequency=self.report_progress_frequency,
-            profile=self.profile,
-            monitor_exception=self.monitor_exception,
-            monitor_gpu_memory=self.monitor_gpu_memory,
-            save_path=self.save_path,
-            delete_checkpoints_after_training=self.delete_checkpoints_after_training,
-        )
-
     @staticmethod
     def default() -> HooksConfig:
         return HooksConfig(
@@ -96,6 +76,26 @@ class HooksConfig:
 
 
 def make_training_hooks(
+    config: HooksConfig,
+    num_training_steps: int,
+    epochs: int,
+) -> TrainingHooks:
+    return _make_training_hooks(
+        num_training_steps=num_training_steps,
+        epochs=epochs,
+        checkpoint_directory=config.checkpoint_directory,
+        logdir=config.logdir,
+        log_metrics_frequency=config.log_metrics_frequency,
+        report_progress_frequency=config.report_progress_frequency,
+        profile=config.profile,
+        monitor_exception=config.monitor_exception,
+        monitor_gpu_memory=config.monitor_gpu_memory,
+        save_path=config.save_path,
+        delete_checkpoints_after_training=config.delete_checkpoints_after_training,
+    )
+
+
+def _make_training_hooks(
     num_training_steps: int,
     epochs: int,
     logdir: str,

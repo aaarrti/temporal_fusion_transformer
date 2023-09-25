@@ -12,6 +12,8 @@ from typing import (
     TypedDict,
     no_type_check,
 )
+import sys
+from dataclasses import dataclass
 
 import jax
 import optax
@@ -60,35 +62,29 @@ if TYPE_CHECKING:
             ...
 
 
+if sys.version_info >= (3, 10):
+    dc_kw = dict(slots=True)
+else:
+    dc_kw = dict()
+
+
+@dataclass(frozen=True, **dc_kw)
+class EarlyStoppingConfig:
+    best_metric: int
+    min_delta: float
+    patience: int
+
+    @staticmethod
+    def default() -> EarlyStoppingConfig:
+        return EarlyStoppingConfig(best_metric=999, min_delta=0.1, patience=100)
+
+
 class TrainStateContainer(TrainState):
     apply_fn: ApplyFunc = field(pytree_node=False)
     loss_fn: QuantileLossFn = field(pytree_node=False)
     rngs: PRNGCollection
     early_stopping: EarlyStopping | None = None
     dynamic_scale: DynamicScale | None = None
-
-    @classmethod
-    @no_type_check
-    def create(
-        cls,
-        *,
-        apply_fn: ApplyFunc,
-        params: FrozenDict[str, ...],
-        tx: optax.GradientTransformation,
-        rngs: PRNGCollection,
-        loss_fn: QuantileLossFn,
-        early_stopping: EarlyStopping | None = None,
-        dynamic_scale: DynamicScale | None = None,
-    ) -> TrainStateContainer:
-        return super().create(
-            apply_fn=apply_fn,
-            params=params,
-            rngs=rngs,
-            dynamic_scale=dynamic_scale,
-            early_stopping=early_stopping,
-            tx=tx,
-            loss_fn=loss_fn,
-        )
 
 
 @partial(jax.jit, donate_argnums=[0])
@@ -114,7 +110,8 @@ def train_step(
         state = state.apply_gradients(grads=grads)
     else:
         dynamic_scale, is_fin = None, None
-        loss, grads = jax.value_and_grad(loss_fn)(state.params)
+
+    loss, grads = jax.value_and_grad(loss_fn)(state.params)
 
     state = state.apply_gradients(grads=grads)
     if state.dynamic_scale is not None:
@@ -161,8 +158,8 @@ def distributed_train_step(
     else:
         dynamic_scale, is_fin = None, None
         loss, grads = jax.value_and_grad(loss_fn)(state.params)
-        grads = lax.pmean(grads, axis_name="i")
 
+    grads = lax.pmean(grads, axis_name="i")
     state = state.apply_gradients(grads=grads)
     if state.dynamic_scale is not None:
         select_fn = tree_util.Partial(jnp.where, is_fin)
@@ -287,6 +284,12 @@ def make_param_replication() -> ParamReplication:
         return ts2.replace(rngs=rngs2)
 
     return ParamReplication(replicate=replicate, un_replicate=jax_utils.unreplicate)
+
+
+def make_early_stopping(config: EarlyStoppingConfig) -> EarlyStopping:
+    return EarlyStopping(
+        best_metric=config.best_metric, min_delta=config.min_delta, patience=config.patience
+    )
 
 
 if TYPE_CHECKING:

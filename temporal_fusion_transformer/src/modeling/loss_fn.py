@@ -25,7 +25,15 @@ def make_quantile_loss_fn(
 
 
 @jaxtyped
-@functools.partial(jax.jit, static_argnums=[2, 3], static_argnames=["tau", "dtype"], inline=True)
+@functools.partial(
+    jax.jit,
+    # Works on GPU, but fails on Kaggle TPU ¯\_(ツ)_/¯
+    # static_argnums=[2, 3],
+    # static_argnames=["tau", "dtype"],
+    static_argnums=[3],
+    static_argnames=["dtype"],
+    inline=True,
+)
 def pinball_loss(
     y_true: Float[Array, "batch time n"],
     y_pred: Float[Array, "batch time n"],

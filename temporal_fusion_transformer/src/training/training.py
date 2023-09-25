@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, Generator, Literal, Tuple
 
@@ -20,12 +19,14 @@ from temporal_fusion_transformer.src.training.metrics import MetricContainer
 from temporal_fusion_transformer.src.training.training_hooks import HooksConfig, make_training_hooks
 from temporal_fusion_transformer.src.training.training_lib import (
     TrainStateContainer,
+    EarlyStoppingConfig,
     distributed_train_step,
     distributed_validation_step,
     make_optimizer,
     train_step,
     validation_step,
     make_param_replication,
+    make_early_stopping,
 )
 
 if TYPE_CHECKING:
@@ -38,15 +39,9 @@ if TYPE_CHECKING:
         ValidationFn,
     )
 
-    HooksT = (
-        flax_utils.TrainingHooks
-        | Callable[[int], flax_utils.TrainingHooks]
-        | Literal["auto"]
-        | HooksConfig
-        | None
-    )
+    HooksT = flax_utils.TrainingHooks | Literal["auto"] | HooksConfig | None
     DynamicScaleT = DynamicScale | None | Literal["auto"]
-    EarlyStoppingT = EarlyStopping | None | Literal["auto"]
+    EarlyStoppingT = EarlyStopping | None | Literal["auto"] | EarlyStoppingConfig
     DeviceTypeT = Literal["gpu", "tpu"]
 
 
@@ -58,13 +53,10 @@ def train(
     epochs: int = 1,
     mixed_precision: bool = False,
     jit_module: bool = False,
-    save_path: str | None = None,
     dynamic_scale: DynamicScaleT = None,
     hooks: HooksT = "auto",
     verbose: bool = True,
-    profile: bool = False,
     early_stopping: EarlyStoppingT = "auto",
-    tensorboard_logdir: str | None = "tensorboard",
 ) -> flax_utils.MetricsAndParams:
     compute_dtype = jnp.float16 if mixed_precision else jnp.float32
 
@@ -75,15 +67,11 @@ def train(
         dynamic_scale=dynamic_scale,
         early_stopping=early_stopping,
         hooks=hooks,
-        save_path=save_path,
-        tensorboard_logdir=tensorboard_logdir,
         compute_dtype=compute_dtype,
         data_config=data_config,
         epochs=epochs,
         verbose=verbose,
         jit_module=jit_module,
-        profile=profile,
-        tabulate_model=False,
         train_step_fn=train_step,
         validation_step_fn=validation_step,
     )
@@ -97,16 +85,12 @@ def train_distributed(
     epochs: int = 1,
     mixed_precision: bool = False,
     jit_module: bool = False,
-    save_path: str | None = None,
     device_type: DeviceTypeT = "gpu",
     dynamic_scale: DynamicScaleT = None,
     prefetch_buffer_size: int = 0,
     hooks: HooksT = "auto",
     verbose: bool = True,
-    tensorboard_logdir: str = None,
-    profile: bool = False,
     early_stopping: EarlyStoppingT = "auto",
-    tabulate_model: bool = False,
 ) -> flax_utils.MetricsAndParams:
     num_devices = jax.device_count()
 
@@ -136,11 +120,7 @@ def train_distributed(
         config=config,
         data_config=data_config,
         epochs=epochs,
-        profile=profile,
         jit_module=jit_module,
-        tabulate_model=tabulate_model,
-        save_path=save_path,
-        tensorboard_logdir=tensorboard_logdir,
         train_step_fn=distributed_train_step,
         validation_step_fn=distributed_validation_step,
     )
@@ -153,16 +133,12 @@ def _train(
     config: ConfigDict,
     hooks: HooksT,
     verbose: bool,
-    profile: bool,
     early_stopping: EarlyStoppingT,
     prefetch_buffer_size: int,
     dynamic_scale: DynamicScaleT,
-    tabulate_model: bool,
     compute_dtype: ComputeDtype,
     epochs: int,
     jit_module: bool,
-    tensorboard_logdir: str | None,
-    save_path: str | None,
     train_step_fn: TrainFn,
     validation_step_fn: ValidationFn,
 ) -> flax_utils.MetricsAndParams:
@@ -183,23 +159,15 @@ def _train(
         dynamic_scale = DynamicScale()
 
     if early_stopping == "auto":
-        early_stopping = EarlyStopping(best_metric=999, min_delta=0.1, patience=100)
+        early_stopping = EarlyStoppingConfig.default()
+
+    if isinstance(early_stopping, EarlyStoppingConfig):
+        early_stopping = make_early_stopping(early_stopping)
 
     if hooks == "auto":
-        if tensorboard_logdir is not None:
-            tensorboard_logdir = Path(tensorboard_logdir).joinpath(make_timestamp_tag()).as_posix()
-        hooks = make_training_hooks(
-            num_training_steps,
-            epochs,
-            logdir=tensorboard_logdir,
-            profile=profile,
-            save_path=save_path,
-            delete_checkpoints_after_training=True,
-        )
-    elif isinstance(hooks, HooksConfig):
-        hooks = hooks.make_training_hooks(num_training_steps=num_training_steps, epochs=epochs)
-    elif isinstance(hooks, Callable):
-        hooks = hooks(num_training_steps)
+        hooks = HooksConfig.default()
+    if isinstance(hooks, HooksConfig):
+        hooks = make_training_hooks(hooks, num_training_steps=num_training_steps, epochs=epochs)
 
     model = make_temporal_fusion_transformer(
         config, data_config, jit_module=jit_module, dtype=compute_dtype
@@ -207,10 +175,6 @@ def _train(
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
     dropout_key, params_key, lstm_key = jax.random.split(prng_key, 3)
-
-    if tabulate_model:
-        table = model.tabulate(params_key, first_x)
-        logging.info(table)
 
     params = model.init(params_key, first_x)["params"]
 
