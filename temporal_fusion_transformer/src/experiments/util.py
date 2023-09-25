@@ -56,7 +56,11 @@ def label_encoder_to_pytree(le: LabelEncoder) -> LabelEncoderPytree:
 
 def is_standard_scaler_pytree(pytree) -> bool:
     return (
-        isinstance(pytree, Mapping) and "var" in pytree and "mean" in pytree and "scale" in pytree and len(pytree) == 3
+        isinstance(pytree, Mapping)
+        and "var" in pytree
+        and "mean" in pytree
+        and "scale" in pytree
+        and len(pytree) == 3
     )
 
 

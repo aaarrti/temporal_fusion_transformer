@@ -167,8 +167,14 @@ def make_checkpoint_hooks(
         options,
     )
 
-    def checkpoint_fn(step: int, *, training_metrics: MetricContainer, training_state: TrainStateContainer):
-        mngr.save(step, training_state, metrics={k: float(v) for k, v in training_metrics.compute().items()})
+    def checkpoint_fn(
+        step: int, *, training_metrics: MetricContainer, training_state: TrainStateContainer
+    ):
+        mngr.save(
+            step,
+            training_state,
+            metrics={k: float(v) for k, v in training_metrics.compute().items()},
+        )
 
     def restore_checkpoint(training_state: TrainStateContainer):
         all_steps = mngr.all_steps(True)
@@ -179,7 +185,9 @@ def make_checkpoint_hooks(
         restore_args = checkpoint_utils.construct_restore_args(training_state)
         restored_dict = mngr.restore(latest_step, restore_kwargs={"restore_args": restore_args})
 
-        restored_optimizer = restore_optimizer_state(training_state.opt_state, restored_dict["opt_state"])
+        restored_optimizer = restore_optimizer_state(
+            training_state.opt_state, restored_dict["opt_state"]
+        )
         return training_state.replace(
             rngs=restored_dict["rngs"],
             params=restored_dict["params"],
@@ -235,18 +243,24 @@ def make_metrics_hooks(
         hooks.on_step_end.append(write_training_metrics)
 
     training_logger = create_default_writer(None, just_logging=True, collection="training")
-    validation_writer = create_default_writer(logdir, just_logging=not running_on_linux, collection="validation")
+    validation_writer = create_default_writer(
+        logdir, just_logging=not running_on_linux, collection="validation"
+    )
 
     @pool
     def log_training_metrics_fn(step: int, *args, training_metrics: MetricContainer, **kwargs):
         training_logger.write_scalars(step, training_metrics.compute())
 
     @pool
-    def write_validation_metrics_fn(epoch: int, *args, validation_metrics: MetricContainer, **kwargs):
+    def write_validation_metrics_fn(
+        epoch: int, *args, validation_metrics: MetricContainer, **kwargs
+    ):
         validation_writer.write_scalars(epoch * num_training_steps, validation_metrics.compute())
 
     log_training_metrics = clu.periodic_actions.PeriodicCallback(
-        every_steps=num_training_steps // log_metrics_frequency, callback_fn=log_training_metrics_fn, execute_async=True
+        every_steps=num_training_steps // log_metrics_frequency,
+        callback_fn=log_training_metrics_fn,
+        execute_async=True,
     )
 
     report_progress = clu.periodic_actions.ReportProgress(
@@ -353,7 +367,9 @@ def make_early_stopping_hook() -> TrainingHooks:
         *args, training_state: TrainStateContainer, training_metrics: MetricContainer, **kwargs
     ) -> LogsDict | None:
         if training_state.early_stopping is not None:
-            early_stopping = training_state.early_stopping.update(training_metrics.compute()["loss"])[1]
+            early_stopping = training_state.early_stopping.update(
+                training_metrics.compute()["loss"]
+            )[1]
             return {"training_state": training_state.replace(early_stopping=early_stopping)}
 
     hooks = TrainingHooks()
@@ -372,7 +388,11 @@ def make_gpu_memory_monitoring_hook(monitor_gpu_memory: bool) -> TrainingHooks:
         logging.info(f"{step = }, memory usage = {usage_details}")
 
     callback = clu.periodic_actions.PeriodicCallback(
-        every_steps=None, every_secs=10 * 60, on_steps=[0, 5], callback_fn=monitor_fn, pass_step_and_time=True
+        every_steps=None,
+        every_secs=5 * 60,
+        on_steps=[0, 5],
+        callback_fn=monitor_fn,
+        pass_step_and_time=True,
     )
 
     if monitor_gpu_memory and cuda_devices_available():

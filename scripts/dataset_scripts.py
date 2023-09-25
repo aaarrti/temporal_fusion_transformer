@@ -13,7 +13,9 @@ flags.DEFINE_enum(
     default=None,
     required=True,
 )
-flags.DEFINE_string("data_dir", default="data", help="Directory into which dataset should be downloaded.")
+flags.DEFINE_string(
+    "data_dir", default="data", help="Directory into which dataset should be downloaded."
+)
 
 
 @register_task(name="parquet", notifier=NoOpNotifier())

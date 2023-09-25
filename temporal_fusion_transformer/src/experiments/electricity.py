@@ -98,7 +98,9 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             cutoff_days=self.cutoff_days,
         )
         if save_dir is not None:
-            persist_dataset(training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir)
+            persist_dataset(
+                training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir
+            )
         else:
             return training_ds, validation_ds, test_df, preprocessor
 
@@ -131,7 +133,9 @@ class DataPreprocessor(DataPreprocessorBase):
             total_time_steps=self.total_time_steps,
         )
 
-    def inverse_transform(self, x_batch: Float[Array, "batch n"], y_batch: Float["batch 1"]) -> pl.DataFrame:
+    def inverse_transform(
+        self, x_batch: Float[Array, "batch n"], y_batch: Float["batch 1"]
+    ) -> pl.DataFrame:
         # see config.py for indexes
         # 1 -> month
         # 2 -> day
@@ -142,7 +146,9 @@ class DataPreprocessor(DataPreprocessorBase):
         ids = self.preprocessor["categorical"]["id"].inverse_transform(encoded_ids)
         day = self.preprocessor["categorical"]["day"].inverse_transform(x_batch[..., 2])
         hour = self.preprocessor["categorical"]["hour"].inverse_transform(x_batch[..., 3])
-        day_of_week = self.preprocessor["categorical"]["day_of_week"].inverse_transform(x_batch[..., 4])
+        day_of_week = self.preprocessor["categorical"]["day_of_week"].inverse_transform(
+            x_batch[..., 4]
+        )
 
         year_encoded = x_batch[..., 0]
 
@@ -281,7 +287,9 @@ def make_dataset(
     df = read_parquet(data_dir, cutoff_days=cutoff_days)
     logging.info(f"{df.columns = }")
     preprocessor = train_preprocessor(df)
-    training_df, validation_df, test_df = split_data(df, validation_boundary, test_boundary, split_overlap_days)
+    training_df, validation_df, test_df = split_data(
+        df, validation_boundary, test_boundary, split_overlap_days
+    )
 
     make_dataset_fn: Callable[[pl.DataFrame], tf.data.Dataset] = partial(
         time_series_dataset_from_dataframe,
@@ -310,9 +318,9 @@ def convert_to_parquet(data_dir: str, output_dir: str | None = None):
     with open(f"{data_dir}/LD2011_2014.csv", "w+") as file:
         file.write(csv_content)
 
-    pl.scan_csv(f"{data_dir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True).rename(
-        {"": "timestamp"}
-    ).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
+    pl.scan_csv(
+        f"{data_dir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True
+    ).rename({"": "timestamp"}).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
 
     os.remove(f"{data_dir}/LD2011_2014.txt")
     os.remove(f"{data_dir}/LD2011_2014.csv")
@@ -400,7 +408,11 @@ def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
     for i in tqdm(_CATEGORICAL_INPUTS, desc="Fitting label encoders"):
         label_encoders[i].fit(df[i].to_numpy())
 
-    return {"real": dict(**real_scalers), "target": dict(**target_scalers), "categorical": dict(**label_encoders)}
+    return {
+        "real": dict(**real_scalers),
+        "target": dict(**target_scalers),
+        "categorical": dict(**label_encoders),
+    }
 
 
 def apply_preprocessor(
@@ -433,7 +445,12 @@ def apply_preprocessor(
         df = df.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))
 
     ids = preprocessor["categorical"]["id"].transform(df["id"].to_numpy())
-    df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
+    df = (
+        df.drop("id")
+        .with_columns(id=pl.lit(ids).cast(pl.UInt16))
+        .shrink_to_fit(in_place=True)
+        .rechunk()
+    )
     df = df.shrink_to_fit(in_place=True).rechunk()
     return df
 

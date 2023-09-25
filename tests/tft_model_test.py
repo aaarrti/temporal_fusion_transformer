@@ -70,7 +70,9 @@ def test_mixed_precision(dtype, error_causing_state):
 
     x_batch = error_causing_state["x_batch"].astype(dtype)
 
-    model = make_temporal_fusion_transformer(_CONFIG, data_config=get_config("electricity"), dtype=dtype)
+    model = make_temporal_fusion_transformer(
+        _CONFIG, data_config=get_config("electricity"), dtype=dtype
+    )
     logits = model.apply(
         {"params": error_causing_state["state"]["params"]},
         x_batch,
@@ -117,7 +119,9 @@ def test_partition_attention_kernel(force_multi_device, capsys):
     params = model.init(jax.random.PRNGKey(0), x_sharded[0])["params"]
 
     with capsys.disabled():
-        jax.debug.visualize_array_sharding(params["decoder_blocks_0"]["SelfAttention_0"]["key"]["kernel"].value)
+        jax.debug.visualize_array_sharding(
+            params["decoder_blocks_0"]["SelfAttention_0"]["key"]["kernel"].value
+        )
 
     state = TrainStateContainer.create(
         apply_fn=model.apply,

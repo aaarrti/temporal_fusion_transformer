@@ -72,7 +72,9 @@ class MultiHorizonTimeSeriesDataset(ABC):
         raise NotImplementedError
 
     @classmethod
-    def plot_predictions(cls, x_batch: np.ndarray, y_batch: np.ndarray, y_predicted: np.ndarray) -> plt.Figure:
+    def plot_predictions(
+        cls, x_batch: np.ndarray, y_batch: np.ndarray, y_predicted: np.ndarray
+    ) -> plt.Figure:
         raise NotImplementedError
 
     @property
@@ -116,5 +118,7 @@ class TrainerBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def run_distributed(self, *args, **kwargs) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
+    def run_distributed(
+        self, *args, **kwargs
+    ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         raise NotImplementedError

@@ -24,17 +24,18 @@ Dtype = Any
 Array = jnp.ndarray
 
 # For python 3.8, `normalize_qk` is not available, so we just copy-paste if from newer source code.
+# Can be removed after Kaggle VM is upgrade to support flax 0.3.3+
 
 
 class MultiHeadDotProductAttention(Module):
     num_heads: int
-    dtype: Optional[Dtype] = None
+    dtype: Dtype | None = None
     param_dtype: Dtype = jnp.float32
-    qkv_features: Optional[int] = None
-    out_features: Optional[int] = None
+    qkv_features: int | None = None
+    out_features: int | None = None
     broadcast_dropout: bool = True
     dropout_rate: float = 0.0
-    deterministic: Optional[bool] = None
+    deterministic: bool | None = None
     precision: PrecisionLike = None
     kernel_init: Callable[[PRNGKey, Shape, Dtype], Array] = default_kernel_init
     bias_init: Callable[[PRNGKey, Shape, Dtype], Array] = initializers.zeros_init()
@@ -51,13 +52,14 @@ class MultiHeadDotProductAttention(Module):
         self,
         inputs_q: Array,
         inputs_kv: Array,
-        mask: Optional[Array] = None,
-        deterministic: Optional[bool] = None,
+        mask: Array | None = None,
+        deterministic: bool | None = None,
     ):
         features = self.out_features or inputs_q.shape[-1]
         qkv_features = self.qkv_features or inputs_q.shape[-1]
         assert qkv_features % self.num_heads == 0, (
-            f"Memory dimension ({qkv_features}) must be divisible by number of" f" heads ({self.num_heads})."
+            f"Memory dimension ({qkv_features}) must be divisible by number of"
+            f" heads ({self.num_heads})."
         )
         head_dim = qkv_features // self.num_heads
 
@@ -93,8 +95,12 @@ class MultiHeadDotProductAttention(Module):
             # detect if we're initializing by absence of existing cache data.
             is_initialized = self.has_variable("cache", "cached_key")
             cached_key = self.variable("cache", "cached_key", jnp.zeros, key.shape, key.dtype)
-            cached_value = self.variable("cache", "cached_value", jnp.zeros, value.shape, value.dtype)
-            cache_index = self.variable("cache", "cache_index", lambda: jnp.array(0, dtype=jnp.int32))
+            cached_value = self.variable(
+                "cache", "cached_value", jnp.zeros, value.shape, value.dtype
+            )
+            cache_index = self.variable(
+                "cache", "cache_index", lambda: jnp.array(0, dtype=jnp.int32)
+            )
             if is_initialized:
                 (
                     *batch_dims,

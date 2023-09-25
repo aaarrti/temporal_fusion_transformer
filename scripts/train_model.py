@@ -27,7 +27,8 @@ jax.config.update("jax_softmax_custom_jvp", True)
 
 # fmt: off
 FLAGS = flags.FLAGS
-flags.DEFINE_enum("experiment", enum_values=["electricity", "favorita"], help="Name of the experiment_name", default=None, required=True)
+flags.DEFINE_enum("experiment", enum_values=["electricity", "favorita"], help="Name of the experiment_name",
+                  default=None, required=True)
 flags.DEFINE_integer("batch_size", default=8, help="Training batch size")
 flags.DEFINE_string("data_dir", help="Data directory", default="data")
 flags.DEFINE_integer("epochs", default=1, help="Number of epochs to train.")
@@ -58,7 +59,9 @@ setup_logging(log_level="INFO")
 
 def make_notifier() -> SlackNotifier | None:
     if platform.system().lower() == "linux":
-        return SlackNotifier(slack_token=os.environ["SLACK_BOT_TOKEN"], channel_id=os.environ["SLACK_CHANNEL_ID"])
+        return SlackNotifier(
+            slack_token=os.environ["SLACK_BOT_TOKEN"], channel_id=os.environ["SLACK_CHANNEL_ID"]
+        )
     else:
         return NoOpNotifier()
 
@@ -66,7 +69,6 @@ def make_notifier() -> SlackNotifier | None:
 @register_task(name="model", notifier=make_notifier)
 def train_model():
     experiment_name = FLAGS.experiment
-
     mixed_precision = FLAGS.mixed_precision and supports_mixed_precision()
 
     if experiment_name == "electricity":
@@ -88,25 +90,28 @@ def train_model():
     )
 
 
-# @register_task(name="model_distributed", notifier=make_notifier)
-# def train_model_dsitributed():
-#    experiment_name = FLAGS.experiment
-#    if experiment_name == "electricity":
-#        trainer = tft.experiments.Electricity().trainer
-#    else:
-#        raise RuntimeError("this is unexpected")
-#
-#    trainer.run_distributed(
-#        data_dir=FLAGS.data_dir,
-#        epochs=FLAGS.epochs,
-#        batch_size=FLAGS.batch_size,
-#        config=CONFIG.value,
-#        mixed_precision=FLAGS.mixed_precision and tft.util.supports_mixed_precision(),
-#        jit_module=FLAGS.jit_module,
-#        save_path="model.msgpack",
-#        profile=FLAGS.profile,
-#        verbose=FLAGS.verbose,
-#    )
+@register_task(name="model_distributed", notifier=make_notifier)
+def train_model_dsitributed():
+    experiment_name = FLAGS.experiment
+    mixed_precision = FLAGS.mixed_precision and supports_mixed_precision()
+
+    if experiment_name == "electricity":
+        trainer = tft.experiments.Electricity().trainer
+    elif experiment_name == "favorita":
+        trainer = None
+    else:
+        raise RuntimeError("this is unexpected")
+
+    trainer.run_distributed(
+        data_dir=f"{FLAGS.data_dir}/{experiment_name}",
+        epochs=FLAGS.epochs,
+        batch_size=FLAGS.batch_size,
+        config=CONFIG.value,
+        mixed_precision=mixed_precision,
+        jit_module=FLAGS.jit_module,
+        hooks_config=tft.HooksConfig.default(),
+        verbose=FLAGS.verbose,
+    )
 
 
 if __name__ == "__main__":

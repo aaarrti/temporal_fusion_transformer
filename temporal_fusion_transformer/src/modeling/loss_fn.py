@@ -9,12 +9,18 @@ from jax.tree_util import Partial
 from jaxtyping import Array, Float, Scalar, jaxtyped
 
 if TYPE_CHECKING:
-    QuantileLossFn = Callable[[Float[Array, "batch time n"], Float[Array, "batch time n q"]], Float[Array, "batch q"]]
+    QuantileLossFn = Callable[
+        [Float[Array, "batch time n"], Float[Array, "batch time n q"]], Float[Array, "batch q"]
+    ]
 
 
-def make_quantile_loss_fn(quantiles: Sequence[float], dtype: jnp.inexact = jnp.float32) -> QuantileLossFn:
+def make_quantile_loss_fn(
+    quantiles: Sequence[float], dtype: jnp.inexact = jnp.float32
+) -> QuantileLossFn:
     return Partial(
-        jax.jit(quantile_loss, static_argnames=["quantiles", "dtype"]), quantiles=tuple(quantiles), dtype=dtype
+        jax.jit(quantile_loss, static_argnames=["quantiles", "dtype"], donate_argnums=[0, 1]),
+        quantiles=tuple(quantiles),
+        dtype=dtype,
     )
 
 
@@ -93,4 +99,6 @@ def quantile_loss(
 
     """
     quantiles = jnp.asarray(quantiles, dtype)
-    return jax.vmap(pinball_loss, in_axes=[None, -1, -1, None], out_axes=-1)(y_true, y_pred, quantiles, dtype)
+    return jax.vmap(pinball_loss, in_axes=[None, -1, -1, None], out_axes=-1)(
+        y_true, y_pred, quantiles, dtype
+    )

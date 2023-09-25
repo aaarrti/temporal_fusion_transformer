@@ -25,6 +25,7 @@ from temporal_fusion_transformer.src.training.training_lib import (
     make_optimizer,
     train_step,
     validation_step,
+    make_param_replication,
 )
 
 if TYPE_CHECKING:
@@ -37,7 +38,13 @@ if TYPE_CHECKING:
         ValidationFn,
     )
 
-    HooksT = flax_utils.TrainingHooks | Callable[[int], flax_utils.TrainingHooks] | Literal["auto"] | HooksConfig | None
+    HooksT = (
+        flax_utils.TrainingHooks
+        | Callable[[int], flax_utils.TrainingHooks]
+        | Literal["auto"]
+        | HooksConfig
+        | None
+    )
     DynamicScaleT = DynamicScale | None | Literal["auto"]
     EarlyStoppingT = EarlyStopping | None | Literal["auto"]
     DeviceTypeT = Literal["gpu", "tpu"]
@@ -194,7 +201,9 @@ def _train(
     elif isinstance(hooks, Callable):
         hooks = hooks(num_training_steps)
 
-    model = make_temporal_fusion_transformer(config, data_config, jit_module=jit_module, dtype=compute_dtype)
+    model = make_temporal_fusion_transformer(
+        config, data_config, jit_module=jit_module, dtype=compute_dtype
+    )
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
     dropout_key, params_key, lstm_key = jax.random.split(prng_key, 3)
@@ -227,6 +236,7 @@ def _train(
         num_training_steps=num_training_steps,
         prefetch_buffer_size=prefetch_buffer_size,
         verbose=verbose,
+        param_replication=make_param_replication(),
     )
 
     logging.info(f"Finished training with: {training_metrics = }, {validation_metrics = }")

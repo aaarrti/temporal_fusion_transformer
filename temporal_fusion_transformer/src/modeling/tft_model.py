@@ -161,16 +161,24 @@ class InputPreprocessor(nn.Module):
         )
 
         if input_static_idx is None:
-            raise ValueError(f"When providing inputs as arrays, must specify provide `input_static_idx`")
+            raise ValueError(
+                f"When providing inputs as arrays, must specify provide `input_static_idx`"
+            )
 
         if input_known_real_idx is None:
-            raise ValueError(f"When providing inputs as arrays, must specify provide `input_known_real_idx`")
+            raise ValueError(
+                f"When providing inputs as arrays, must specify provide `input_known_real_idx`"
+            )
 
         if input_known_categorical_idx is None:
-            raise ValueError(f"When providing inputs as arrays, must specify provide `input_known_categorical_idx`")
+            raise ValueError(
+                f"When providing inputs as arrays, must specify provide `input_known_categorical_idx`"
+            )
 
         if input_observed_idx is None:
-            raise ValueError(f"When providing inputs as arrays, must specify provide `input_observed_idx`")
+            raise ValueError(
+                f"When providing inputs as arrays, must specify provide `input_observed_idx`"
+            )
 
         input_static_idx = list(input_static_idx)
         input_known_real_idx = list(input_known_real_idx)
@@ -189,7 +197,10 @@ class InputPreprocessor(nn.Module):
             unknown_indexes = sorted(
                 list(
                     set(
-                        input_static_idx + input_known_real_idx + input_known_categorical_idx + input_observed_idx
+                        input_static_idx
+                        + input_known_real_idx
+                        + input_known_categorical_idx
+                        + input_observed_idx
                     ).symmetric_difference(range(num_features))
                 )
             )
@@ -292,10 +303,14 @@ def make_temporal_fusion_transformer(
         dtype=dtype,
     )
     historical_rnn = nn.RNN(
-        nn.OptimizedLSTMCell(latent_dim, dtype=dtype), return_carry=True, split_rngs={"params": False, "lstm": True}
+        nn.OptimizedLSTMCell(latent_dim, dtype=dtype),
+        return_carry=True,
+        split_rngs={"params": False, "lstm": True},
     )
 
-    future_rnn = nn.RNN(nn.OptimizedLSTMCell(latent_dim, dtype=dtype), split_rngs={"params": False, "lstm": True})
+    future_rnn = nn.RNN(
+        nn.OptimizedLSTMCell(latent_dim, dtype=dtype), split_rngs={"params": False, "lstm": True}
+    )
 
     lstm_skip_connection = GatedLinearUnit(
         latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=True, dtype=dtype
@@ -320,7 +335,8 @@ def make_temporal_fusion_transformer(
     ]
 
     output_projection = [
-        TimeDistributed(nn.Dense(data_config.num_outputs, dtype=dtype)) for _ in range(len(config.model.quantiles))
+        TimeDistributed(nn.Dense(data_config.num_outputs, dtype=dtype))
+        for _ in range(len(config.model.quantiles))
     ]
 
     return module(

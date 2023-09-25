@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, Tuple, TypeVar, TypedDict, no_type_check
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Literal,
+    Mapping,
+    Protocol,
+    Tuple,
+    TypeVar,
+    TypedDict,
+    no_type_check,
+)
 
 import jax
 import optax
+from flax import jax_utils
+from flax.training.common_utils import shard_prng_key
 from flax import linen as nn
+from absl_extra.flax_utils import ParamReplication
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import field
 from flax.training.dynamic_scale import DynamicScale
@@ -78,10 +91,7 @@ class TrainStateContainer(TrainState):
         )
 
 
-@partial(
-    jax.jit,
-    donate_argnums=[0],
-)
+@partial(jax.jit, donate_argnums=[0])
 def train_step(
     state: TrainStateContainer,
     x_batch: InputStruct,
@@ -97,7 +107,9 @@ def train_step(
 
     if state.dynamic_scale is not None:
         # loss scaling logic is taken from https://github.com/google/flax/blob/main/examples/wmt/train.py#L177
-        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn)(state.params)
+        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn)(
+            state.params
+        )
         state.replace(dynamic_scale=dynamic_scale)
         state = state.apply_gradients(grads=grads)
     else:
@@ -142,7 +154,9 @@ def distributed_train_step(
         return jnp.sum(y_loss)
 
     if state.dynamic_scale is not None:
-        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn, axis_name="i")(state.params)
+        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(
+            loss_fn, axis_name="i"
+        )(state.params)
         state = state.replace(dynamic_scale=dynamic_scale)
     else:
         dynamic_scale, is_fin = None, None
@@ -239,7 +253,9 @@ def make_optimizer(
 
     """
     learning_rate = optax.cosine_decay_schedule(
-        init_value=config.init_lr, decay_steps=int(num_training_steps * config.decay_steps), alpha=config.alpha
+        init_value=config.init_lr,
+        decay_steps=int(num_training_steps * config.decay_steps),
+        alpha=config.alpha,
     )
     tx = optax.lion(learning_rate)
     if config.mechanize:
@@ -259,7 +275,18 @@ TX = TypeVar("TX", bound=optax.OptState)
 
 def restore_optimizer_state(opt_state: TX, restored: Mapping[str, ...]) -> TX:
     """Restore optimizer state from loaded checkpoint (or .msgpack file)."""
-    return tree_util.tree_unflatten(tree_util.tree_structure(opt_state), tree_util.tree_leaves(restored))
+    return tree_util.tree_unflatten(
+        tree_util.tree_structure(opt_state), tree_util.tree_leaves(restored)
+    )
+
+
+def make_param_replication() -> ParamReplication:
+    def replicate(ts: TrainStateContainer):
+        ts2 = jax_utils.replicate(ts)
+        rngs2 = tree_util.tree_map(shard_prng_key, ts.rngs)
+        return ts2.replace(rngs=rngs2)
+
+    return ParamReplication(replicate=replicate, un_replicate=jax_utils.unreplicate)
 
 
 if TYPE_CHECKING:
@@ -267,4 +294,6 @@ if TYPE_CHECKING:
         [TrainStateContainer, Float[Array, "batch time n"], Float[Array, "batch time n"]],
         Tuple[TrainStateContainer, MetricContainer],
     ]
-    ValidationFn = Callable[[TrainFn, Float[Array, "batch time n"], Float[Array, "batch time n"]], MetricContainer]
+    ValidationFn = Callable[
+        [TrainFn, Float[Array, "batch time n"], Float[Array, "batch time n"]], MetricContainer
+    ]
