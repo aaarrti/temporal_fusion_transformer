@@ -55,7 +55,7 @@ class HooksConfig:
     profile: bool
     checkpoint_directory: str | None
     delete_checkpoints_after_training: bool
-    report_progress_frequency: int
+    report_progress_frequency: int | None
     log_metrics_frequency: int
     monitor_exception: bool
     save_path: str
@@ -102,7 +102,7 @@ def make_training_hooks(
     profile: bool = False,
     checkpoint_directory: str = "checkpoints",
     delete_checkpoints_after_training: bool = False,
-    report_progress_frequency: int = 50,
+    report_progress_frequency: int | None = 50,
     log_metrics_frequency: int = 100,
     monitor_exception: bool = True,
     save_path: str | None = None,
@@ -220,7 +220,7 @@ def make_metrics_hooks(
     num_training_steps: int,
     epochs: int,
     logdir: str,
-    report_progress_frequency: int = 50,
+    report_progress_frequency: int | None = 50,
     log_metrics_frequency: bool = 100,
 ) -> TrainingHooks:
     logging.info(f"Writing tensorboard logs to {logdir}")
@@ -263,16 +263,19 @@ def make_metrics_hooks(
         execute_async=True,
     )
 
-    report_progress = clu.periodic_actions.ReportProgress(
-        every_steps=num_training_steps // report_progress_frequency,
-        num_train_steps=num_training_steps * epochs,
-        writer=training_logger,
-        every_secs=None,
-    )
+    if report_progress_frequency is not None:
+        report_progress = clu.periodic_actions.ReportProgress(
+            every_steps=num_training_steps // report_progress_frequency,
+            num_train_steps=num_training_steps * epochs,
+            writer=training_logger,
+            every_secs=None,
+        )
 
-    @pool
-    def report_progress_func(step: int, *args, **kwargs):
-        report_progress(step)
+        @pool
+        def report_progress_func(step: int, *args, **kwargs):
+            report_progress(step)
+
+        hooks.on_step_end.append(report_progress_func)
 
     def flush(*args, **kwargs):
         training_writer.flush()
@@ -282,7 +285,7 @@ def make_metrics_hooks(
     hooks.on_training_end.append(flush)
     hooks.on_step_end.append(log_training_metrics)
     hooks.on_epoch_end.append(write_validation_metrics_fn)
-    hooks.on_step_end.append(report_progress_func)
+
     return hooks
 
 
