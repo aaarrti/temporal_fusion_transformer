@@ -98,7 +98,8 @@ def train_step(
         # pass training=True as positional args, since flax.nn.jit does not support kwargs.
         y = state.apply_fn({"params": params}, x_batch, True, rngs=rngs)
         y_loss = state.loss_fn(y_batch, y)
-        return jnp.sum(y_loss)
+        # Sum over quantiles, average over batch entries.
+        return jnp.mean(jnp.sum(y_loss, axis=-1))
 
     if state.dynamic_scale is not None:
         # loss scaling logic is taken from https://github.com/google/flax/blob/main/examples/wmt/train.py#L177
@@ -147,7 +148,8 @@ def distributed_train_step(
     def loss_fn(params: FrozenDict) -> float:
         y = state.apply_fn({"params": params}, x_batch, True, rngs=rngs)
         y_loss = state.loss_fn(y_batch, y)
-        return jnp.sum(y_loss)
+        # Sum over quantiles, average over batch entries.
+        return jnp.mean(jnp.sum(y_loss, axis=-1))
 
     if state.dynamic_scale is not None:
         dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(
