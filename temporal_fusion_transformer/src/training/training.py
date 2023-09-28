@@ -16,33 +16,33 @@ from temporal_fusion_transformer.src.modeling.tft_model import (
 )
 from temporal_fusion_transformer.src.training.metrics import MetricContainer
 from temporal_fusion_transformer.src.training.training_hooks import (
+    EarlyStoppingConfig,
     HooksConfig,
     make_training_hooks,
-    EarlyStoppingConfig,
 )
 from temporal_fusion_transformer.src.training.training_lib import (
     TrainStateContainer,
     distributed_train_step,
     distributed_validation_step,
+    make_early_stopping,
     make_optimizer,
+    make_param_replication,
     train_step,
     validation_step,
-    make_param_replication,
-    make_early_stopping,
 )
 
 if TYPE_CHECKING:
     import tensorflow as tf
 
     from temporal_fusion_transformer.src.config_dict import ConfigDict, DataConfig
-    from temporal_fusion_transformer.src.modeling.tft_layers import ComputeDtype
     from temporal_fusion_transformer.src.lib_types import (
-        HooksT,
+        DeviceTypeT,
         DynamicScaleT,
         EarlyStoppingT,
-        DeviceTypeT,
+        HooksT,
         TrainingResult,
     )
+    from temporal_fusion_transformer.src.modeling.tft_layers import ComputeDtype
 
 
 def train(

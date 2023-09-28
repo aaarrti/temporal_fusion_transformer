@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 from jaxtyping import Array, Float32
 
-
 if TYPE_CHECKING:
     import tensorflow as tf
-    from temporal_fusion_transformer.src.modeling.tft_model import TemporalFusionTransformer
-    from temporal_fusion_transformer.src.training.training_lib import ApplyFunc
     from flax.core.frozen_dict import FrozenDict
+
+    from temporal_fusion_transformer.src.modeling.tft_model import (
+        TemporalFusionTransformer,
+    )
+    from temporal_fusion_transformer.src.training.training_lib import ApplyFunc
 
 
 class InferenceService:

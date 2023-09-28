@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import TYPE_CHECKING, Tuple, List, Literal
+from typing import TYPE_CHECKING, List, Literal, Tuple
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
@@ -11,16 +11,15 @@ if TYPE_CHECKING:
     import tensorflow as tf
 
     from temporal_fusion_transformer.src.config_dict import ConfigDict, ModelConfig
+    from temporal_fusion_transformer.src.lib_types import (
+        DeviceTypeT,
+        HooksT,
+        PredictFn,
+        TrainingResult,
+    )
     from temporal_fusion_transformer.src.training.metrics import MetricContainer
     from temporal_fusion_transformer.src.training.training_lib import (
         TrainStateContainer,
-    )
-
-    from temporal_fusion_transformer.src.lib_types import (
-        PredictFn,
-        TrainingResult,
-        HooksT,
-        DeviceTypeT,
     )
 
 

@@ -21,7 +21,7 @@ from temporal_fusion_transformer.src.modeling.tft_layers import (
 )
 
 if TYPE_CHECKING:
-    from temporal_fusion_transformer.src.config_dict import ModelConfig, DataConfig
+    from temporal_fusion_transformer.src.config_dict import DataConfig, ModelConfig
     from temporal_fusion_transformer.src.lib_types import ComputeDtype
 
 

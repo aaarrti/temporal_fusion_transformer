@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import Callable, overload, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, overload
+
 import numpy as np
 
-from temporal_fusion_transformer.src.config_dict import ModelConfig, DataConfig
-from temporal_fusion_transformer.src.modeling.tft_model import TemporalFusionTransformer, TftOutputs
+from temporal_fusion_transformer.src.config_dict import DataConfig, ModelConfig
+from temporal_fusion_transformer.src.modeling.tft_model import (
+    TemporalFusionTransformer,
+    TftOutputs,
+)
 
 if TYPE_CHECKING:
     from temporal_fusion_transformer.src.lib_types import PredictFn

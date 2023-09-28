@@ -1,31 +1,34 @@
 ## Flax reimplementation of Temporal Fusion Transformer
 
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 #### Experiments
+
 Two experiments from the original publication are duplicated in this repository.
+
 - Electricity ✅
 - Favorita 🚧
 
-Additionally, we apply this model to [Hamburg Air Quality](https://repos.hcu-hamburg.de/handle/hcu/893) dataset,
-and compare forecasts with [BigQuery ML](https://cloud.google.com/bigquery/docs/reference/standard-sql/bigqueryml-syntax-create-time-series).
+Additionally, we apply this model to [Hamburg Air Quality](https://repos.hcu-hamburg.de/handle/hcu/893) dataset.
 
 #### Datasets
-You don't need `tensorflow` installation to run the model, however, 
+
+You don't need `tensorflow` installation to run the model, however,
 we use `tensorflow.data` for data loading, preprocessing, etc., as there is no better option up-to-date.
 
-#### Using with your data  🚧
+#### Using with your data 🚧
+
 TODO
 
-Joins required for `Favorita` dataset barely fit into memory, so we offload them [Big Query](https://cloud.google.com/bigquery/docs).
-In theory, you could also use [AWS Athena](https://aws.amazon.com/athena/) for you dataset.
-
 #### Training
-The training scripts in this repository are designed to run on [Cloud TPU](https://cloud.google.com/tpu).
+
+TODO
 
 ### Inference 🚧
+
 OpenXLA IREE?
 
-## References 
+## References
 
 - The implementation as well as experimental setting closely follow the ones described by Bryan Lim, Sercan O. Arik,
   Nicolas Loeff, Tomas Pfister
@@ -36,15 +39,7 @@ OpenXLA IREE?
   repository.
   If you need a local copy of it, run: `./scripts/clone_original_implementation.sh`
 
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-
-```shell
-isort $(find . -iregex '.*\(py\)')
-```
-
 ## Differences with original implementation
+
 - Supports multiple transformer blocks stacked
 - No attention output, as attention-based explanations do not fulfill sanity-checks (TODO: `quantus link`)
-
-#### TODOs:
-- check for re-compiles

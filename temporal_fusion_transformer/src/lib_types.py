@@ -1,19 +1,22 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Literal, Callable, TypedDict, Tuple
+    from typing import Callable, Literal, Tuple, TypedDict
 
-    from jax.random import KeyArray
     import jax.numpy as jnp
-    from flax.training.early_stopping import EarlyStopping
-    from flax.training.dynamic_scale import DynamicScale
     from absl_extra.flax_utils import TrainingHooks
+    from flax.training.dynamic_scale import DynamicScale
+    from flax.training.early_stopping import EarlyStopping
+    from jax.random import KeyArray
+
     from temporal_fusion_transformer.src.modeling.tft_model import TftOutputs
     from temporal_fusion_transformer.src.training.metrics import MetricContainer
-    from temporal_fusion_transformer.src.training.training_lib import TrainStateContainer
     from temporal_fusion_transformer.src.training.training_hooks import (
-        HooksConfig,
         EarlyStoppingConfig,
+        HooksConfig,
+    )
+    from temporal_fusion_transformer.src.training.training_lib import (
+        TrainStateContainer,
     )
 
     class PRNGCollection(TypedDict):

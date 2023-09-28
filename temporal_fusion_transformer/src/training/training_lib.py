@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-from functools import partial
-from typing import (
-    TYPE_CHECKING,
-    Callable,
-    Literal,
-    Mapping,
-    Tuple,
-    TypeVar,
-)
 import sys
+from functools import partial
+from typing import TYPE_CHECKING, Callable, Literal, Mapping, Tuple, TypeVar
 
 import jax
 import optax
-from flax import jax_utils
-from flax.training.common_utils import shard_prng_key
 from absl_extra.flax_utils import ParamReplication
+from flax import jax_utils
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import field
+from flax.training.common_utils import shard_prng_key
 from flax.training.dynamic_scale import DynamicScale
 from flax.training.early_stopping import EarlyStopping
 from flax.training.train_state import TrainState
@@ -29,12 +22,14 @@ from jaxtyping import Array, Float, Scalar
 from temporal_fusion_transformer.src.modeling.tft_layers import InputStruct
 from temporal_fusion_transformer.src.training.metrics import MetricContainer
 
-
 if TYPE_CHECKING:
     import tensorflow as tf
+
     from temporal_fusion_transformer.src.config_dict import OptimizerConfig
     from temporal_fusion_transformer.src.lib_types import PRNGCollection
-    from temporal_fusion_transformer.src.training.training_hooks import EarlyStoppingConfig
+    from temporal_fusion_transformer.src.training.training_hooks import (
+        EarlyStoppingConfig,
+    )
 
 
 if sys.version_info >= (3, 10):

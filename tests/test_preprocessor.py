@@ -1,31 +1,30 @@
+import unittest
 from pathlib import Path
 
 import chex
 import jax
 import numpy as np
-import unittest
-import pytest
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 import polars as pl
 import polars.testing
+import pytest
 import tensorflow as tf
-
 from absl_extra.flax_utils import load_from_msgpack
+from keras.preprocessing import timeseries_dataset_from_array
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
+from temporal_fusion_transformer.src.experiments.electricity import (
+    DataPreprocessor,
+    apply_preprocessor,
+    inverse_transform,
+    inverse_transform_for_single_id,
+    make_time_series_dataset,
+    restore_timestamps,
+)
 from temporal_fusion_transformer.src.experiments.util import (
     deserialize_preprocessor,
     serialize_preprocessor,
+    time_series_to_array,
 )
-from keras.preprocessing import timeseries_dataset_from_array
-from temporal_fusion_transformer.src.experiments.util import time_series_to_array
-from temporal_fusion_transformer.src.experiments.electricity import (
-    inverse_transform_for_single_id,
-    DataPreprocessor,
-    inverse_transform,
-    apply_preprocessor,
-    restore_timestamps,
-)
-from temporal_fusion_transformer.src.experiments.electricity import make_time_series_dataset
 
 
 def test_serialize_preprocessor(tmp_path: Path):

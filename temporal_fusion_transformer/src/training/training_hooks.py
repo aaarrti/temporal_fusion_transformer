@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import gc
 import os
-import sys
 import platform
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 from traceback import format_exception
-from typing import TypedDict, TYPE_CHECKING
-from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypedDict
 
 import clu.metric_writers
 import clu.periodic_actions
@@ -20,9 +20,9 @@ from etils import epath
 from jaxtyping import Array, Float
 from orbax.checkpoint import (
     AsyncCheckpointer,
+    CheckpointManager,
     CheckpointManagerOptions,
     PyTreeCheckpointHandler,
-    CheckpointManager,
     checkpoint_utils,
 )
 
@@ -32,9 +32,12 @@ from temporal_fusion_transformer.src.training.training_lib import (
 
 if TYPE_CHECKING:
     from absl_extra.flax_utils import StepType
-    from temporal_fusion_transformer.src.training.metrics import MetricContainer
-    from temporal_fusion_transformer.src.training.training_lib import TrainStateContainer
+
     from temporal_fusion_transformer.src.modeling.tft_layers import InputStruct
+    from temporal_fusion_transformer.src.training.metrics import MetricContainer
+    from temporal_fusion_transformer.src.training.training_lib import (
+        TrainStateContainer,
+    )
 
     class LogsDict(TypedDict):
         training_state: TrainStateContainer

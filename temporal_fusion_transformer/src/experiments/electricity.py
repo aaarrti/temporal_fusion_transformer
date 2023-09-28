@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, List, Mapping, Tuple, TypedDict, Callable, Literal
+from typing import TYPE_CHECKING, Callable, List, Literal, Mapping, Tuple, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -18,12 +18,15 @@ from temporal_fusion_transformer.src.experiments.base import (
     MultiHorizonTimeSeriesDataset,
     TrainerBase,
 )
-from temporal_fusion_transformer.src.experiments.configs import fixed_parameters, hyperparameters
+from temporal_fusion_transformer.src.experiments.configs import (
+    fixed_parameters,
+    hyperparameters,
+)
 from temporal_fusion_transformer.src.experiments.util import (
-    deserialize_preprocessor,
-    time_series_dataset_from_dataframe,
-    persist_dataset,
     count_groups,
+    deserialize_preprocessor,
+    persist_dataset,
+    time_series_dataset_from_dataframe,
 )
 
 if TYPE_CHECKING:
@@ -31,9 +34,17 @@ if TYPE_CHECKING:
     import tensorflow as tf
     from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-    from temporal_fusion_transformer.src.config_dict import ConfigDict, DataConfig, ModelConfig
+    from temporal_fusion_transformer.src.config_dict import (
+        ConfigDict,
+        DataConfig,
+        ModelConfig,
+    )
     from temporal_fusion_transformer.src.experiments.base import PredictFn
-    from temporal_fusion_transformer.src.lib_types import HooksT, DeviceTypeT, TrainingResult
+    from temporal_fusion_transformer.src.lib_types import (
+        DeviceTypeT,
+        HooksT,
+        TrainingResult,
+    )
 
 try:
     import polars as pl

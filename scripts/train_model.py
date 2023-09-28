@@ -10,11 +10,11 @@ import platform
 # For debugging
 import jax
 from absl import flags, logging
+from absl_extra.cuda_utils import supports_mixed_precision
 from absl_extra.logging_utils import setup_logging
 from absl_extra.notifier import NoOpNotifier, SlackNotifier
 from absl_extra.tasks import register_task, run
 from ml_collections import config_flags
-from absl_extra.cuda_utils import supports_mixed_precision
 
 import temporal_fusion_transformer as tft
 

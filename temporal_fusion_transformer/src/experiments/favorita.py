@@ -7,25 +7,28 @@ from datetime import datetime, timedelta
 from functools import partial
 from glob import glob
 from importlib import util
-from typing import TYPE_CHECKING, Literal, Mapping, Tuple, TypedDict, Callable, List
+from typing import TYPE_CHECKING, Callable, List, Literal, Mapping, Tuple, TypedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from absl import logging
+from lib_types import PredictFn
 from tqdm.auto import tqdm
 
-from lib_types import PredictFn
 from temporal_fusion_transformer.src.experiments.base import (
     DataPreprocessorBase,
     MultiHorizonTimeSeriesDataset,
     TrainerBase,
 )
-from temporal_fusion_transformer.src.experiments.configs import fixed_parameters, hyperparameters
+from temporal_fusion_transformer.src.experiments.configs import (
+    fixed_parameters,
+    hyperparameters,
+)
 from temporal_fusion_transformer.src.experiments.util import (
-    time_series_dataset_from_dataframe,
-    persist_dataset,
     deserialize_preprocessor,
+    persist_dataset,
+    time_series_dataset_from_dataframe,
 )
 
 if TYPE_CHECKING:
@@ -33,7 +36,11 @@ if TYPE_CHECKING:
     import tensorflow as tf
 
     from temporal_fusion_transformer.src.config_dict import ConfigDict, ModelConfig
-    from temporal_fusion_transformer.src.lib_types import HooksT, DeviceTypeT, TrainingResult
+    from temporal_fusion_transformer.src.lib_types import (
+        DeviceTypeT,
+        HooksT,
+        TrainingResult,
+    )
 
 try:
     import polars as pl
