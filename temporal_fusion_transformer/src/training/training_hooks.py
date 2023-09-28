@@ -200,7 +200,7 @@ def make_checkpoint_hooks(
         hooks.on_training_end.append(delete_checkpoints)
 
     def save_weight_fn(training_state: TrainStateContainer):
-        save_as_msgpack(training_state.params, save_path)
+        save_as_msgpack(training_state.params, save_path, compression="GZIP")
 
     if save_path is not None:
         hooks.on_training_end.append(save_weight_fn)

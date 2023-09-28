@@ -58,7 +58,7 @@ def train_step(
         y = state.apply_fn({"params": params}, x_batch, True, rngs=rngs)
         y_loss = state.loss_fn(y_batch, y)
         # Sum over quantiles, average over batch entries.
-        return jnp.mean(jnp.sum(y_loss, axis=-1))
+        return jnp.mean(y_loss)
 
     if state.dynamic_scale is not None:
         # loss scaling logic is taken from https://github.com/google/flax/blob/main/examples/wmt/train.py#L177
@@ -106,7 +106,7 @@ def distributed_train_step(
         y = state.apply_fn({"params": params}, x_batch, True, rngs=rngs)
         y_loss = state.loss_fn(y_batch, y)
         # Sum over quantiles, average over batch entries.
-        return jnp.mean(jnp.sum(y_loss, axis=-1))
+        return jnp.mean(y_loss)
 
     if state.dynamic_scale is not None:
         dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn, axis_name="i")(state.params)
