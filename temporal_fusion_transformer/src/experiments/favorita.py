@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from absl import logging
-from lib_types import PredictFn
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src.experiments.base import (
@@ -40,6 +39,7 @@ if TYPE_CHECKING:
         DeviceTypeT,
         HooksT,
         TrainingResult,
+        PredictFn
     )
 
 try:
@@ -175,12 +175,12 @@ class Trainer(TrainerBase):
         *,
         data_dir: str,
         batch_size: int,
+        device_type: DeviceTypeT,
         config: ConfigDict | Literal["auto"] = "auto",
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
         verbose: bool = True,
-        device_type: DeviceTypeT = "gpu",
         prefetch_buffer_size: int = 0,
         hooks: HooksT = "auto",
     ) -> TrainingResult:
@@ -367,12 +367,12 @@ def read_parquet(
     lf = ctx.execute(
         """
         SELECT * FROM temporal
-        LEFT JOIN oil USING(date)
-        LEFT JOIN store_info USING(store_nbr)
-        JOIN transaction USING(store_nbr, date)
-        LEFT JOIN national_holidays USING(date)
-        LEFT JOIN regional_holidays USING(date, state)
-        LEFT JOIN local_holidays USING(date, city)
+            LEFT JOIN oil USING(date)
+            JOIN store_info USING(store_nbr)
+            JOIN transaction USING(store_nbr, date)
+            LEFT JOIN national_holidays USING(date)
+            LEFT JOIN regional_holidays USING(date, state)
+            LEFT JOIN local_holidays USING(date, city)
         """,
         eager=False,
     )
@@ -448,6 +448,7 @@ def read_temporal(
 
 
 def make_sql_context(data_dir: str) -> pl.SQLContext:
+    store_info = pl.scan_parquet(f"{data_dir}/stores.parquet").pipe(downcast_dataframe)
     items = pl.scan_parquet(f"{data_dir}/items.parquet").pipe(downcast_dataframe)
     transactions = pl.scan_parquet(f"{data_dir}/transactions.parquet").pipe(downcast_dataframe)
     oil = pl.scan_parquet(f"{data_dir}/oil.parquet").rename({"dcoilwtico": "oil_price"}).pipe(downcast_dataframe)
@@ -479,6 +480,7 @@ def make_sql_context(data_dir: str) -> pl.SQLContext:
         national_holidays=national_holidays,
         regional_holidays=regional_holidays,
         local_holidays=local_holidays,
+        store_info=store_info
     )
     return ctx
 

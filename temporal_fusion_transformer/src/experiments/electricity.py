@@ -213,12 +213,12 @@ class Trainer(TrainerBase):
         *,
         data_dir: str,
         batch_size: int,
+        device_type: DeviceTypeT,
         config: ConfigDict | Literal["auto"] = "auto",
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
         verbose: bool = True,
-        device_type: DeviceTypeT = "gpu",
         prefetch_buffer_size: int = 0,
         hooks: HooksT = "auto",
     ) -> TrainingResult:
