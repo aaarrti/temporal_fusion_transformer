@@ -1,45 +1,53 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING, Callable, Sequence
+from typing import TYPE_CHECKING, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
-from jaxtyping import Array, Float, Scalar, jaxtyped
 
 if TYPE_CHECKING:
-    QuantileLossFn = Callable[
-        [Float[Array, "batch time n"], Float[Array, "batch time n q"]], Float[Array, "batch q"]
-    ]
+    from temporal_fusion_transformer.src.lib_types import ComputeDtype, LossFn
 
 
-def make_quantile_loss_fn(
-    quantiles: Sequence[float], dtype: jnp.inexact = jnp.float32
-) -> QuantileLossFn:
+def make_quantile_loss_fn(quantiles: Sequence[float], dtype: ComputeDtype = jnp.float32) -> LossFn:
+    """
+
+    Parameters
+    ----------
+    quantiles
+    dtype
+
+    Returns
+    -------
+
+    fn:
+        Function which take 3D and 4D array, and outputs 2D array (batch, quantiles)
+
+    """
     return Partial(
-        jax.jit(quantile_loss, static_argnames=["quantiles", "dtype"], donate_argnums=[0, 1]),
+        quantile_loss,
         quantiles=tuple(quantiles),
         dtype=dtype,
     )
 
 
-@jaxtyped
 @functools.partial(
     jax.jit,
     # Works on GPU, but fails on Kaggle TPU ¯\_(ツ)_/¯
-    # static_argnums=[2, 3],
-    # static_argnames=["tau", "dtype"],
-    static_argnums=[3],
-    static_argnames=["dtype"],
+    static_argnums=[2, 3],
+    static_argnames=["tau", "dtype"],
+    # static_argnums=[3],
+    # static_argnames=["dtype"],
     inline=True,
 )
 def pinball_loss(
-    y_true: Float[Array, "batch time n"],
-    y_pred: Float[Array, "batch time n"],
-    tau: Float[Scalar],
-    dtype: jnp.inexact = jnp.float32,
-) -> Float[Array, "batch 1"]:
+    y_true: jnp.ndarray,
+    y_pred: jnp.ndarray,
+    tau: float,
+    dtype: ComputeDtype = jnp.float32,
+):
     """
     Computes the pinball loss between `y_true` and `y_pred`.
 
@@ -54,9 +62,9 @@ def pinball_loss(
     Parameters
     ----------
     y_true:
-        Targets
+        3D float (batch time n)
     y_pred:
-        Predictions
+        3D float (batch time n)
     tau:
         Quantile to use for loss calculations (between 0 & 1)
     dtype:
@@ -82,20 +90,27 @@ def pinball_loss(
     return jnp.maximum(jnp.mean(error, axis=1), jnp.finfo(dtype).eps)
 
 
-@jaxtyped
+@functools.partial(
+    jax.jit,
+    static_argnums=[2, 3],
+    static_argnames=["quantiles", "dtype"],
+    inline=True,
+)
 def quantile_loss(
-    y_true: Float[Array, "batch time n"],
-    y_pred: Float[Array, "batch time n q"],
-    quantiles: Float[Array, "q"],
-    dtype: jnp.inexact = jnp.float32,
-) -> Float[Array, "batch n"]:
+    y_true: jnp.ndarray,
+    y_pred: jnp.ndarray,
+    quantiles: Tuple[float, ...],
+    dtype: ComputeDtype = jnp.float32,
+):
     """
     Compute pinball loss for different quantiles stacked over last axis.
 
     Parameters
     ----------
-    y_true
-    y_pred
+    y_true:
+        3D float (batch time n)
+    y_pred:
+        4D float (batch time n q)
     quantiles
     dtype
 
@@ -107,6 +122,7 @@ def quantile_loss(
 
     """
     quantiles = jnp.asarray(quantiles, dtype)
-    return jax.vmap(pinball_loss, in_axes=[None, -1, -1, None], out_axes=-1)(
+    q_loss = jax.vmap(pinball_loss, in_axes=[None, -1, -1, None], out_axes=-1)(
         y_true, y_pred, quantiles, dtype
     )
+    return jnp.sum(q_loss, axis=-1)

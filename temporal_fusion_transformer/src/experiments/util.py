@@ -8,7 +8,9 @@ from absl import logging
 from absl_extra.flax_utils import save_as_msgpack
 from flax.serialization import msgpack_restore
 from jax.tree_util import tree_map
+import jax.numpy as jnp
 from toolz import functoolz
+from jaxtyping import Array, Float
 
 try:
     import polars as pl
@@ -142,17 +144,15 @@ def time_series_dataset_from_dataframe(
     # since we don't want any synthetic repetitions.
     # -1 for TARGETS
     num_inputs = len(inputs)
-
-    time_series_list = []
-    groups = list(df.groupby(id_column))
+    num_groups = count_groups(df, id_column)
 
     def make_time_series_fn(sub_df: pl.DataFrame) -> tf.data.Dataset:
-        x: np.ndarray = sub_df[inputs + targets].to_numpy(order="c")
+        arr: np.ndarray = sub_df[inputs + targets].to_numpy(order="c")
 
         time_series: tf.data.Dataset = timeseries_dataset_from_array(
-            x,
-            None,
-            total_time_steps,
+            arr,
+            targets=None,
+            sequence_length=total_time_steps,
             batch_size=None,
         )
         time_series = time_series.map(
@@ -162,14 +162,38 @@ def time_series_dataset_from_dataframe(
         )
         return time_series
 
-    if len(groups) == 0:
+    if num_groups == 1:
         return make_time_series_fn(df)
 
-    for id_i, df_i in tqdm(groups, desc="Converting to time-series dataset"):
-        time_series_i = make_time_series_fn(df_i)
-        time_series_list.append(time_series_i)
+    def generator():
+        for id_i, df_i in tqdm(df.groupby(id_column), desc="Converting to time-series dataset"):
+            time_series_i = make_time_series_fn(df_i)
+            yield time_series_i
 
-    return functoolz.reduce(lambda a, b: a.concatenate(b), time_series_list)
+    return functoolz.reduce(lambda a, b: a.concatenate(b), generator())
+
+
+def time_series_to_array(ts: np.ndarray) -> np.ndarray:
+    """
+
+    Parameters
+    ----------
+    ts:
+        2D time series, or 3D batched time series.
+
+    Returns
+    -------
+
+    arr:
+        2D array, without repeated instances.
+
+    """
+    if np.ndim(ts) != 3:
+        raise ValueError("ts must be a 2D or 3d array")
+
+    first_ts = ts[0, :-1]
+    rest = [i[-1] for i in ts]
+    return np.concatenate([first_ts, rest], axis=0)
 
 
 def persist_dataset(
@@ -187,3 +211,7 @@ def persist_dataset(
     test_df.write_parquet(f"{save_dir}/test.parquet")
     logging.info("Saving preprocessor state")
     serialize_preprocessor(preprocessor, save_dir)
+
+
+def count_groups(df: pl.DataFrame, id_column: str) -> int:
+    return int(df[id_column].unique_counts().to_list()[0])

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
         quantiles: Sequence[float]
         attention_dropout_rate: float
 
-    class _DatasetConfig(Protocol):
+    class _DataConfig(Protocol):
         """
         Attributes
         ----------
@@ -83,10 +83,6 @@ if TYPE_CHECKING:
             Initial learning rate.
         decay_steps:
             % of training steps, after which `end_lr` must be reached.
-        mechanize:
-            If set to true, will wrap optimizer into `optax.contrib.mechanize`.
-            This optimizer requires no LR fine-tuning, however greatly increases compilation time,
-            and can cause NaN's, default=False.
 
         """
 
@@ -95,9 +91,8 @@ if TYPE_CHECKING:
         alpha: float
         ema: float
         clipnorm: float
-        mechanize: bool
 
     ConfigDict = Union[ml_collections.ConfigDict, _ConfigDictProto]
     OptimizerConfig = Union[ml_collections.ConfigDict, _OptimizerConfig]
     ModelConfig = Union[ml_collections.ConfigDict, _ModelConfig]
-    DatasetConfig = Union[ml_collections.ConfigDict, _DatasetConfig]
+    DataConfig = Union[ml_collections.ConfigDict, _DataConfig]

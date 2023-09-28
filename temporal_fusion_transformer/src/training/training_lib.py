@@ -6,19 +6,15 @@ from typing import (
     Callable,
     Literal,
     Mapping,
-    Protocol,
     Tuple,
     TypeVar,
-    TypedDict,
 )
 import sys
-from dataclasses import dataclass
 
 import jax
 import optax
 from flax import jax_utils
 from flax.training.common_utils import shard_prng_key
-from flax import linen as nn
 from absl_extra.flax_utils import ParamReplication
 from flax.core.frozen_dict import FrozenDict
 from flax.struct import field
@@ -28,8 +24,7 @@ from flax.training.train_state import TrainState
 from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
-from jax.random import KeyArray
-from jaxtyping import Array, Float, Scalar, jaxtyped
+from jaxtyping import Array, Float, Scalar
 
 from temporal_fusion_transformer.src.modeling.tft_layers import InputStruct
 from temporal_fusion_transformer.src.training.metrics import MetricContainer
@@ -37,28 +32,9 @@ from temporal_fusion_transformer.src.training.metrics import MetricContainer
 
 if TYPE_CHECKING:
     import tensorflow as tf
-    from temporal_fusion_transformer.src.modeling.loss_fn import QuantileLossFn
-    from flax.linen.module import CollectionFilter
-
     from temporal_fusion_transformer.src.config_dict import OptimizerConfig
-
-    class PRNGCollection(TypedDict):
-        dropout: KeyArray
-        lstm: KeyArray
-
-    class ApplyFunc(Protocol):
-        @jaxtyped
-        def __call__(
-            self,
-            params: Mapping[str, ...],
-            x: Float[Array, "batch time n"],
-            training: bool = False,
-            *,
-            rngs: PRNGCollection | None = None,
-            mutable: CollectionFilter = False,
-            capture_intermediates: bool | Callable[[nn.Module, str], bool] = False,
-        ) -> Float[Array, "batch time n q"]:
-            ...
+    from temporal_fusion_transformer.src.lib_types import PRNGCollection
+    from temporal_fusion_transformer.src.training.training_hooks import EarlyStoppingConfig
 
 
 if sys.version_info >= (3, 10):
@@ -67,20 +43,8 @@ else:
     dc_kw = dict()
 
 
-@dataclass(frozen=True, **dc_kw)
-class EarlyStoppingConfig:
-    best_metric: int
-    min_delta: float
-    patience: int
-
-    @staticmethod
-    def default() -> EarlyStoppingConfig:
-        return EarlyStoppingConfig(best_metric=999, min_delta=0.1, patience=100)
-
-
 class TrainStateContainer(TrainState):
-    apply_fn: ApplyFunc = field(pytree_node=False)
-    loss_fn: QuantileLossFn = field(pytree_node=False)
+    loss_fn: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray] = field(pytree_node=False)
     rngs: PRNGCollection
     early_stopping: EarlyStopping | None = None
     dynamic_scale: DynamicScale | None = None
@@ -256,8 +220,6 @@ def make_optimizer(
         alpha=config.alpha,
     )
     tx = optax.lion(learning_rate)
-    if config.mechanize:
-        tx = optax.contrib.mechanize(tx)
 
     if config.clipnorm != 0:
         tx = optax.chain(optax.adaptive_grad_clip(config.clipnorm), tx)
@@ -291,13 +253,3 @@ def make_early_stopping(config: EarlyStoppingConfig) -> EarlyStopping:
     return EarlyStopping(
         best_metric=config.best_metric, min_delta=config.min_delta, patience=config.patience
     )
-
-
-if TYPE_CHECKING:
-    TrainFn = Callable[
-        [TrainStateContainer, Float[Array, "batch time n"], Float[Array, "batch time n"]],
-        Tuple[TrainStateContainer, MetricContainer],
-    ]
-    ValidationFn = Callable[
-        [TrainFn, Float[Array, "batch time n"], Float[Array, "batch time n"]], MetricContainer
-    ]

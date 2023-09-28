@@ -45,3 +45,6 @@ isort $(find . -iregex '.*\(py\)')
 ## Differences with original implementation
 - Supports multiple transformer blocks stacked
 - No attention output, as attention-based explanations do not fulfill sanity-checks (TODO: `quantus link`)
+
+#### TODOs:
+- check for re-compiles

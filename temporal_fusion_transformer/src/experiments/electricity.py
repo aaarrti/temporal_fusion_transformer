@@ -4,14 +4,13 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
-from typing import TYPE_CHECKING, List, Mapping, Tuple, TypedDict, Callable
+from typing import TYPE_CHECKING, List, Mapping, Tuple, TypedDict, Callable, Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from absl import logging
 from tqdm.auto import tqdm
-from jaxtyping import Float, Array
 from tempfile import TemporaryDirectory
 
 from temporal_fusion_transformer.src.experiments.base import (
@@ -19,25 +18,27 @@ from temporal_fusion_transformer.src.experiments.base import (
     MultiHorizonTimeSeriesDataset,
     TrainerBase,
 )
-from temporal_fusion_transformer.src.experiments.config import get_config
+from temporal_fusion_transformer.src.experiments.configs.fixed_parameters import get_config
 from temporal_fusion_transformer.src.experiments.util import (
     deserialize_preprocessor,
     time_series_dataset_from_dataframe,
     persist_dataset,
+    count_groups,
 )
-from temporal_fusion_transformer.src.training.training_hooks import HooksConfig
 
 if TYPE_CHECKING:
     import polars as pl
     import tensorflow as tf
     from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-    from temporal_fusion_transformer.src.config_dict import ConfigDict
+    from temporal_fusion_transformer.src.config_dict import ConfigDict, DataConfig, ModelConfig
     from temporal_fusion_transformer.src.training.metrics import MetricContainer
     from temporal_fusion_transformer.src.training.training import DeviceTypeT
     from temporal_fusion_transformer.src.training.training_lib import (
         TrainStateContainer,
     )
+    from temporal_fusion_transformer.src.experiments.base import PredictFn
+    from temporal_fusion_transformer.src.lib_types import HooksT, DeviceTypeT
 
 try:
     import polars as pl
@@ -51,9 +52,7 @@ except ModuleNotFoundError as ex:
 
 
 class Electricity(MultiHorizonTimeSeriesDataset):
-    @property
-    def trainer(self) -> Trainer:
-        return Trainer()
+    trainer = property(lambda self: Trainer())
 
     def __init__(
         self,
@@ -109,6 +108,22 @@ class Electricity(MultiHorizonTimeSeriesDataset):
     ):
         return convert_to_parquet(download_dir, output_dir, delete_processed=delete_processed)
 
+    def reload_preprocessor(self, filename: str) -> DataPreprocessor:
+        return DataPreprocessor.load(filename)
+
+    def reload_model(
+        self, filename: str, config: ModelConfig, jit_module: bool, return_attention: bool = True
+    ) -> PredictFn:
+        from temporal_fusion_transformer.src.inference.util import reload_model
+
+        return reload_model(
+            filename,
+            model_config=config,
+            data_config=get_config("electricty"),
+            jit_module=jit_module,
+            return_attention=return_attention,
+        )
+
 
 class DataPreprocessor(DataPreprocessorBase):
     def __init__(self, preprocessor: PreprocessorDict, total_time_steps: int | None = None):
@@ -135,35 +150,11 @@ class DataPreprocessor(DataPreprocessorBase):
             total_time_steps=self.total_time_steps,
         )
 
-    def inverse_transform(
-        self, x_batch: Float[Array, "batch n"], y_batch: Float["batch 1"]
-    ) -> pl.DataFrame:
-        # see config.py for indexes
-        # 1 -> month
-        # 2 -> day
-        # 3 -> hour
-        # 4 ->  day of week
-        # 5 -> id
-        encoded_ids = x_batch[..., 5]
-        ids = self.preprocessor["categorical"]["id"].inverse_transform(encoded_ids)
-        day = self.preprocessor["categorical"]["day"].inverse_transform(x_batch[..., 2])
-        hour = self.preprocessor["categorical"]["hour"].inverse_transform(x_batch[..., 3])
-        day_of_week = self.preprocessor["categorical"]["day_of_week"].inverse_transform(
-            x_batch[..., 4]
-        )
+    def inverse_transform(self, x_batch: np.ndarray, y_batch: np.ndarray) -> pl.DataFrame:
+        return inverse_transform(self.preprocessor, x_batch, y_batch)
 
-        year_encoded = x_batch[..., 0]
-
-        df_list = []
-
-        for i, id_i in enumerate(ids):
-            idx = np.argwhere(encoded_ids == id_i)
-            day_i = day[idx]
-            hour_i = day_i
-
-            df = pl.DataFrame().with_cols(
-                id=ids[i],
-            )
+    def restore_timestamps(self, df: pl.DataFrame) -> List[datetime]:
+        return restore_timestamps(df)
 
 
 class Trainer(TrainerBase):
@@ -176,13 +167,10 @@ class Trainer(TrainerBase):
         mixed_precision: bool = False,
         jit_module: bool = False,
         verbose: bool = True,
-        hooks_config: HooksConfig | None = None,
+        hooks: HooksT = "auto",
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         from temporal_fusion_transformer.src.training.training import train
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
-
-        if hooks_config is None:
-            hooks_config = HooksConfig.default()
 
         data_config = get_config("electricity")
 
@@ -202,7 +190,7 @@ class Trainer(TrainerBase):
             mixed_precision=mixed_precision,
             epochs=epochs,
             verbose=verbose,
-            hooks=hooks_config,
+            hooks=hooks,
         )
 
     def run_distributed(
@@ -216,13 +204,10 @@ class Trainer(TrainerBase):
         verbose: bool = True,
         device_type: DeviceTypeT = "gpu",
         prefetch_buffer_size: int = 0,
-        hooks_config: HooksConfig | None = None,
+        hooks: HooksT = "auto",
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         from temporal_fusion_transformer.src.training.training import train_distributed
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
-
-        if hooks_config is None:
-            hooks_config = HooksConfig.default()
 
         data_config = get_config("electricity")
         num_devices = jax.device_count()
@@ -245,11 +230,11 @@ class Trainer(TrainerBase):
             device_type=device_type,
             prefetch_buffer_size=prefetch_buffer_size,
             verbose=verbose,
-            hooks=hooks_config,
+            hooks=hooks,
         )
 
 
-# -------------- actual implementations -----------------
+# -------------- actual implementations ------------------------------------------------------------------------------
 
 _ID_COLUMN = "id"
 _REAL_INPUTS = ["year"]
@@ -274,7 +259,7 @@ if TYPE_CHECKING:
 
         real: Mapping[str, StandardScaler]
         target: Mapping[str, StandardScaler]
-        categorical: CategoricalPreprocessorDict
+        categorical: Mapping[str, LabelEncoder]
 
 
 def make_dataset(
@@ -293,12 +278,7 @@ def make_dataset(
     )
 
     make_dataset_fn: Callable[[pl.DataFrame], tf.data.Dataset] = partial(
-        time_series_dataset_from_dataframe,
-        inputs=_INPUTS,
-        targets=_TARGETS,
-        total_time_steps=total_time_steps,
-        id_column=_ID_COLUMN,
-        preprocess_fn=partial(apply_preprocessor, preprocessor=preprocessor),
+        make_time_series_dataset, total_time_steps=total_time_steps, preprocessor=preprocessor
     )
     training_time_series: tf.data.Dataset = make_dataset_fn(training_df)
     validation_time_series: tf.data.Dataset = make_dataset_fn(validation_df)
@@ -403,7 +383,9 @@ def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
 
     label_encoders["id"].fit(df["id"].to_numpy())
 
-    for i, sub_df in tqdm(df.groupby("id"), desc="Training scalers", total=370):
+    num_groups = count_groups(df, "id")
+
+    for i, sub_df in tqdm(df.groupby("id"), desc="Training scalers", total=num_groups):
         target_scalers[i].fit(df[_TARGETS].to_numpy(order="c"))
         real_scalers[i].fit(df[_REAL_INPUTS].to_numpy(order="c"))
 
@@ -418,25 +400,43 @@ def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
 
 
 def apply_preprocessor(
-    df: pl.DataFrame,
-    preprocessor: PreprocessorDict,
+    df: pl.DataFrame, preprocessor: PreprocessorDict, skip_targets: bool = False
 ) -> pl.DataFrame:
-    # We don't declare them as constants, to avoid depending on external state.
+    """
+
+    Parameters
+    ----------
+    df
+    preprocessor
+    skip_targets:
+        Set to true, if data contains no ground truth targets, e.g., during inference on new data.
+
+    Returns
+    -------
+
+    """
     lf_list = []
 
-    for i, sub_df in tqdm(df.groupby("id"), total=370, desc="Applying scalers..."):
+    num_groups = count_groups(df, "id")
+
+    for i, sub_df in tqdm(df.groupby("id"), total=num_groups, desc="Applying scalers..."):
         sub_df: pl.DataFrame
         sub_lf: pl.LazyFrame = sub_df.lazy()
 
         x_real = df[_REAL_INPUTS].to_numpy(order="c")
-        x_target = df[_TARGETS].to_numpy(order="c")
-
         x_real = preprocessor["real"][i].transform(x_real)
-        x_target = preprocessor["target"][i].transform(x_target)
 
         sub_lf = sub_lf.with_columns(
-            [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real, _REAL_INPUTS)]
-        ).with_columns(pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target, _TARGETS))
+            [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real.T, _REAL_INPUTS)]
+        )
+
+        if not skip_targets:
+            x_target = df[_TARGETS].to_numpy(order="c")
+            x_target = preprocessor["target"][i].transform(x_target)
+            sub_lf = sub_lf.with_columns(
+                [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target.T, _TARGETS)]
+            )
+
         lf_list.append(sub_lf)
 
     df: pl.DataFrame = pl.concat(lf_list).collect()
@@ -457,25 +457,92 @@ def apply_preprocessor(
     return df
 
 
+def make_time_series_dataset(df, preprocessor, total_time_steps: int = 192):
+    return time_series_dataset_from_dataframe(
+        df,
+        inputs=_INPUTS,
+        targets=_TARGETS,
+        total_time_steps=total_time_steps,
+        id_column=_ID_COLUMN,
+        preprocess_fn=partial(apply_preprocessor, preprocessor=preprocessor),
+    )
+
+
 # -------------------- inference ---------------
 
 
-def restore_timestamps(arr) -> List[List[datetime]]:
-    # Indexes are taken from `config.py`
-    year = arr[..., 0]
-    month = arr[..., 1]
-    day = arr[..., 2]
-    hour = arr[..., 3]
+def inverse_transform(
+    preprocessor: PreprocessorDict,
+    x_batch: np.ndarray,
+    y_batch: np.ndarray,
+) -> pl.DataFrame:
+    ids = np.asarray(x_batch[..., 5], dtype=np.int32)
 
-    batch_size = arr.shape[0]
+    ids_str = preprocessor["categorical"]["id"].inverse_transform(ids)
 
-    timestamps_batch = []
+    if len(np.unique(ids)) == 1:
+        return inverse_transform_for_single_id(preprocessor, x_batch, y_batch, ids_str[0])
 
-    for i in range(batch_size):
-        timestamps = [
-            datetime(year=int(y), month=int(m), day=int(d), hour=int(h))
-            for y, m, d, h in zip(year[i], month[i], day[i], hour[i])
+    lf_list = []
+
+    for id_i in tqdm(ids_str):
+        idx_i = np.argwhere(ids == id_i).reshape(-1)
+        x_i = np.take(x_batch, idx_i, axis=0)
+        y_i = np.take(y_batch, idx_i, axis=0)
+
+        df = inverse_transform_for_single_id(preprocessor, x_i, y_i, id_i)
+
+        lf_list.append(df.lazy())
+
+    return pl.concat(lf_list).collect()
+
+
+def inverse_transform_for_single_id(
+    preprocessor: PreprocessorDict,
+    x_batch: np.ndarray,
+    y_batch: np.ndarray,
+    entity_id: str,
+) -> pl.LazyFrame:
+    config: DataConfig = get_config("electricity")
+
+    y_new = preprocessor["target"][entity_id].inverse_transform(y_batch).reshape(-1)
+
+    x_categorical = np.take(
+        x_batch, list(config.input_known_categorical_idx) + list(config.input_static_idx), axis=-1
+    )
+
+    x_categorical_new = [
+        preprocessor["categorical"][j].inverse_transform(np.asarray(i, dtype=np.int32))
+        for i, j in zip(x_categorical.T, _CATEGORICAL_INPUTS + [_ID_COLUMN])
+    ]
+
+    x_real = np.take(
+        x_batch, list(config.input_known_real_idx) + list(config.input_observed_idx), axis=-1
+    )
+
+    x_real_new = preprocessor["real"][entity_id].inverse_transform(x_real).reshape(-1)
+
+    return (
+        pl.DataFrame()
+        .with_columns(
+            [
+                pl.lit(i).alias(j)
+                for i, j in zip(x_categorical_new, _CATEGORICAL_INPUTS + [_ID_COLUMN])
+            ]
+        )
+        .with_columns(
+            [pl.lit(x_real_new).alias("year").cast(pl.UInt16), pl.lit(y_new).alias("power_usage")]
+        )
+        .rechunk()
+    )
+
+
+def restore_timestamps(df: pl.DataFrame) -> List[datetime]:
+    return df.with_columns(
+        [
+            pl.datetime("year", "month", "day", "hour")
+            .dt.strftime("%Y/%m/%d %H:%M:%S")
+            .alias("timestamp")
+            .str.to_datetime()
         ]
-        timestamps_batch.append(timestamps)
-
-    return timestamps_batch
+    )["timestamp"].to_list()

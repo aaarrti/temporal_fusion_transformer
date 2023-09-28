@@ -6,7 +6,7 @@ import flax.linen as nn
 import jax.numpy as jnp
 from absl import logging
 from flax import struct
-from jaxtyping import Array, Float, jaxtyped
+from jaxtyping import Array, Float
 
 from temporal_fusion_transformer.src.modeling.tft_layers import (
     DecoderBlock,
@@ -21,7 +21,7 @@ from temporal_fusion_transformer.src.modeling.tft_layers import (
 )
 
 if TYPE_CHECKING:
-    from temporal_fusion_transformer.src.config_dict import ConfigDict, DatasetConfig
+    from temporal_fusion_transformer.src.config_dict import ModelConfig, DataConfig
     from temporal_fusion_transformer.src.modeling.tft_layers import ComputeDtype
 
 
@@ -64,7 +64,6 @@ class TemporalFusionTransformer(nn.Module):
     dtype: ComputeDtype = jnp.float32
 
     @nn.compact
-    @jaxtyped
     def __call__(
         self, inputs: Float[Array, "batch time n"], training: bool = False
     ) -> Float[Array, "batch time n q"] | TftOutputs:
@@ -110,7 +109,9 @@ class TemporalFusionTransformer(nn.Module):
 
         for block in self.decoder_blocks:
             decoder_out = block(decoder_in, mask=mask, training=training)
-            decoder_out = nn.LayerNorm(dtype=self.dtype)(decoder_out + temporal_features)
+            decoder_out = nn.LayerNorm(dtype=self.dtype, name="layer_norm")(
+                decoder_out + temporal_features
+            )
             decoder_in = decoder_out
 
         # Final skip connection
@@ -136,12 +137,19 @@ class TemporalFusionTransformer(nn.Module):
 
     @staticmethod
     def from_config_dict(
-        config: ConfigDict,
-        data_config: DatasetConfig,
+        model_config: ModelConfig,
+        data_config: DataConfig,
         jit_module: bool = False,
         dtype: jnp.inexact = jnp.float32,
+        return_attention: bool = False,
     ) -> TemporalFusionTransformer:
-        return make_temporal_fusion_transformer(config, data_config, jit_module, dtype)
+        return make_temporal_fusion_transformer(
+            model_config=model_config,
+            data_config=data_config,
+            jit_module=jit_module,
+            dtype=dtype,
+            return_attention=return_attention,
+        )
 
 
 class InputPreprocessor(nn.Module):
@@ -247,10 +255,11 @@ class InputPreprocessor(nn.Module):
 
 
 def make_temporal_fusion_transformer(
-    config: ConfigDict,
-    data_config: DatasetConfig,
+    model_config: ModelConfig,
+    data_config: DataConfig,
     jit_module: bool = False,
     dtype: jnp.inexact = jnp.float32,
+    return_attention: bool = False,
 ) -> TemporalFusionTransformer:
     module = TemporalFusionTransformer
     if jit_module:
@@ -259,8 +268,8 @@ def make_temporal_fusion_transformer(
     num_known_real_inputs = len(data_config.input_known_real_idx)
     num_known_categorical_inputs = len(data_config.input_known_categorical_idx)
     num_observed_inputs = len(data_config.input_observed_idx)
-    latent_dim = config.model.latent_dim
-    dropout_rate = config.model.dropout_rate
+    latent_dim = model_config.latent_dim
+    dropout_rate = model_config.dropout_rate
     num_encoder_steps = data_config.num_encoder_steps
     total_time_steps = data_config.total_time_steps
 
@@ -278,6 +287,7 @@ def make_temporal_fusion_transformer(
         num_observed_inputs=num_observed_inputs,
         latent_dim=latent_dim,
         dtype=dtype,
+        name="embedding",
     )
 
     static_covariates_encoder = StaticCovariatesEncoder(
@@ -285,6 +295,7 @@ def make_temporal_fusion_transformer(
         dropout_rate=dropout_rate,
         num_static_inputs=len(data_config.static_categories_sizes),
         dtype=dtype,
+        name="static_covariates",
     )
 
     historical_variable_selection = VariableSelectionNetwork(
@@ -293,6 +304,7 @@ def make_temporal_fusion_transformer(
         num_inputs=num_known_real_inputs + num_known_categorical_inputs + num_observed_inputs,
         num_time_steps=num_encoder_steps,
         dtype=dtype,
+        name="historical_variable_selection",
     )
 
     future_variable_selection = VariableSelectionNetwork(
@@ -301,42 +313,59 @@ def make_temporal_fusion_transformer(
         num_time_steps=total_time_steps - num_encoder_steps,
         num_inputs=num_known_real_inputs + num_known_categorical_inputs,
         dtype=dtype,
+        name="future_variable_selection",
     )
     historical_rnn = nn.RNN(
-        nn.OptimizedLSTMCell(latent_dim, dtype=dtype),
+        nn.OptimizedLSTMCell(latent_dim, dtype=dtype, name="historical_lstm"),
         return_carry=True,
         split_rngs={"params": False, "lstm": True},
+        name="historical_rnn",
     )
 
     future_rnn = nn.RNN(
-        nn.OptimizedLSTMCell(latent_dim, dtype=dtype), split_rngs={"params": False, "lstm": True}
+        nn.OptimizedLSTMCell(latent_dim, dtype=dtype, name="future_lstm"),
+        split_rngs={"params": False, "lstm": True},
+        name="future_rnn",
     )
 
     lstm_skip_connection = GatedLinearUnit(
-        latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=True, dtype=dtype
+        latent_dim=latent_dim,
+        dropout_rate=dropout_rate,
+        time_distributed=True,
+        dtype=dtype,
+        name="glu_1",
     )
 
     static_context_skip_connection = GatedResidualNetwork(
-        latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=True, dtype=dtype
+        latent_dim=latent_dim,
+        dropout_rate=dropout_rate,
+        time_distributed=True,
+        dtype=dtype,
+        name="gru",
     )
 
     output_skip_connection = GatedLinearUnit(
-        latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=True, dtype=dtype
+        latent_dim=latent_dim,
+        dropout_rate=dropout_rate,
+        time_distributed=True,
+        dtype=dtype,
+        name="glu_2",
     )
 
     decoder_blocks = [
         DecoderBlock(
-            num_attention_heads=config.model.num_attention_heads,
+            num_attention_heads=model_config.num_attention_heads,
             latent_dim=latent_dim,
             dropout_rate=dropout_rate,
             dtype=dtype,
+            name=f"decode_{i}",
         )
-        for _ in range(config.model.num_decoder_blocks)
+        for i in range(model_config.num_decoder_blocks)
     ]
 
     output_projection = [
-        TimeDistributed(nn.Dense(data_config.num_outputs, dtype=dtype))
-        for _ in range(len(config.model.quantiles))
+        TimeDistributed(nn.Dense(data_config.num_outputs, dtype=dtype, name=f"dense_{i}"))
+        for i in range(len(model_config.quantiles))
     ]
 
     return module(
@@ -355,4 +384,5 @@ def make_temporal_fusion_transformer(
         num_encoder_steps=num_encoder_steps,
         total_time_steps=total_time_steps,
         dtype=dtype,
+        return_attention=return_attention,
     )

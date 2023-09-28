@@ -50,29 +50,22 @@ else:
 
 @dataclass(frozen=True, **dc_kw)
 class HooksConfig:
-    logdir: str | None
-    profile: bool
-    checkpoint_directory: str | None
-    delete_checkpoints_after_training: bool
-    report_progress_frequency: int | None
-    log_metrics_frequency: int
-    monitor_exception: bool
-    save_path: str
-    monitor_gpu_memory: bool
+    logdir: str | None = "tensorboard"
+    profile: bool = False
+    checkpoint_directory: str | None = "checkpoints"
+    delete_checkpoints_after_training: bool = True
+    report_progress_frequency: int | None = 50
+    log_metrics_frequency: int = 100
+    monitor_exception: bool = True
+    save_path: str = "model.msgpack"
+    monitor_gpu_memory: bool = True
 
-    @staticmethod
-    def default() -> HooksConfig:
-        return HooksConfig(
-            save_path="model.msgpack",
-            checkpoint_directory="checkpoints",
-            profile=False,
-            monitor_gpu_memory=True,
-            monitor_exception=True,
-            log_metrics_frequency=100,
-            report_progress_frequency=50,
-            logdir="tensorboard",
-            delete_checkpoints_after_training=True,
-        )
+
+@dataclass(frozen=True, **dc_kw)
+class EarlyStoppingConfig:
+    best_metric: float = 999
+    min_delta: float = 0.1
+    patience: int = 100
 
 
 def make_training_hooks(

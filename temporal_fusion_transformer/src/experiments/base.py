@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Tuple, overload
+from typing import TYPE_CHECKING, Tuple, List
+from datetime import datetime
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
     import numpy as np
+    import jax.numpy as jnp
     import polars as pl
     import tensorflow as tf
+    from typing import Callable
 
-    from temporal_fusion_transformer.src.config_dict import ConfigDict
+    from temporal_fusion_transformer.src.config_dict import ConfigDict, ModelConfig
     from temporal_fusion_transformer.src.training.metrics import MetricContainer
+    from temporal_fusion_transformer.src.config_dict import DataConfig
     from temporal_fusion_transformer.src.training.training_lib import (
         TrainStateContainer,
     )
+    from temporal_fusion_transformer.src.modeling.tft_model import TftOutputs
+
+    from temporal_fusion_transformer.src.lib_types import PredictFn, HooksConfig
 
 
 class MultiHorizonTimeSeriesDataset(ABC):
@@ -38,16 +45,6 @@ class MultiHorizonTimeSeriesDataset(ABC):
 
         """
         raise NotImplementedError
-
-    @overload
-    def make_dataset(
-        self, data_dir: str, save_dir: str
-    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessorBase]:
-        ...
-
-    @overload
-    def make_dataset(self, data_dir: str, save_dir: None = None) -> None:
-        ...
 
     @abstractmethod
     def make_dataset(
@@ -86,6 +83,16 @@ class MultiHorizonTimeSeriesDataset(ABC):
     def trainer(self) -> TrainerBase:
         raise NotImplementedError
 
+    @abstractmethod
+    def reload_preprocessor(self, filename: str) -> DataPreprocessorBase:
+        raise NotImplementedError
+
+    @abstractmethod
+    def reload_model(
+        self, filename: str, config: ModelConfig, jit_module: bool, return_attention: bool = True
+    ) -> PredictFn:
+        raise NotImplementedError
+
 
 class DataPreprocessorBase(ABC):
     @staticmethod
@@ -102,22 +109,42 @@ class DataPreprocessorBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def inverse_transform(self, *args, **kwargs) -> np.ndarray:
+    def inverse_transform(self, x_batch: np.ndarray, y_batch: np.ndarray) -> pl.DataFrame:
+        """
+
+        Parameters
+        ----------
+        x_batch:
+            2D batch of inputs passed to model.
+        y_batch
+            2D batch of model outputs.
+
+        Returns
+        -------
+
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def restore_timestamps(self, df: pl.DataFrame) -> List[datetime]:
+        """
+        Before using this method, inverse_transform must be applied to `df`.
+
+        Parameters
+        ----------
+        df
+
+        Returns
+        -------
+
+        """
         raise NotImplementedError
 
 
 class TrainerBase(ABC):
     @abstractmethod
     def run(
-        self,
-        data_dir: str,
-        batch_size: int,
-        config: ConfigDict,
-        epochs: int = 1,
-        mixed_precision: bool = False,
-        jit_module: bool = False,
-        verbose: bool = True,
-        profile: bool = False,
+        self, *args, **kwargs
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         raise NotImplementedError
 

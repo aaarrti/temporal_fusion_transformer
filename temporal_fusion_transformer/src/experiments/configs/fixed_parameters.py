@@ -1,11 +1,9 @@
 from typing import Literal
-
 from ml_collections import ConfigDict
 
-Choice = Literal["electricity", "favorita", "hamburg_air_quality"]
 
-
-def get_config(dataset: Choice) -> ConfigDict:
+# Those are fixed parameters, they can NEVER change.
+def get_config(choice: Literal["electricity", "favorita", "hamburg_air_quality"]):
     # fmt: off
     choices = {
         "electricity": {
@@ -83,4 +81,4 @@ def get_config(dataset: Choice) -> ConfigDict:
         "hamburg_air_quality": {},
     }
     # fmt: on
-    return ConfigDict(choices[dataset])
+    return ConfigDict(choices[choice])

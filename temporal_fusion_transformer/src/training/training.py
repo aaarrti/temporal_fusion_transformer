@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Generator, Literal, Tuple
+from typing import TYPE_CHECKING, Callable, Generator, Tuple
 
 import jax
 import numpy as np
 from absl import logging
 from absl_extra import flax_utils
 from flax.training.dynamic_scale import DynamicScale
-from flax.training.early_stopping import EarlyStopping
 from jax import numpy as jnp
 
 from temporal_fusion_transformer.src.modeling.loss_fn import make_quantile_loss_fn
@@ -16,10 +15,13 @@ from temporal_fusion_transformer.src.modeling.tft_model import (
     make_temporal_fusion_transformer,
 )
 from temporal_fusion_transformer.src.training.metrics import MetricContainer
-from temporal_fusion_transformer.src.training.training_hooks import HooksConfig, make_training_hooks
+from temporal_fusion_transformer.src.training.training_hooks import (
+    HooksConfig,
+    make_training_hooks,
+    EarlyStoppingConfig,
+)
 from temporal_fusion_transformer.src.training.training_lib import (
     TrainStateContainer,
-    EarlyStoppingConfig,
     distributed_train_step,
     distributed_validation_step,
     make_optimizer,
@@ -32,24 +34,21 @@ from temporal_fusion_transformer.src.training.training_lib import (
 if TYPE_CHECKING:
     import tensorflow as tf
 
-    from temporal_fusion_transformer.src.config_dict import ConfigDict, DatasetConfig
+    from temporal_fusion_transformer.src.config_dict import ConfigDict, DataConfig
     from temporal_fusion_transformer.src.modeling.tft_layers import ComputeDtype
-    from temporal_fusion_transformer.src.training.training_lib import (
-        TrainFn,
-        ValidationFn,
+    from temporal_fusion_transformer.src.lib_types import (
+        HooksT,
+        DynamicScaleT,
+        EarlyStoppingT,
+        DeviceTypeT,
     )
-
-    HooksT = flax_utils.TrainingHooks | Literal["auto"] | HooksConfig | None
-    DynamicScaleT = DynamicScale | None | Literal["auto"]
-    EarlyStoppingT = EarlyStopping | None | Literal["auto"] | EarlyStoppingConfig
-    DeviceTypeT = Literal["gpu", "tpu"]
 
 
 def train(
     *,
     data: Tuple[tf.data.Dataset, tf.data.Dataset],
     config: ConfigDict,
-    data_config: DatasetConfig,
+    data_config: DataConfig,
     epochs: int = 1,
     mixed_precision: bool = False,
     jit_module: bool = False,
@@ -81,7 +80,7 @@ def train_distributed(
     *,
     data: Tuple[tf.data.Dataset, tf.data.Dataset],
     config: ConfigDict,
-    data_config: DatasetConfig,
+    data_config: DataConfig,
     epochs: int = 1,
     mixed_precision: bool = False,
     jit_module: bool = False,
@@ -129,7 +128,7 @@ def train_distributed(
 def _train(
     *,
     data: Tuple[tf.data.Dataset, tf.data.Dataset],
-    data_config: DatasetConfig,
+    data_config: DataConfig,
     config: ConfigDict,
     hooks: HooksT,
     verbose: bool,
@@ -139,8 +138,8 @@ def _train(
     compute_dtype: ComputeDtype,
     epochs: int,
     jit_module: bool,
-    train_step_fn: TrainFn,
-    validation_step_fn: ValidationFn,
+    train_step_fn: Callable,
+    validation_step_fn: Callable,
 ) -> flax_utils.MetricsAndParams:
     device_count = jax.device_count()
 
@@ -159,13 +158,13 @@ def _train(
         dynamic_scale = DynamicScale()
 
     if early_stopping == "auto":
-        early_stopping = EarlyStoppingConfig.default()
+        early_stopping = EarlyStoppingConfig()
 
     if isinstance(early_stopping, EarlyStoppingConfig):
         early_stopping = make_early_stopping(early_stopping)
 
     if hooks == "auto":
-        hooks = HooksConfig.default()
+        hooks = HooksConfig()
     if isinstance(hooks, HooksConfig):
         hooks = make_training_hooks(hooks, num_training_steps=num_training_steps, epochs=epochs)
 

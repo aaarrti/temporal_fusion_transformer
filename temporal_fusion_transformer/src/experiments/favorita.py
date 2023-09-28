@@ -18,10 +18,11 @@ from temporal_fusion_transformer.src.experiments.base import (
     MultiHorizonTimeSeriesDataset,
     TrainerBase,
 )
-from temporal_fusion_transformer.src.experiments.config import get_config
+from temporal_fusion_transformer.src.experiments.configs.fixed_parameters import get_config
 from temporal_fusion_transformer.src.experiments.util import (
     time_series_dataset_from_dataframe,
     persist_dataset,
+    count_groups,
 )
 
 if TYPE_CHECKING:
@@ -177,6 +178,7 @@ _CATEGORICAL_INPUTS = [
     "onpromotion",
     "open",
 ]
+_TARGETS = ["log_sales"]
 
 if util.find_spec("polars"):
     _COLUMN_TO_DTYPE = {
@@ -260,10 +262,10 @@ def split_data(
     ids = set(identifiers)
 
     def filter_ids(frame: pl.DataFrame) -> pl.DataFrame:
-        return frame.filter(pl.col("traj_id") in ids)
+        return frame.filter(pl.col("traj_id").is_in(ids))
 
-    validation_df = filter_ids(validation_df["valid"])
-    test_df = filter_ids(test_df["test"])
+    validation_df = validation_df.pipe(filter_ids)
+    test_df = test_df.pipe(filter_ids)
 
     return training_df, validation_df, test_df
 
@@ -411,9 +413,9 @@ def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
     real_scalers = defaultdict(lambda: StandardScaler())
     label_encoders = defaultdict(lambda: LabelEncoder())
     # label_encoders["traj_id"].fit(df["traj_id"].to_numpy())
-    target_scaler.fit(df["log_sales"].to_numpy().reshape(1, -1))
+    target_scaler.fit(df[_TARGETS].to_numpy().reshape(-1, 1))
     for i in _REAL_INPUTS:
-        real_scalers[i].fit(df[i].to_numpy().reshape(1, -1))
+        real_scalers[i].fit(df[i].to_numpy().reshape(-1, 1))
 
     for i in tqdm(_CATEGORICAL_INPUTS, desc="Fitting label encoders"):
         label_encoders[i].fit(df[i].to_numpy())
@@ -431,18 +433,18 @@ def apply_preprocessor(
 ) -> pl.DataFrame:
     lf = df.lazy()
 
-    log_sales = preprocessor["target"].transform(df["log_sales"].to_numpy())
-    lf = lf.drop("log_sales").with_columns(log_sales=pl.lit(log_sales).cast(pl.Float32))
+    log_sales = preprocessor["target"].transform(df[_TARGETS].to_numpy().reshape(-1, 1))
+    lf = lf.drop("log_sales").with_columns(log_sales=pl.lit(log_sales))
 
     for i in tqdm(_REAL_INPUTS):
-        x = df[i].to_numpy()
+        x = df[i].to_numpy().reshape(-1, 1)
         x = preprocessor["real"][i].transform(x)
-        lf = lf.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Float32))
+        lf = lf.drop(i).with_columns(pl.lit(x).alias(i))
 
     for i in tqdm(_CATEGORICAL_INPUTS):
         x = df[i].to_numpy()
         x = preprocessor["categorical"][i].transform(x)
-        lf = lf.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))
+        lf = lf.drop(i).with_columns(pl.lit(x).alias(i))
 
     df = lf.collect().shrink_to_fit(in_place=True).rechunk()
     return df
@@ -457,7 +459,7 @@ def convert_dataframe_to_tf_dataset(
     time_series = time_series_dataset_from_dataframe(
         df,
         inputs=_REAL_INPUTS + _CATEGORICAL_INPUTS,
-        targets=["log_sales"],
+        targets=_TARGETS,
         total_time_steps=total_time_steps,
         id_column="traj_id",
     )

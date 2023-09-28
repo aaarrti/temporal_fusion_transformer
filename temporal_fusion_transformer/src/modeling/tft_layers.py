@@ -7,22 +7,18 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import struct
-from jaxtyping import Array, Float, Int, jaxtyped
 
 from temporal_fusion_transformer.src.modeling.self_attention import SelfAttention
 
 if TYPE_CHECKING:
-    ComputeDtype = Union[jnp.float32, jnp.float16, jnp.bfloat16]
+    from temporal_fusion_transformer.src.lib_types import ComputeDtype
 
 
 class TimeDistributed(nn.Module):
     layer: nn.Module
 
-    @jaxtyped
     @nn.compact
-    def __call__(
-        self, inputs: Float[Array, "batch time n"], *args, **kwargs
-    ) -> Float[Array, "batch time n"]:
+    def __call__(self, inputs: jnp.ndarray, *args, **kwargs) -> jnp.ndarray:
         input_shape = inputs.shape
         batch_size = input_shape[0]
         input_length = input_shape[1]
@@ -63,22 +59,17 @@ class GatedLinearUnit(nn.Module):
 
     @nn.compact
     def __call__(self, inputs: jnp.ndarray, training: bool) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        x = nn.Dropout(
-            rate=self.dropout_rate,
-            deterministic=not training,
-        )(inputs)
-        dense = nn.Dense(self.latent_dim, dtype=self.dtype)
-        activation = nn.Sequential([nn.Dense(self.latent_dim, dtype=self.dtype), nn.sigmoid])
+        x = nn.Dropout(rate=self.dropout_rate, deterministic=not training, name="dropout")(inputs)
+        dense = nn.Dense(self.latent_dim, dtype=self.dtype, name="dense1")
+        activation = nn.Sequential(
+            [nn.Dense(self.latent_dim, dtype=self.dtype, name="dense2"), nn.sigmoid]
+        )
 
         if self.time_distributed:
             dense = TimeDistributed(dense)
             activation = TimeDistributed(activation)
 
-        try:
-            x_pre_activation = dense(x)
-        except FloatingPointError as e:
-            print(x)
-            raise
+        x_pre_activation = dense(x)
         x_gated = activation(x)
         x = x_pre_activation * x_gated
         return x, x_gated
@@ -94,7 +85,7 @@ class GatedResidualNetwork(nn.Module):
     latent_dim:
         Latent space dimensionality.
     dropout_rate:
-        Dropout rate passed down to keras.layer.Dropout.
+        Dropout rate passed down to nn.Dropout.
     output_size:
         Size of output layer, default=latent_dim.
     time_distributed:
@@ -121,15 +112,12 @@ class GatedResidualNetwork(nn.Module):
         if self.output_size is None:
             skip_connection = identity
         else:
-            skip_connection = nn.Dense(self.output_size, dtype=self.dtype)
+            skip_connection = nn.Dense(self.output_size, dtype=self.dtype, name="skip")
             if self.time_distributed:
                 skip_connection = TimeDistributed(skip_connection)
 
-        pre_elu_dense = nn.Dense(
-            self.latent_dim,
-            dtype=self.dtype,
-        )
-        dense = nn.Dense(self.latent_dim, dtype=self.dtype)
+        pre_elu_dense = nn.Dense(self.latent_dim, dtype=self.dtype, name="dense_1")
+        dense = nn.Dense(self.latent_dim, dtype=self.dtype, name="dense_2")
 
         if self.time_distributed:
             pre_elu_dense = TimeDistributed(pre_elu_dense)
@@ -139,7 +127,7 @@ class GatedResidualNetwork(nn.Module):
         x = pre_elu_dense(inputs)
 
         if context is not None:
-            context_dense = nn.Dense(self.latent_dim, dtype=self.dtype)
+            context_dense = nn.Dense(self.latent_dim, dtype=self.dtype, name="context")
             if self.time_distributed:
                 context_dense = TimeDistributed(context_dense)
             x = x + context_dense(context)
@@ -151,8 +139,9 @@ class GatedResidualNetwork(nn.Module):
             dropout_rate=self.dropout_rate,
             time_distributed=self.time_distributed,
             dtype=self.dtype,
+            name="glu",
         )(x, training=training)
-        x = nn.LayerNorm(dtype=self.dtype)(x + x_skip)
+        x = nn.LayerNorm(dtype=self.dtype, name="layer_norm")(x + x_skip)
         return x, gate
 
 
@@ -202,12 +191,14 @@ class InputEmbedding(nn.Module):
 
         for i, size in enumerate(self.static_categories_sizes):
             # Static are not time-varying, so we just take 1st time-step.
-            embeds_i = nn.Embed(size, self.latent_dim, dtype=self.dtype)(inputs.static[:, 0, i])
+            embeds_i = nn.Embed(size, self.latent_dim, dtype=self.dtype, name=f"static_embed_{i}")(
+                inputs.static[:, 0, i]
+            )
             static_input_embeddings.append(embeds_i)
 
         static_input_embeddings = jnp.stack(static_input_embeddings, axis=1)
         for i in range(self.num_known_real_inputs):
-            embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(
+            embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype, name=f"known_dense_{i}")(
                 inputs.known_real[..., i, jnp.newaxis]
             )
             known_real_inputs_embeddings.append(embeds_i)
@@ -215,7 +206,7 @@ class InputEmbedding(nn.Module):
         if self.num_observed_inputs != 0:
             observed_input_embeddings = []
             for i in range(self.num_observed_inputs):
-                embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(
+                embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype, name=f"observed_dense_{i}")(
                     inputs.observed[..., i, jnp.newaxis]
                 )
                 observed_input_embeddings.append(embeds_i)
@@ -226,9 +217,9 @@ class InputEmbedding(nn.Module):
         if len(self.known_categories_sizes) != 0:
             known_categorical_inputs_embeddings = []
             for i, size in enumerate(self.known_categories_sizes):
-                embeds_i = nn.Embed(size, self.latent_dim, dtype=self.dtype)(
-                    inputs.known_categorical[..., i]
-                )
+                embeds_i = nn.Embed(
+                    size, self.latent_dim, dtype=self.dtype, name=f"known_embed_{i}"
+                )(inputs.known_categorical[..., i])
                 known_categorical_inputs_embeddings.append(embeds_i)
             known_inputs_embeddings = jnp.concatenate(
                 [
@@ -243,7 +234,7 @@ class InputEmbedding(nn.Module):
         if self.num_unknown_inputs > 0:
             unknown = []
             for i in range(self.num_unknown_inputs):
-                embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype)(
+                embeds_i = nn.Dense(self.latent_dim, dtype=self.dtype, name=f"unknown_dense_{i}")(
                     inputs.unknown[..., i, jnp.newaxis]
                 )
                 unknown.append(embeds_i)
@@ -294,6 +285,7 @@ class StaticCovariatesEncoder(nn.Module):
             dropout_rate=self.dropout_rate,
             time_distributed=False,
             dtype=self.dtype,
+            name="gru",
         )(flat_x, training=training)
 
         sparse_weights = nn.softmax(mlp_outputs)[..., jnp.newaxis]
@@ -306,6 +298,7 @@ class StaticCovariatesEncoder(nn.Module):
                 dropout_rate=self.dropout_rate,
                 time_distributed=False,
                 dtype=self.dtype,
+                name=f"gru_{i}",
             )(inputs[:, i][:, jnp.newaxis], training=training)
             transformed_embeddings.append(embeds_i)
 
@@ -316,24 +309,28 @@ class StaticCovariatesEncoder(nn.Module):
             dropout_rate=self.dropout_rate,
             time_distributed=False,
             dtype=self.dtype,
+            name="variable_selection",
         )(static_context_vector, training=training)
         context_enrichment, _ = GatedResidualNetwork(
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,
             time_distributed=False,
             dtype=self.dtype,
+            name="enrichment",
         )(static_context_vector, training=training)
         context_state_h, _ = GatedResidualNetwork(
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,
             time_distributed=False,
             dtype=self.dtype,
+            name="state_h",
         )(static_context_vector, training=training)
         context_state_c, _ = GatedResidualNetwork(
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,
             time_distributed=False,
             dtype=self.dtype,
+            name="state_c",
         )(static_context_vector, training=training)
         return StaticContextStruct(
             enrichment=context_enrichment,
@@ -377,6 +374,7 @@ class VariableSelectionNetwork(nn.Module):
             output_size=self.num_inputs,
             time_distributed=True,
             dtype=self.dtype,
+            name="gru",
         )(
             jnp.reshape(inputs, [-1, self.num_time_steps, self.latent_dim * self.num_inputs]),
             context[:, jnp.newaxis],
@@ -393,6 +391,7 @@ class VariableSelectionNetwork(nn.Module):
                 dropout_rate=self.dropout_rate,
                 time_distributed=True,
                 dtype=self.dtype,
+                name=f"gru_{i}",
             )(inputs[..., i], training=training)
             transformed_embeddings.append(embeds_i)
 
@@ -435,6 +434,7 @@ class DecoderBlock(nn.Module):
             # decode=not training,
             attention_fn=dot_product_attention,
             normalize_qk=True,
+            name="attention",
         )(inputs, mask=mask, deterministic=not training)
         x = x.astype(self.dtype)
         x, _ = GatedLinearUnit(
@@ -442,14 +442,16 @@ class DecoderBlock(nn.Module):
             dropout_rate=self.dropout_rate,
             time_distributed=True,
             dtype=self.dtype,
+            name="glu",
         )(x, training=training)
-        x = nn.LayerNorm(dtype=self.dtype)(x + inputs)
+        x = nn.LayerNorm(dtype=self.dtype, name="layer_norm")(x + inputs)
         # Nonlinear processing on outputs
         decoded, _ = GatedResidualNetwork(
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,
             time_distributed=True,
             dtype=self.dtype,
+            name="gru",
         )(x, training=training)
         return decoded
 
@@ -457,14 +459,28 @@ class DecoderBlock(nn.Module):
 # -------------------------------------------------------------------------------------------------------------
 
 
-@jaxtyped
 @struct.dataclass
 class InputStruct:
-    static: Int[Array, "batch time n"]
-    known_real: Float[Array, "batch time n"]
-    known_categorical: Int[Array, "batch time n"] | None
-    observed: Float[Array, "batch time n"] | None
-    unknown: Float[Array, "batch time n"] | None = None
+    """
+    Attributes
+    ----------
+    static:
+        3D int
+    known_real:
+        3D float
+    known_categorical:
+        3D int
+    observed:
+        3D float
+    unknown:
+        3D float
+    """
+
+    static: jnp.ndarray
+    known_real: jnp.ndarray
+    known_categorical: jnp.ndarray | None
+    observed: jnp.ndarray | None
+    unknown: jnp.ndarray | None = None
 
     def cast_inexact(self, dtype: jnp.float32 | jnp.bfloat16 | jnp.float16) -> InputStruct:
         observed = self.observed
@@ -485,21 +501,34 @@ class InputStruct:
         )
 
 
-@jaxtyped
 @struct.dataclass
 class EmbeddingStruct:
-    static: Float[Array, "batch m n"]
-    known: Float[Array, "batch time n"]
-    observed: Float[Array, "batch time n"] | None
-    unknown: Float[Array, "batch time n"] | None = None
+    """
+    Attributes
+    ----------
+
+    static:
+        3D float
+    known:
+        3D float
+    observed:
+        3D float
+    unknown:
+        3D float
+    """
+
+    static: jnp.ndarray
+    known: jnp.ndarray
+    observed: jnp.ndarray | None
+    unknown: jnp.ndarray | None = None
 
 
-@jaxtyped
 @struct.dataclass
 class StaticContextStruct:
     """
     Attributes
     ----------
+
     enrichment:
         has shape (batch_size, latent_dim) and must be used as additional context for GRNs.
     vector:
