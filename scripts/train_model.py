@@ -22,7 +22,7 @@ jax.config.update("jax_debug_nans", True)
 jax.config.update("jax_debug_infs", True)
 jax.config.update("jax_softmax_custom_jvp", True)
 # jax.config.update("jax_default_matmul_precision", "tensorfloat32")
-jax.config.update("jax_log_compiles", True)
+# jax.config.update("jax_log_compiles", True)
 # jax.config.update("jax_disable_jit", True)
 
 # fmt: off
@@ -36,25 +36,10 @@ flags.DEFINE_boolean("mixed_precision", default=False, help="Use mixed (b)float1
 flags.DEFINE_boolean("jit_module", default=False, help="Apply nn.jit to model")
 flags.DEFINE_boolean("profile", default=False, help="Run with profiling")
 flags.DEFINE_boolean("verbose", default=True, help="Verbose mode for training")
-CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
+# CONFIG = config_flags.DEFINE_config_file("config", default="temporal_fusion_transformer/config.py")
 # fmt: on
 
-setup_logging(log_level="DEBUG")
-
-
-# @register_task(name="hyperparams")
-# def train_model():
-#    tft.hyperparams.optimize_experiment_hyperparams(
-#        data_dir=FLAGS.data_dir,
-#        experiment_name=FLAGS.experiment,
-#        epochs=FLAGS.epochs,
-#        batch_size=FLAGS.batch_size,
-#        config=CONFIG.value,
-#        mixed_precision=FLAGS.mixed_precision,
-#        jit_module=FLAGS.jit_module,
-#        device_type="gpu",
-#        verbose=FLAGS.verbose,
-#    )
+setup_logging(log_level="INFO")
 
 
 def make_notifier() -> SlackNotifier | None:
@@ -82,11 +67,9 @@ def train_model():
         data_dir=f"{FLAGS.data_dir}/{experiment_name}",
         epochs=FLAGS.epochs,
         batch_size=FLAGS.batch_size,
-        config=CONFIG.value,
         mixed_precision=mixed_precision,
         jit_module=FLAGS.jit_module,
         verbose=FLAGS.verbose,
-        hooks_config=tft.HooksConfig.default(),
     )
 
 
@@ -106,10 +89,8 @@ def train_model_dsitributed():
         data_dir=f"{FLAGS.data_dir}/{experiment_name}",
         epochs=FLAGS.epochs,
         batch_size=FLAGS.batch_size,
-        config=CONFIG.value,
         mixed_precision=mixed_precision,
         jit_module=FLAGS.jit_module,
-        hooks_config=tft.HooksConfig.default(),
         verbose=FLAGS.verbose,
     )
 

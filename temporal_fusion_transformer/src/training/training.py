@@ -169,7 +169,7 @@ def _train(
         hooks = make_training_hooks(hooks, num_training_steps=num_training_steps, epochs=epochs)
 
     model = make_temporal_fusion_transformer(
-        config, data_config, jit_module=jit_module, dtype=compute_dtype
+        config.model, data_config, jit_module=jit_module, dtype=compute_dtype
     )
 
     prng_key = jax.random.PRNGKey(config.prng_seed)

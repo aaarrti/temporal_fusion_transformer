@@ -1,7 +1,8 @@
-from absl import logging, app, flags
-from absl_extra.tasks import run, register_task
+from absl import flags
 from absl_extra.logging_utils import setup_logging
 from absl_extra.notifier import NoOpNotifier
+from absl_extra.tasks import run, register_task
+
 import temporal_fusion_transformer as tft
 
 setup_logging()

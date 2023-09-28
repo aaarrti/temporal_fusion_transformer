@@ -8,9 +8,7 @@ from absl import logging
 from absl_extra.flax_utils import save_as_msgpack
 from flax.serialization import msgpack_restore
 from jax.tree_util import tree_map
-import jax.numpy as jnp
 from toolz import functoolz
-from jaxtyping import Array, Float
 
 try:
     import polars as pl
@@ -166,7 +164,7 @@ def time_series_dataset_from_dataframe(
         return make_time_series_fn(df)
 
     def generator():
-        for id_i, df_i in tqdm(df.groupby(id_column), desc="Converting to time-series dataset"):
+        for id_i, df_i in tqdm(df.groupby(id_column), total=num_groups, desc="Converting to time-series dataset"):
             time_series_i = make_time_series_fn(df_i)
             yield time_series_i
 

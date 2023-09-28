@@ -109,7 +109,7 @@ class TemporalFusionTransformer(nn.Module):
 
         for block in self.decoder_blocks:
             decoder_out = block(decoder_in, mask=mask, training=training)
-            decoder_out = nn.LayerNorm(dtype=self.dtype, name="layer_norm")(
+            decoder_out = nn.LayerNorm(dtype=self.dtype)(
                 decoder_out + temporal_features
             )
             decoder_in = decoder_out

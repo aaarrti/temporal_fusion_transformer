@@ -18,7 +18,7 @@ from temporal_fusion_transformer.src.experiments.base import (
     MultiHorizonTimeSeriesDataset,
     TrainerBase,
 )
-from temporal_fusion_transformer.src.experiments.configs.fixed_parameters import get_config
+from temporal_fusion_transformer.src.experiments.configs import fixed_parameters, hyperparameters
 from temporal_fusion_transformer.src.experiments.util import (
     deserialize_preprocessor,
     time_series_dataset_from_dataframe,
@@ -78,7 +78,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         cutoff_days:
             Tuple of start and end dates, before/after which data is not included.
         """
-        total_time_steps = get_config("electricity").total_time_steps
+        total_time_steps = fixed_parameters.get_config("electricity").total_time_steps
         self.validation_boundary = validation_boundary
         self.test_boundary = test_boundary
         self.cutoff_days = cutoff_days
@@ -112,14 +112,17 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         return DataPreprocessor.load(filename)
 
     def reload_model(
-        self, filename: str, config: ModelConfig, jit_module: bool, return_attention: bool = True
+        self, filename: str, config: ModelConfig | None, jit_module: bool, return_attention: bool = True
     ) -> PredictFn:
         from temporal_fusion_transformer.src.inference.util import reload_model
+        
+        if config is None:
+            config = hyperparameters.get_config("electricity")
 
         return reload_model(
             filename,
             model_config=config,
-            data_config=get_config("electricty"),
+            data_config=fixed_parameters.get_config("electricty"),
             jit_module=jit_module,
             return_attention=return_attention,
         )
@@ -128,7 +131,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
 class DataPreprocessor(DataPreprocessorBase):
     def __init__(self, preprocessor: PreprocessorDict, total_time_steps: int | None = None):
         if total_time_steps is None:
-            total_time_steps = get_config("electricity").total_time_steps
+            total_time_steps = fixed_parameters.get_config("electricity").total_time_steps
         self.preprocessor = preprocessor
         self.total_time_steps = total_time_steps
 
@@ -160,9 +163,10 @@ class DataPreprocessor(DataPreprocessorBase):
 class Trainer(TrainerBase):
     def run(
         self,
+        *,
         data_dir: str,
         batch_size: int,
-        config: ConfigDict,
+        config: ConfigDict | Literal["auto"] = "auto",
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
@@ -172,7 +176,11 @@ class Trainer(TrainerBase):
         from temporal_fusion_transformer.src.training.training import train
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
 
-        data_config = get_config("electricity")
+        if config == "auto":
+            config = hyperparameters.get_config('electricity')
+        
+        data_config = fixed_parameters.get_config("electricity")
+        
 
         data = load_dataset(
             data_dir,
@@ -195,9 +203,10 @@ class Trainer(TrainerBase):
 
     def run_distributed(
         self,
+        *,
         data_dir: str,
         batch_size: int,
-        config: ConfigDict,
+        config: ConfigDict | Literal["auto"] = "auto",
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
@@ -208,8 +217,11 @@ class Trainer(TrainerBase):
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         from temporal_fusion_transformer.src.training.training import train_distributed
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
+        
+        if config == "auto":
+            config = hyperparameters.get_config('electricity')
 
-        data_config = get_config("electricity")
+        data_config = fixed_parameters.get_config("electricity")
         num_devices = jax.device_count()
 
         data = load_dataset(
@@ -423,7 +435,7 @@ def apply_preprocessor(
         sub_df: pl.DataFrame
         sub_lf: pl.LazyFrame = sub_df.lazy()
 
-        x_real = df[_REAL_INPUTS].to_numpy(order="c")
+        x_real = sub_df[_REAL_INPUTS].to_numpy(order="c")
         x_real = preprocessor["real"][i].transform(x_real)
 
         sub_lf = sub_lf.with_columns(
@@ -431,7 +443,7 @@ def apply_preprocessor(
         )
 
         if not skip_targets:
-            x_target = df[_TARGETS].to_numpy(order="c")
+            x_target = sub_df[_TARGETS].to_numpy(order="c")
             x_target = preprocessor["target"][i].transform(x_target)
             sub_lf = sub_lf.with_columns(
                 [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target.T, _TARGETS)]
@@ -503,7 +515,7 @@ def inverse_transform_for_single_id(
     y_batch: np.ndarray,
     entity_id: str,
 ) -> pl.LazyFrame:
-    config: DataConfig = get_config("electricity")
+    config: DataConfig = fixed_parameters.get_config("electricity")
 
     y_new = preprocessor["target"][entity_id].inverse_transform(y_batch).reshape(-1)
 

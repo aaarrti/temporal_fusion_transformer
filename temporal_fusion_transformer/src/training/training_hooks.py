@@ -343,7 +343,7 @@ def make_fp_error_hook(monitor_error: bool) -> TrainingHooks:
                 "exception": ex_str,
                 "step_type": step_type,
             }
-            save_as_msgpack(data, "fp_error_data.msgpack")
+            save_as_msgpack(data, "fp_error_data.msgpack", compression="GZIP")
         raise
 
     hooks = TrainingHooks()

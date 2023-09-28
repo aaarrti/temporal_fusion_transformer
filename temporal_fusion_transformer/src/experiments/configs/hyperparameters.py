@@ -38,7 +38,6 @@ def _get_optimizer_config(choice: Choice):
             "init_lr": 1e-4,
             "decay_steps": 0.8,
             "alpha": 0.8,
-            "mechanize": False,
             "clipnorm": 0.0,
             "ema": 0.99,
         },
