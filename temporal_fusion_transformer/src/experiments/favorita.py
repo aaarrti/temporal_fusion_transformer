@@ -7,33 +7,33 @@ from datetime import datetime, timedelta
 from functools import partial
 from glob import glob
 from importlib import util
-from typing import TYPE_CHECKING, Literal, Mapping, Tuple, TypedDict, Callable
+from typing import TYPE_CHECKING, Literal, Mapping, Tuple, TypedDict, Callable, List
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 from absl import logging
 from tqdm.auto import tqdm
 
+from lib_types import PredictFn
 from temporal_fusion_transformer.src.experiments.base import (
     DataPreprocessorBase,
     MultiHorizonTimeSeriesDataset,
     TrainerBase,
 )
-from temporal_fusion_transformer.src.experiments.configs.fixed_parameters import get_config
+from temporal_fusion_transformer.src.experiments.configs import fixed_parameters, hyperparameters
 from temporal_fusion_transformer.src.experiments.util import (
     time_series_dataset_from_dataframe,
     persist_dataset,
-    count_groups,
+    deserialize_preprocessor,
 )
 
 if TYPE_CHECKING:
     import polars as pl
     import tensorflow as tf
 
-    from temporal_fusion_transformer.src.config_dict import ConfigDict
-    from temporal_fusion_transformer.src.training.metrics import MetricContainer
-    from temporal_fusion_transformer.src.training.training_lib import (
-        TrainStateContainer,
-    )
+    from temporal_fusion_transformer.src.config_dict import ConfigDict, ModelConfig
+    from temporal_fusion_transformer.src.lib_types import HooksT, DeviceTypeT, TrainingResult
 
 try:
     import polars as pl
@@ -44,22 +44,20 @@ except ModuleNotFoundError as ex:
 
 
 class Favorita(MultiHorizonTimeSeriesDataset):
+    trainer = property(lambda self: Trainer())
+
     def __init__(
         self,
         start_date: datetime | None = datetime(2016, 1, 1),
         end_date: datetime | None = datetime(2016, 6, 1),
         validation_boundary: datetime = datetime(2016, 4, 1),
     ):
-        config = get_config("favorita")
+        config = fixed_parameters.get_config("favorita")
         self.start_date = start_date
         self.end_date = end_date
         self.validation_boundary = validation_boundary
         self.total_time_steps = config.total_time_steps
         self.num_encoder_steps = config.num_encoder_steps
-
-    @property
-    def trainer(self) -> TrainerBase:
-        return Trainer()
 
     def make_dataset(
         self, data_dir: str, save_dir: str | None = None
@@ -73,66 +71,141 @@ class Favorita(MultiHorizonTimeSeriesDataset):
             num_encoder_steps=self.num_encoder_steps,
         )
         if save_dir is not None:
-            persist_dataset(
-                training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir
-            )
+            persist_dataset(training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir)
         else:
             return training_ds, validation_ds, test_df, preprocessor
 
-    def convert_to_parquet(
-        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
-    ):
+    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True):
         convert_to_parquet(download_dir, output_dir, delete_processed=delete_processed)
+
+    def reload_preprocessor(self, filename: str) -> DataPreprocessor:
+        return DataPreprocessor.load(filename)
+
+    def reload_model(
+        self, filename: str, config: ModelConfig, jit_module: bool, return_attention: bool = True
+    ) -> PredictFn:
+        from temporal_fusion_transformer.src.inference.util import reload_model
+
+        if config is None:
+            config = hyperparameters.get_config("favorita")
+
+        return reload_model(
+            filename,
+            model_config=config,
+            data_config=fixed_parameters.get_config("favorita"),
+            jit_module=jit_module,
+            return_attention=return_attention,
+        )
 
 
 class DataPreprocessor(DataPreprocessorBase):
+    __slots__ = ["preprocessor", "total_time_steps"]
+
     def __init__(self, preprocessor: PreprocessorDict):
         self.preprocessor = preprocessor
+        self.total_time_steps = fixed_parameters.get_config("favorita").total_time_steps
 
     @staticmethod
     def load(file_name: str) -> DataPreprocessorBase:
-        pass
+        preprocessor = deserialize_preprocessor(file_name)
+        return DataPreprocessor(preprocessor)
 
     def apply(self, df: pl.DataFrame) -> pl.DataFrame:
-        pass
+        return apply_preprocessor(df, self.preprocessor)
 
     def convert_dataframe_to_tf_dataset(self, df: pl.DataFrame) -> tf.data.Dataset:
+        return convert_dataframe_to_tf_dataset(df, self.preprocessor, self.total_time_steps)
+
+    def inverse_transform(self, x_batch: np.ndarray, y_batch: np.ndarray) -> np.ndarray:
         pass
 
-    def inverse_transform(self, arr: np.ndarray) -> np.ndarray:
+    def restore_timestamps(self, df: pl.DataFrame) -> List[datetime]:
         pass
 
 
 class Trainer(TrainerBase):
     def run(
         self,
+        *,
         data_dir: str,
         batch_size: int,
-        config: ConfigDict,
+        config: ConfigDict | Literal["auto"] = "auto",
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
-        save_path: str | None = None,
         verbose: bool = True,
-        profile: bool = False,
-    ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
-        pass
+        hooks: HooksT = "auto",
+    ) -> TrainingResult:
+        from temporal_fusion_transformer.src.training.training import train
+        from temporal_fusion_transformer.src.training.training_lib import load_dataset
+
+        if config == "auto":
+            config = hyperparameters.get_config("favorita")
+
+        data_config = fixed_parameters.get_config("favorita")
+
+        data = load_dataset(
+            data_dir,
+            batch_size,
+            prng_seed=config.prng_seed,
+            dtype=jnp.float16 if mixed_precision else jnp.float32,
+            shuffle_buffer_size=config.shuffle_buffer_size,
+            num_encoder_steps=data_config.num_encoder_steps,
+        )
+
+        return train(
+            data=data,
+            config=config,
+            data_config=data_config,
+            mixed_precision=mixed_precision,
+            epochs=epochs,
+            verbose=verbose,
+            hooks=hooks,
+        )
 
     def run_distributed(
         self,
+        *,
         data_dir: str,
         batch_size: int,
-        config: ConfigDict,
+        config: ConfigDict | Literal["auto"] = "auto",
         epochs: int = 1,
         mixed_precision: bool = False,
         jit_module: bool = False,
-        save_path: str | None = None,
         verbose: bool = True,
-        profile: bool = False,
-        device_type: Literal["gpu", "tpu"] = "gpu",
-        prefetch_buffer_size: int = 2,
-    ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
-        pass
+        device_type: DeviceTypeT = "gpu",
+        prefetch_buffer_size: int = 0,
+        hooks: HooksT = "auto",
+    ) -> TrainingResult:
+        from temporal_fusion_transformer.src.training.training import train_distributed
+        from temporal_fusion_transformer.src.training.training_lib import load_dataset
+
+        if config == "auto":
+            config = hyperparameters.get_config("favorita")
+
+        data_config = fixed_parameters.get_config("favorita")
+        num_devices = jax.device_count()
+
+        data = load_dataset(
+            data_dir,
+            batch_size * num_devices,
+            prng_seed=config.prng_seed,
+            dtype=jnp.float16 if mixed_precision else jnp.float32,
+            shuffle_buffer_size=config.shuffle_buffer_size,
+            num_encoder_steps=data_config.num_encoder_steps,
+        )
+
+        return train_distributed(
+            data=data,
+            config=config,
+            data_config=data_config,
+            mixed_precision=mixed_precision,
+            epochs=epochs,
+            device_type=device_type,
+            prefetch_buffer_size=prefetch_buffer_size,
+            verbose=verbose,
+            hooks=hooks,
+        )
 
 
 # ----------------- actual implementations --------------
@@ -201,7 +274,7 @@ def make_dataset(
     validation_boundary: datetime = datetime(2016, 4, 1),
     total_time_steps: int = 120,
     num_encoder_steps: int = 90,
-) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, PreprocessorDict]:
+) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
     df = read_parquet(data_dir, start_date, end_date)
     preprocessor = train_preprocessor(df)
     training_df, validation_df, test_df = split_data(
@@ -222,7 +295,7 @@ def make_dataset(
 
     training_ds = make_dataset_fn(training_df)
     validation_ds = make_dataset_fn(validation_df)
-    return training_ds, validation_ds, test_df
+    return training_ds, validation_ds, test_df, DataPreprocessor(preprocessor)
 
 
 def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_processed: bool = True):
@@ -249,9 +322,7 @@ def split_data(
 
     test_boundary = validation_boundary + timedelta(hours=forecast_horizon)
 
-    training_df: pl.DataFrame = lf.filter(
-        pl.col("date").over("traj_id").lt(validation_boundary)
-    ).collect()
+    training_df: pl.DataFrame = lf.filter(pl.col("date").over("traj_id").lt(validation_boundary)).collect()
     validation_df = df.filter(pl.col("date").over("traj_id").ge(validation_boundary)).filter(
         pl.col("date").over("traj_id").lt(test_boundary)
     )
@@ -276,52 +347,31 @@ def read_parquet(
     end_date: datetime | None = datetime(2016, 6, 1),
 ) -> pl.DataFrame:
     temporal = read_temporal(data_dir, start_date, end_date)
-
-    store_info = pl.scan_parquet(f"{data_dir}/stores.parquet").pipe(downcast_dataframe)
-
-    items = pl.scan_parquet(f"{data_dir}/items.parquet").pipe(downcast_dataframe)
-    transactions = pl.scan_parquet(f"{data_dir}/transactions.parquet").pipe(downcast_dataframe)
-    oil = (
-        pl.scan_parquet(f"{data_dir}/oil.parquet")
-        .rename({"dcoilwtico": "oil_price"})
-        .pipe(downcast_dataframe)
-    )
-    holidays = pl.scan_parquet(f"{data_dir}/holidays_events.parquet")
-
-    national_holidays = (
-        holidays.filter(pl.col("locale") == "National")
-        .select(["description", "date"])
-        .rename({"description": "national_hol"})
-        .pipe(downcast_dataframe)
-    )
-    regional_holidays = (
-        holidays.filter(pl.col("locale") == "Regional")
-        .select(["description", "locale_name", "date"])
-        .rename({"locale_name": "state", "description": "regional_hol"})
-        .pipe(downcast_dataframe)
-    )
-    local_holidays = (
-        holidays.filter(pl.col("locale") == "Local")
-        .select(["description", "locale_name", "date"])
-        .rename({"locale_name": "city", "description": "local_hol"})
-        .pipe(downcast_dataframe)
-    )
-
     tmp = temporal.collect(streaming=True)
     logging.debug(f"Pre join = {tmp}")
     del tmp
     gc.collect()
     logging.debug("Joining tables")
 
+    ctx = make_sql_context(data_dir)
+
+    ctx.register("temporal", temporal)
+
+    lf = ctx.execute(
+        """
+        SELECT * FROM temporal
+        LEFT JOIN oil USING(date)
+        LEFT JOIN store_info USING(store_nbr)
+        JOIN transaction USING(store_nbr, date)
+        LEFT JOIN national_holidays USING(date)
+        LEFT JOIN regional_holidays USING(date, state)
+        LEFT JOIN local_holidays USING(date, city)
+        """,
+        eager=False,
+    )
+
     df: pl.DataFrame = (
-        temporal.join(oil, on="date", how="left")
-        .join(store_info, on="store_nbr", how="left")
-        .join(items, on="item_nbr", how="left")
-        .join(transactions, on=["store_nbr", "date"])
-        .join(national_holidays, on="date", how="left")
-        .join(regional_holidays, on=["date", "state"], how="left")
-        .join(local_holidays, on=["date", "city"], how="left")
-        .with_columns(
+        lf.with_columns(
             [
                 pl.col("oil_price").fill_null(strategy="forward"),
                 pl.col("national_hol").fill_null(""),
@@ -390,12 +440,46 @@ def read_temporal(
     return downcast_dataframe(temporal, streaming=True)
 
 
+def make_sql_context(data_dir: str) -> pl.SQLContext:
+    items = pl.scan_parquet(f"{data_dir}/items.parquet").pipe(downcast_dataframe)
+    transactions = pl.scan_parquet(f"{data_dir}/transactions.parquet").pipe(downcast_dataframe)
+    oil = pl.scan_parquet(f"{data_dir}/oil.parquet").rename({"dcoilwtico": "oil_price"}).pipe(downcast_dataframe)
+    holidays = pl.scan_parquet(f"{data_dir}/holidays_events.parquet")
+
+    national_holidays = (
+        holidays.filter(pl.col("locale") == "National")
+        .select(["description", "date"])
+        .rename({"description": "national_hol"})
+        .pipe(downcast_dataframe)
+    )
+    regional_holidays = (
+        holidays.filter(pl.col("locale") == "Regional")
+        .select(["description", "locale_name", "date"])
+        .rename({"locale_name": "state", "description": "regional_hol"})
+        .pipe(downcast_dataframe)
+    )
+    local_holidays = (
+        holidays.filter(pl.col("locale") == "Local")
+        .select(["description", "locale_name", "date"])
+        .rename({"locale_name": "city", "description": "local_hol"})
+        .pipe(downcast_dataframe)
+    )
+
+    ctx = pl.SQLContext(
+        items=items,
+        transactions=transactions,
+        oil=oil,
+        national_holidays=national_holidays,
+        regional_holidays=regional_holidays,
+        local_holidays=local_holidays,
+    )
+    return ctx
+
+
 def downcast_dataframe(df: pl.DataFrame | pl.LazyFrame, streaming: bool = False) -> pl.LazyFrame:
     columns = df.columns
 
-    df = df.with_columns(
-        [pl.col(i).cast(_COLUMN_TO_DTYPE[i]) for i in columns if i in _COLUMN_TO_DTYPE]
-    )
+    df = df.with_columns([pl.col(i).cast(_COLUMN_TO_DTYPE[i]) for i in columns if i in _COLUMN_TO_DTYPE])
 
     if isinstance(df, pl.LazyFrame):
         df = df.collect(streaming=streaming)
@@ -408,12 +492,12 @@ def downcast_dataframe(df: pl.DataFrame | pl.LazyFrame, streaming: bool = False)
 
 
 def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
-    # In contrast to electricity for favorita we don't group before training StandardScaler
+    # In contrast to favorita for favorita we don't group before training StandardScaler
     target_scaler = StandardScaler()
     real_scalers = defaultdict(lambda: StandardScaler())
     label_encoders = defaultdict(lambda: LabelEncoder())
     # label_encoders["traj_id"].fit(df["traj_id"].to_numpy())
-    target_scaler.fit(df[_TARGETS].to_numpy().reshape(-1, 1))
+    target_scaler.fit(df[_TARGETS].to_numpy(order="c"))
     for i in _REAL_INPUTS:
         real_scalers[i].fit(df[i].to_numpy().reshape(-1, 1))
 
@@ -434,12 +518,12 @@ def apply_preprocessor(
     lf = df.lazy()
 
     log_sales = preprocessor["target"].transform(df[_TARGETS].to_numpy().reshape(-1, 1))
-    lf = lf.drop("log_sales").with_columns(log_sales=pl.lit(log_sales))
+    lf = lf.drop("log_sales").with_columns(log_sales=pl.lit(log_sales.reshape(-1)).cast(pl.Float32))
 
     for i in tqdm(_REAL_INPUTS):
         x = df[i].to_numpy().reshape(-1, 1)
         x = preprocessor["real"][i].transform(x)
-        lf = lf.drop(i).with_columns(pl.lit(x).alias(i))
+        lf = lf.drop(i).with_columns(pl.lit(x.reshape(-1)).alias(i))
 
     for i in tqdm(_CATEGORICAL_INPUTS):
         x = df[i].to_numpy()

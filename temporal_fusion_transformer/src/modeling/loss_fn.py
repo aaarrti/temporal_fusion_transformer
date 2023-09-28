@@ -122,7 +122,5 @@ def quantile_loss(
 
     """
     quantiles = jnp.asarray(quantiles, dtype)
-    q_loss = jax.vmap(pinball_loss, in_axes=[None, -1, -1, None], out_axes=-1)(
-        y_true, y_pred, quantiles, dtype
-    )
+    q_loss = jax.vmap(pinball_loss, in_axes=[None, -1, -1, None], out_axes=-1)(y_true, y_pred, quantiles, dtype)
     return jnp.sum(q_loss, axis=-1)

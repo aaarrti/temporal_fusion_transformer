@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Literal, Callable, TypedDict
+    from typing import Literal, Callable, TypedDict, Tuple
 
     from jax.random import KeyArray
     import jax.numpy as jnp
@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     from flax.training.dynamic_scale import DynamicScale
     from absl_extra.flax_utils import TrainingHooks
     from temporal_fusion_transformer.src.modeling.tft_model import TftOutputs
+    from temporal_fusion_transformer.src.training.metrics import MetricContainer
+    from temporal_fusion_transformer.src.training.training_lib import TrainStateContainer
     from temporal_fusion_transformer.src.training.training_hooks import (
         HooksConfig,
         EarlyStoppingConfig,
@@ -25,3 +27,4 @@ if TYPE_CHECKING:
     DeviceTypeT = Literal["gpu", "tpu"]
     LossFn = Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
     PredictFn = Callable[[jnp.ndarray], jnp.ndarray | TftOutputs]
+    TrainingResult = Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]

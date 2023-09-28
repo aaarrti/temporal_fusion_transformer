@@ -58,8 +58,7 @@ class MultiHeadDotProductAttention(Module):
         features = self.out_features or inputs_q.shape[-1]
         qkv_features = self.qkv_features or inputs_q.shape[-1]
         assert qkv_features % self.num_heads == 0, (
-            f"Memory dimension ({qkv_features}) must be divisible by number of"
-            f" heads ({self.num_heads})."
+            f"Memory dimension ({qkv_features}) must be divisible by number of" f" heads ({self.num_heads})."
         )
         head_dim = qkv_features // self.num_heads
 
@@ -95,12 +94,8 @@ class MultiHeadDotProductAttention(Module):
             # detect if we're initializing by absence of existing cache data.
             is_initialized = self.has_variable("cache", "cached_key")
             cached_key = self.variable("cache", "cached_key", jnp.zeros, key.shape, key.dtype)
-            cached_value = self.variable(
-                "cache", "cached_value", jnp.zeros, value.shape, value.dtype
-            )
-            cache_index = self.variable(
-                "cache", "cache_index", lambda: jnp.array(0, dtype=jnp.int32)
-            )
+            cached_value = self.variable("cache", "cached_value", jnp.zeros, value.shape, value.dtype)
+            cache_index = self.variable("cache", "cache_index", lambda: jnp.array(0, dtype=jnp.int32))
             if is_initialized:
                 (
                     *batch_dims,

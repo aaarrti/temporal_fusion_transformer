@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         DynamicScaleT,
         EarlyStoppingT,
         DeviceTypeT,
+        TrainingResult,
     )
 
 
@@ -56,7 +57,7 @@ def train(
     hooks: HooksT = "auto",
     verbose: bool = True,
     early_stopping: EarlyStoppingT = "auto",
-) -> flax_utils.MetricsAndParams:
+) -> TrainingResult:
     compute_dtype = jnp.float16 if mixed_precision else jnp.float32
 
     return _train(
@@ -90,7 +91,7 @@ def train_distributed(
     hooks: HooksT = "auto",
     verbose: bool = True,
     early_stopping: EarlyStoppingT = "auto",
-) -> flax_utils.MetricsAndParams:
+) -> TrainingResult:
     num_devices = jax.device_count()
 
     if num_devices == 1:
@@ -140,7 +141,7 @@ def _train(
     jit_module: bool,
     train_step_fn: Callable,
     validation_step_fn: Callable,
-) -> flax_utils.MetricsAndParams:
+) -> TrainingResult:
     device_count = jax.device_count()
 
     training_dataset, validation_dataset = data
@@ -168,9 +169,7 @@ def _train(
     if isinstance(hooks, HooksConfig):
         hooks = make_training_hooks(hooks, num_training_steps=num_training_steps, epochs=epochs)
 
-    model = make_temporal_fusion_transformer(
-        config.model, data_config, jit_module=jit_module, dtype=compute_dtype
-    )
+    model = make_temporal_fusion_transformer(config.model, data_config, jit_module=jit_module, dtype=compute_dtype)
 
     prng_key = jax.random.PRNGKey(config.prng_seed)
     dropout_key, params_key, lstm_key = jax.random.split(prng_key, 3)
@@ -211,7 +210,7 @@ def make_timestamp_tag() -> str:
 
 
 def make_dataset_generator(
-    ds: tf.data.Dataset, compute_dtype: jnp.float32 | jnp.float16 | jnp.bfloat16
+    ds: tf.data.Dataset, compute_dtype: ComputeDtype
 ) -> Callable[[], Generator[Tuple[jnp.ndarray, jnp.ndarray], None, None]]:
     def generator():
         for x, y in ds.as_numpy_iterator():

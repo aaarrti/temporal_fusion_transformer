@@ -67,9 +67,7 @@ def train_step(
 
     if state.dynamic_scale is not None:
         # loss scaling logic is taken from https://github.com/google/flax/blob/main/examples/wmt/train.py#L177
-        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn)(
-            state.params
-        )
+        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn)(state.params)
         state.replace(dynamic_scale=dynamic_scale)
         state = state.apply_gradients(grads=grads)
     else:
@@ -116,9 +114,7 @@ def distributed_train_step(
         return jnp.mean(jnp.sum(y_loss, axis=-1))
 
     if state.dynamic_scale is not None:
-        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(
-            loss_fn, axis_name="i"
-        )(state.params)
+        dynamic_scale, is_fin, loss, grads = state.dynamic_scale.value_and_grad(loss_fn, axis_name="i")(state.params)
         state = state.replace(dynamic_scale=dynamic_scale)
     else:
         dynamic_scale, is_fin = None, None
@@ -235,9 +231,7 @@ TX = TypeVar("TX", bound=optax.OptState)
 
 def restore_optimizer_state(opt_state: TX, restored: Mapping[str, ...]) -> TX:
     """Restore optimizer state from loaded checkpoint (or .msgpack file)."""
-    return tree_util.tree_unflatten(
-        tree_util.tree_structure(opt_state), tree_util.tree_leaves(restored)
-    )
+    return tree_util.tree_unflatten(tree_util.tree_structure(opt_state), tree_util.tree_leaves(restored))
 
 
 def make_param_replication() -> ParamReplication:
@@ -250,6 +244,4 @@ def make_param_replication() -> ParamReplication:
 
 
 def make_early_stopping(config: EarlyStoppingConfig) -> EarlyStopping:
-    return EarlyStopping(
-        best_metric=config.best_metric, min_delta=config.min_delta, patience=config.patience
-    )
+    return EarlyStopping(best_metric=config.best_metric, min_delta=config.min_delta, patience=config.patience)

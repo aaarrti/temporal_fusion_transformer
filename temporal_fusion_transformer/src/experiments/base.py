@@ -1,33 +1,32 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Tuple, List
 from datetime import datetime
+from typing import TYPE_CHECKING, Tuple, List, Literal
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
     import numpy as np
-    import jax.numpy as jnp
     import polars as pl
     import tensorflow as tf
-    from typing import Callable
 
     from temporal_fusion_transformer.src.config_dict import ConfigDict, ModelConfig
     from temporal_fusion_transformer.src.training.metrics import MetricContainer
-    from temporal_fusion_transformer.src.config_dict import DataConfig
     from temporal_fusion_transformer.src.training.training_lib import (
         TrainStateContainer,
     )
-    from temporal_fusion_transformer.src.modeling.tft_model import TftOutputs
 
-    from temporal_fusion_transformer.src.lib_types import PredictFn, HooksConfig
+    from temporal_fusion_transformer.src.lib_types import (
+        PredictFn,
+        TrainingResult,
+        HooksT,
+        DeviceTypeT,
+    )
 
 
 class MultiHorizonTimeSeriesDataset(ABC):
     @abstractmethod
-    def convert_to_parquet(
-        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
-    ):
+    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True):
         """
         Convert data to parquet format to reduce memory requirement.
 
@@ -73,9 +72,7 @@ class MultiHorizonTimeSeriesDataset(ABC):
         raise NotImplementedError
 
     @classmethod
-    def plot_predictions(
-        cls, x_batch: np.ndarray, y_batch: np.ndarray, y_predicted: np.ndarray
-    ) -> plt.Figure:
+    def plot_predictions(cls, x_batch: np.ndarray, y_batch: np.ndarray, y_predicted: np.ndarray) -> plt.Figure:
         raise NotImplementedError
 
     @property
@@ -144,12 +141,32 @@ class DataPreprocessorBase(ABC):
 class TrainerBase(ABC):
     @abstractmethod
     def run(
-        self, *args, **kwargs
-    ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
+        self,
+        *,
+        data_dir: str,
+        batch_size: int,
+        config: ConfigDict | Literal["auto"] = "auto",
+        epochs: int = 1,
+        mixed_precision: bool = False,
+        jit_module: bool = False,
+        verbose: bool = True,
+        hooks: HooksT = "auto",
+    ) -> TrainingResult:
         raise NotImplementedError
 
     @abstractmethod
     def run_distributed(
-        self, *args, **kwargs
+        self,
+        *,
+        data_dir: str,
+        batch_size: int,
+        config: ConfigDict | Literal["auto"] = "auto",
+        epochs: int = 1,
+        mixed_precision: bool = False,
+        jit_module: bool = False,
+        verbose: bool = True,
+        device_type: DeviceTypeT = "gpu",
+        prefetch_buffer_size: int = 0,
+        hooks: HooksT = "auto",
     ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
         raise NotImplementedError

@@ -4,6 +4,7 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, List, Mapping, Tuple, TypedDict, Callable, Literal
 
 import jax
@@ -11,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 from absl import logging
 from tqdm.auto import tqdm
-from tempfile import TemporaryDirectory
 
 from temporal_fusion_transformer.src.experiments.base import (
     DataPreprocessorBase,
@@ -32,13 +32,8 @@ if TYPE_CHECKING:
     from sklearn.preprocessing import LabelEncoder, StandardScaler
 
     from temporal_fusion_transformer.src.config_dict import ConfigDict, DataConfig, ModelConfig
-    from temporal_fusion_transformer.src.training.metrics import MetricContainer
-    from temporal_fusion_transformer.src.training.training import DeviceTypeT
-    from temporal_fusion_transformer.src.training.training_lib import (
-        TrainStateContainer,
-    )
     from temporal_fusion_transformer.src.experiments.base import PredictFn
-    from temporal_fusion_transformer.src.lib_types import HooksT, DeviceTypeT
+    from temporal_fusion_transformer.src.lib_types import HooksT, DeviceTypeT, TrainingResult
 
 try:
     import polars as pl
@@ -97,38 +92,40 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             cutoff_days=self.cutoff_days,
         )
         if save_dir is not None:
-            persist_dataset(
-                training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir
-            )
+            persist_dataset(training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir)
         else:
             return training_ds, validation_ds, test_df, preprocessor
 
-    def convert_to_parquet(
-        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
-    ):
+    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True):
         return convert_to_parquet(download_dir, output_dir, delete_processed=delete_processed)
 
     def reload_preprocessor(self, filename: str) -> DataPreprocessor:
         return DataPreprocessor.load(filename)
 
     def reload_model(
-        self, filename: str, config: ModelConfig | None, jit_module: bool, return_attention: bool = True
+        self,
+        filename: str,
+        config: ModelConfig | None,
+        jit_module: bool,
+        return_attention: bool = True,
     ) -> PredictFn:
         from temporal_fusion_transformer.src.inference.util import reload_model
-        
+
         if config is None:
             config = hyperparameters.get_config("electricity")
 
         return reload_model(
             filename,
             model_config=config,
-            data_config=fixed_parameters.get_config("electricty"),
+            data_config=fixed_parameters.get_config("electricity"),
             jit_module=jit_module,
             return_attention=return_attention,
         )
 
 
 class DataPreprocessor(DataPreprocessorBase):
+    __slots__ = ["preprocessor"]
+
     def __init__(self, preprocessor: PreprocessorDict, total_time_steps: int | None = None):
         if total_time_steps is None:
             total_time_steps = fixed_parameters.get_config("electricity").total_time_steps
@@ -172,15 +169,14 @@ class Trainer(TrainerBase):
         jit_module: bool = False,
         verbose: bool = True,
         hooks: HooksT = "auto",
-    ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
+    ) -> TrainingResult:
         from temporal_fusion_transformer.src.training.training import train
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
 
         if config == "auto":
-            config = hyperparameters.get_config('electricity')
-        
+            config = hyperparameters.get_config("electricity")
+
         data_config = fixed_parameters.get_config("electricity")
-        
 
         data = load_dataset(
             data_dir,
@@ -214,12 +210,12 @@ class Trainer(TrainerBase):
         device_type: DeviceTypeT = "gpu",
         prefetch_buffer_size: int = 0,
         hooks: HooksT = "auto",
-    ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
+    ) -> TrainingResult:
         from temporal_fusion_transformer.src.training.training import train_distributed
         from temporal_fusion_transformer.src.training.training_lib import load_dataset
-        
+
         if config == "auto":
-            config = hyperparameters.get_config('electricity')
+            config = hyperparameters.get_config("electricity")
 
         data_config = fixed_parameters.get_config("electricity")
         num_devices = jax.device_count()
@@ -285,9 +281,7 @@ def make_dataset(
     df = read_parquet(data_dir, cutoff_days=cutoff_days)
     logging.info(f"{df.columns = }")
     preprocessor = train_preprocessor(df)
-    training_df, validation_df, test_df = split_data(
-        df, validation_boundary, test_boundary, split_overlap_days
-    )
+    training_df, validation_df, test_df = split_data(df, validation_boundary, test_boundary, split_overlap_days)
 
     make_dataset_fn: Callable[[pl.DataFrame], tf.data.Dataset] = partial(
         make_time_series_dataset, total_time_steps=total_time_steps, preprocessor=preprocessor
@@ -312,9 +306,9 @@ def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_proc
         with open(f"{tmpdir}/LD2011_2014.csv", "w+") as file:
             file.write(csv_content)
 
-        pl.scan_csv(
-            f"{tmpdir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True
-        ).rename({"": "timestamp"}).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
+        pl.scan_csv(f"{tmpdir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True).rename(
+            {"": "timestamp"}
+        ).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
 
     if delete_processed:
         os.remove(f"{data_dir}/LD2011_2014.txt")
@@ -411,9 +405,7 @@ def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
     }
 
 
-def apply_preprocessor(
-    df: pl.DataFrame, preprocessor: PreprocessorDict, skip_targets: bool = False
-) -> pl.DataFrame:
+def apply_preprocessor(df: pl.DataFrame, preprocessor: PreprocessorDict, skip_targets: bool = False) -> pl.DataFrame:
     """
 
     Parameters
@@ -438,16 +430,12 @@ def apply_preprocessor(
         x_real = sub_df[_REAL_INPUTS].to_numpy(order="c")
         x_real = preprocessor["real"][i].transform(x_real)
 
-        sub_lf = sub_lf.with_columns(
-            [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real.T, _REAL_INPUTS)]
-        )
+        sub_lf = sub_lf.with_columns([pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real.T, _REAL_INPUTS)])
 
         if not skip_targets:
             x_target = sub_df[_TARGETS].to_numpy(order="c")
             x_target = preprocessor["target"][i].transform(x_target)
-            sub_lf = sub_lf.with_columns(
-                [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target.T, _TARGETS)]
-            )
+            sub_lf = sub_lf.with_columns([pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target.T, _TARGETS)])
 
         lf_list.append(sub_lf)
 
@@ -459,12 +447,7 @@ def apply_preprocessor(
         df = df.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))
 
     ids = preprocessor["categorical"]["id"].transform(df["id"].to_numpy())
-    df = (
-        df.drop("id")
-        .with_columns(id=pl.lit(ids).cast(pl.UInt16))
-        .shrink_to_fit(in_place=True)
-        .rechunk()
-    )
+    df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
     df = df.shrink_to_fit(in_place=True).rechunk()
     return df
 
@@ -519,32 +502,21 @@ def inverse_transform_for_single_id(
 
     y_new = preprocessor["target"][entity_id].inverse_transform(y_batch).reshape(-1)
 
-    x_categorical = np.take(
-        x_batch, list(config.input_known_categorical_idx) + list(config.input_static_idx), axis=-1
-    )
+    x_categorical = np.take(x_batch, list(config.input_known_categorical_idx) + list(config.input_static_idx), axis=-1)
 
     x_categorical_new = [
         preprocessor["categorical"][j].inverse_transform(np.asarray(i, dtype=np.int32))
         for i, j in zip(x_categorical.T, _CATEGORICAL_INPUTS + [_ID_COLUMN])
     ]
 
-    x_real = np.take(
-        x_batch, list(config.input_known_real_idx) + list(config.input_observed_idx), axis=-1
-    )
+    x_real = np.take(x_batch, list(config.input_known_real_idx) + list(config.input_observed_idx), axis=-1)
 
     x_real_new = preprocessor["real"][entity_id].inverse_transform(x_real).reshape(-1)
 
     return (
         pl.DataFrame()
-        .with_columns(
-            [
-                pl.lit(i).alias(j)
-                for i, j in zip(x_categorical_new, _CATEGORICAL_INPUTS + [_ID_COLUMN])
-            ]
-        )
-        .with_columns(
-            [pl.lit(x_real_new).alias("year").cast(pl.UInt16), pl.lit(y_new).alias("power_usage")]
-        )
+        .with_columns([pl.lit(i).alias(j) for i, j in zip(x_categorical_new, _CATEGORICAL_INPUTS + [_ID_COLUMN])])
+        .with_columns([pl.lit(x_real_new).alias("year").cast(pl.UInt16), pl.lit(y_new).alias("power_usage")])
         .rechunk()
     )
 

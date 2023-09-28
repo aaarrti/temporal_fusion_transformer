@@ -56,11 +56,7 @@ def label_encoder_to_pytree(le: LabelEncoder) -> LabelEncoderPytree:
 
 def is_standard_scaler_pytree(pytree) -> bool:
     return (
-        isinstance(pytree, Mapping)
-        and "var" in pytree
-        and "mean" in pytree
-        and "scale" in pytree
-        and len(pytree) == 3
+        isinstance(pytree, Mapping) and "var" in pytree and "mean" in pytree and "scale" in pytree and len(pytree) == 3
     )
 
 
@@ -212,4 +208,4 @@ def persist_dataset(
 
 
 def count_groups(df: pl.DataFrame, id_column: str) -> int:
-    return int(df[id_column].unique_counts().to_list()[0])
+    return len(df[id_column].unique_counts())

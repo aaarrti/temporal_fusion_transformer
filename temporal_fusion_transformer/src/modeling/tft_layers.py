@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Sequence, Tuple
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import struct
+from jaxtyping import jaxtyped
 
 from temporal_fusion_transformer.src.modeling.self_attention import SelfAttention
 
@@ -61,9 +62,7 @@ class GatedLinearUnit(nn.Module):
     def __call__(self, inputs: jnp.ndarray, training: bool) -> Tuple[jnp.ndarray, jnp.ndarray]:
         x = nn.Dropout(rate=self.dropout_rate, deterministic=not training, name="dropout")(inputs)
         dense = nn.Dense(self.latent_dim, dtype=self.dtype, name="dense1")
-        activation = nn.Sequential(
-            [nn.Dense(self.latent_dim, dtype=self.dtype, name="dense2"), nn.sigmoid]
-        )
+        activation = nn.Sequential([nn.Dense(self.latent_dim, dtype=self.dtype, name="dense2"), nn.sigmoid])
 
         if self.time_distributed:
             dense = TimeDistributed(dense)
@@ -217,9 +216,9 @@ class InputEmbedding(nn.Module):
         if len(self.known_categories_sizes) != 0:
             known_categorical_inputs_embeddings = []
             for i, size in enumerate(self.known_categories_sizes):
-                embeds_i = nn.Embed(
-                    size, self.latent_dim, dtype=self.dtype, name=f"known_embed_{i}"
-                )(inputs.known_categorical[..., i])
+                embeds_i = nn.Embed(size, self.latent_dim, dtype=self.dtype, name=f"known_embed_{i}")(
+                    inputs.known_categorical[..., i]
+                )
                 known_categorical_inputs_embeddings.append(embeds_i)
             known_inputs_embeddings = jnp.concatenate(
                 [
@@ -423,9 +422,7 @@ class DecoderBlock(nn.Module):
     dtype: ComputeDtype = jnp.float32
 
     @nn.compact
-    def __call__(
-        self, inputs: jnp.ndarray, training: bool, mask: jnp.ndarray | None = None
-    ) -> jnp.ndarray:
+    def __call__(self, inputs: jnp.ndarray, training: bool, mask: jnp.ndarray | None = None) -> jnp.ndarray:
         x = SelfAttention(
             num_heads=self.num_attention_heads,
             dtype=self.dtype,
@@ -459,6 +456,7 @@ class DecoderBlock(nn.Module):
 # -------------------------------------------------------------------------------------------------------------
 
 
+@jaxtyped
 @struct.dataclass
 class InputStruct:
     """

@@ -44,9 +44,7 @@ setup_logging(log_level="INFO")
 
 def make_notifier() -> SlackNotifier | None:
     if platform.system().lower() == "linux":
-        return SlackNotifier(
-            slack_token=os.environ["SLACK_BOT_TOKEN"], channel_id=os.environ["SLACK_CHANNEL_ID"]
-        )
+        return SlackNotifier(slack_token=os.environ["SLACK_BOT_TOKEN"], channel_id=os.environ["SLACK_CHANNEL_ID"])
     else:
         return NoOpNotifier()
 

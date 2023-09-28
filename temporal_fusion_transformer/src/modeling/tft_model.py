@@ -22,7 +22,7 @@ from temporal_fusion_transformer.src.modeling.tft_layers import (
 
 if TYPE_CHECKING:
     from temporal_fusion_transformer.src.config_dict import ModelConfig, DataConfig
-    from temporal_fusion_transformer.src.modeling.tft_layers import ComputeDtype
+    from temporal_fusion_transformer.src.lib_types import ComputeDtype
 
 
 @struct.dataclass
@@ -109,9 +109,7 @@ class TemporalFusionTransformer(nn.Module):
 
         for block in self.decoder_blocks:
             decoder_out = block(decoder_in, mask=mask, training=training)
-            decoder_out = nn.LayerNorm(dtype=self.dtype)(
-                decoder_out + temporal_features
-            )
+            decoder_out = nn.LayerNorm(dtype=self.dtype)(decoder_out + temporal_features)
             decoder_in = decoder_out
 
         # Final skip connection
@@ -169,24 +167,16 @@ class InputPreprocessor(nn.Module):
         )
 
         if input_static_idx is None:
-            raise ValueError(
-                f"When providing inputs as arrays, must specify provide `input_static_idx`"
-            )
+            raise ValueError("When providing inputs as arrays, must specify provide `input_static_idx`")
 
         if input_known_real_idx is None:
-            raise ValueError(
-                f"When providing inputs as arrays, must specify provide `input_known_real_idx`"
-            )
+            raise ValueError("When providing inputs as arrays, must specify provide `input_known_real_idx`")
 
         if input_known_categorical_idx is None:
-            raise ValueError(
-                f"When providing inputs as arrays, must specify provide `input_known_categorical_idx`"
-            )
+            raise ValueError("When providing inputs as arrays, must specify provide `input_known_categorical_idx`")
 
         if input_observed_idx is None:
-            raise ValueError(
-                f"When providing inputs as arrays, must specify provide `input_observed_idx`"
-            )
+            raise ValueError("When providing inputs as arrays, must specify provide `input_observed_idx`")
 
         input_static_idx = list(input_static_idx)
         input_known_real_idx = list(input_known_real_idx)
@@ -205,10 +195,7 @@ class InputPreprocessor(nn.Module):
             unknown_indexes = sorted(
                 list(
                     set(
-                        input_static_idx
-                        + input_known_real_idx
-                        + input_known_categorical_idx
-                        + input_observed_idx
+                        input_static_idx + input_known_real_idx + input_known_categorical_idx + input_observed_idx
                     ).symmetric_difference(range(num_features))
                 )
             )
