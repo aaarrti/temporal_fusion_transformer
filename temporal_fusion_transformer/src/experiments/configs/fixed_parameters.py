@@ -11,6 +11,7 @@ def get_config(choice: Literal["electricity", "favorita", "hamburg_air_quality"]
             "num_encoder_steps": 168,  # 7 * 24
             "total_time_steps": 192,   # 8 * 24
             "num_outputs": 1,
+            "quantiles": [0.1, 0.5, 0.9],
             "known_categories_sizes": [
                 12,  # month
                 31,  # day
@@ -32,6 +33,7 @@ def get_config(choice: Literal["electricity", "favorita", "hamburg_air_quality"]
             "total_time_steps": 120,
             "num_encoder_steps": 90,
             "num_outputs": 1,
+            "quantiles": [0.1, 0.5, 0.9],
             "known_categories_sizes": [
                 12,  # month
                 31,  # day of month

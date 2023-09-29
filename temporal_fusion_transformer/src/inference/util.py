@@ -4,13 +4,13 @@ from typing import TYPE_CHECKING, Callable, overload
 
 import numpy as np
 
-from temporal_fusion_transformer.src.config_dict import DataConfig, ModelConfig
 from temporal_fusion_transformer.src.modeling.tft_model import (
     TemporalFusionTransformer,
     TftOutputs,
 )
 
 if TYPE_CHECKING:
+    from temporal_fusion_transformer.src.config_dict import DataConfig, ModelConfig
     from temporal_fusion_transformer.src.lib_types import PredictFn
 
 
@@ -45,7 +45,7 @@ def reload_model(
 ) -> PredictFn:
     from absl_extra.flax_utils import load_from_msgpack
 
-    params = load_from_msgpack(None, filename)
+    params = load_from_msgpack(None, filename, compression="GZIP")
     model = TemporalFusionTransformer.from_config_dict(
         model_config, data_config, jit_module=jit_module, return_attention=return_attention
     )

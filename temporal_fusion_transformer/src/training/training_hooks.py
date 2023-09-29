@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         training_state: TrainStateContainer
 
 
+# FIXME: can't schedule new future after poll is closed.
 pool = clu.asynclib.Pool()
 
 if sys.version_info >= (3, 10):
@@ -147,7 +148,7 @@ def make_checkpoint_hooks(
 
     options = CheckpointManagerOptions(
         save_interval_steps=200,
-        # FIXME: for some reason TPU runtime on kaggle fails here
+        # for some reason TPU runtime on kaggle fails here
         # save_on_steps=[num_training_steps * i for i in range(1, epochs)],
         max_to_keep=5,
         # cleanup_tmp_directories=True,
@@ -158,7 +159,7 @@ def make_checkpoint_hooks(
     mngr = CheckpointManager(
         checkpoint_directory,
         # AsyncCheckpointer(PyTreeCheckpointHandler(use_ocdbt=True, write_tree_metadata=True)),
-        # FIXME: for some reason TPU runtime on kaggle fails here
+        # for some reason TPU runtime on kaggle fails here
         AsyncCheckpointer(PyTreeCheckpointHandler(use_ocdbt=True)),
         options,
     )

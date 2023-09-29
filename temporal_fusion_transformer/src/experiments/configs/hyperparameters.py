@@ -24,7 +24,6 @@ def _get_model_config(choice: Choice) -> ConfigDict:
             "latent_dim": 256,
             "dropout_rate": 0.1,
             "attention_dropout_rate": 0.1,
-            "quantiles": [0.1, 0.5, 0.9],
         },
         "favorita": {},
         "hamburg_air_quality": {},

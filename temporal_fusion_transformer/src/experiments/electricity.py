@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from functools import partial
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Callable, List, Literal, Mapping, Tuple, TypedDict
+from math import ceil
 
 import jax
 import jax.numpy as jnp
@@ -27,6 +28,7 @@ from temporal_fusion_transformer.src.experiments.util import (
     deserialize_preprocessor,
     persist_dataset,
     time_series_dataset_from_dataframe,
+    time_series_to_array,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +52,8 @@ try:
     import polars as pl
     import tensorflow as tf
     from sklearn.preprocessing import LabelEncoder, StandardScaler
+    import matplotlib.pyplot as plt
+    from matplotlib import dates as mdates
 except ModuleNotFoundError as ex:
     logging.warning(ex)
 
@@ -116,14 +120,14 @@ class Electricity(MultiHorizonTimeSeriesDataset):
     def reload_model(
         self,
         filename: str,
-        config: ModelConfig | None,
-        jit_module: bool,
+        config: ModelConfig | None = None,
+        jit_module: bool = False,
         return_attention: bool = True,
     ) -> PredictFn:
         from temporal_fusion_transformer.src.inference.util import reload_model
 
         if config is None:
-            config = hyperparameters.get_config("electricity")
+            config = hyperparameters.get_config("electricity").model
 
         return reload_model(
             filename,
@@ -133,9 +137,85 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             return_attention=return_attention,
         )
 
+    def plot_predictions(
+        self,
+        df: pl.DataFrame,
+        entity: str,
+        preprocessor: DataPreprocessor,
+        model: PredictFn,
+        batch_size: int = 32,
+        truncate_past: datetime | None = datetime(2014, 9, 4),
+    ) -> plt.Figure:
+        from temporal_fusion_transformer.src.inference import plotting
+
+        df = df.filter(pl.col("id") == entity).pipe(
+            lambda i: i.with_columns(timestamp=pl.Series(preprocessor.restore_timestamps(i)))
+        )
+        max_date = df["timestamp"].max()
+
+        df = df.filter(pl.col("timestamp") >= (max_date - timedelta(hours=self.total_time_steps))).drop("timestamp")
+
+        tf_ds = preprocessor.convert_dataframe_to_tf_dataset(df)
+
+        x = []
+        y = []
+        y_predicted = []
+
+        num_batches = ceil(float(tf_ds.cardinality()) / batch_size)
+
+        for x_batch, y_batch in tqdm(
+            tf_ds.batch(batch_size).as_numpy_iterator(), total=num_batches, desc="Predicting..."
+        ):
+            y_predicted_batch = model(x_batch)
+            y_predicted.extend(y_predicted_batch)
+            x.extend(x_batch)
+            y.extend(y_batch)
+
+        x = np.asarray(x)
+        y = np.asarray(y)
+        y_predicted = np.asarray(y_predicted)
+
+        ground_truth_df = preprocessor.inverse_transform(time_series_to_array(x), time_series_to_array(y))
+        ts = preprocessor.restore_timestamps(ground_truth_df)
+        pu = ground_truth_df["power_usage"].to_numpy()
+
+        quantiles = fixed_parameters.get_config("electricity").quantiles
+        num_encoder_steps = fixed_parameters.get_config("electricity").num_encoder_steps
+
+        predicted_df = [
+            preprocessor.inverse_transform(
+                time_series_to_array(x[:, num_encoder_steps:]), time_series_to_array(y_predicted[..., i])
+            )
+            for i in range(len(quantiles))
+        ]
+
+        ground_truth_past_ts = ts[:num_encoder_steps]
+        ground_truth_past_pu = pu[:num_encoder_steps]
+
+        ground_truth_past_ts_truncated = []
+        ground_truth_past_pu_truncated = []
+
+        for i, j in zip(ground_truth_past_ts, ground_truth_past_pu):
+            if truncate_past is None or i >= truncate_past:
+                ground_truth_past_ts_truncated.append(i)
+                ground_truth_past_pu_truncated.append(j)
+
+        return plotting.plot_predictions(
+            ground_truth_past=(ground_truth_past_ts_truncated, ground_truth_past_pu_truncated),
+            ground_truth_observed=(ts[num_encoder_steps:], pu[num_encoder_steps:]),
+            predictions=[(preprocessor.restore_timestamps(i), i["power_usage"].to_numpy()) for i in predicted_df],
+            title=f"{entity} power usage".title(),
+            quantiles=quantiles,
+            formatter=mdates.DateFormatter("%m.%d %H"),
+            locator=mdates.HourLocator(interval=20),
+        )
+
 
 class DataPreprocessor(DataPreprocessorBase):
     __slots__ = ["preprocessor"]
+
+    def __repr__(self):
+        return repr(self.preprocessor)
 
     def __init__(self, preprocessor: PreprocessorDict, total_time_steps: int | None = None):
         if total_time_steps is None:

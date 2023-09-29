@@ -36,8 +36,8 @@ def make_quantile_loss_fn(quantiles: Sequence[float], dtype: ComputeDtype = jnp.
 @functools.partial(
     jax.jit,
     # Works on GPU, but fails on Kaggle TPU ¯\_(ツ)_/¯
-    #static_argnums=[2, 3],
-    #static_argnames=["tau", "dtype"],
+    # static_argnums=[2, 3],
+    # static_argnames=["tau", "dtype"],
     static_argnums=[3],
     static_argnames=["dtype"],
     inline=True,

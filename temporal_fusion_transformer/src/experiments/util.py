@@ -143,6 +143,9 @@ def time_series_dataset_from_dataframe(
     def make_time_series_fn(sub_df: pl.DataFrame) -> tf.data.Dataset:
         arr: np.ndarray = sub_df[inputs + targets].to_numpy(order="c")
 
+        if len(arr) < total_time_steps:
+            raise ValueError("len(arr) < total_time_steps")
+
         time_series: tf.data.Dataset = timeseries_dataset_from_array(
             arr,
             targets=None,

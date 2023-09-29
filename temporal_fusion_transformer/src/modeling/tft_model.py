@@ -352,7 +352,7 @@ def make_temporal_fusion_transformer(
 
     output_projection = [
         TimeDistributed(nn.Dense(data_config.num_outputs, dtype=dtype, name=f"dense_{i}"))
-        for i in range(len(model_config.quantiles))
+        for i in range(len(data_config.quantiles))
     ]
 
     return module(

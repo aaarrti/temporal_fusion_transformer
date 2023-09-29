@@ -22,16 +22,12 @@ if TYPE_CHECKING:
         dropout_rate:
         latent_dim:
             Model latent space dimensionality.
-
-        quantiles:
-            Quantiles use for loss function.
         """
 
         num_attention_heads: int
         num_decoder_blocks: int
         latent_dim: int
         dropout_rate: int
-        quantiles: Sequence[float]
         attention_dropout_rate: float
 
     class _DataConfig(Protocol):
@@ -58,6 +54,7 @@ if TYPE_CHECKING:
             Indices, at which known real inputs are in stacked array.
         input_known_categorical_idx:
             Indices, at which known categorical inputs are in stacked array.
+        quantiles: Sequence[float]
 
         """
 
@@ -70,6 +67,7 @@ if TYPE_CHECKING:
         input_static_idx: Sequence[int]
         input_known_real_idx: Sequence[int]
         input_known_categorical_idx: Sequence[int]
+        quantiles: Sequence[float]
 
     class _OptimizerConfig(Protocol):
         """

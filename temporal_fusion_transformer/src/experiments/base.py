@@ -70,10 +70,6 @@ class MultiHorizonTimeSeriesDataset(ABC):
         """
         raise NotImplementedError
 
-    @classmethod
-    def plot_predictions(cls, x_batch: np.ndarray, y_batch: np.ndarray, y_predicted: np.ndarray) -> plt.Figure:
-        raise NotImplementedError
-
     @property
     @abstractmethod
     def trainer(self) -> TrainerBase:
@@ -87,6 +83,18 @@ class MultiHorizonTimeSeriesDataset(ABC):
     def reload_model(
         self, filename: str, config: ModelConfig, jit_module: bool, return_attention: bool = True
     ) -> PredictFn:
+        raise NotImplementedError
+
+    @abstractmethod
+    def plot_predictions(
+        self,
+        df: pl.DataFrame,
+        entity: str,
+        preprocessor: DataPreprocessorBase,
+        model: PredictFn,
+        batch_size: int = 32,
+        truncate_past: datetime | None = None,
+    ) -> plt.Figure:
         raise NotImplementedError
 
 
