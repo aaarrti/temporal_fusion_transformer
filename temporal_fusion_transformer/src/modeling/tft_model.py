@@ -138,7 +138,7 @@ class TemporalFusionTransformer(nn.Module):
         model_config: ModelConfig,
         data_config: DataConfig,
         jit_module: bool = False,
-        dtype: jnp.inexact = jnp.float32,
+        dtype: ComputeDtype = jnp.float32,
         return_attention: bool = False,
     ) -> TemporalFusionTransformer:
         return make_temporal_fusion_transformer(
@@ -155,7 +155,7 @@ class InputPreprocessor(nn.Module):
     input_static_idx: Sequence[int]
     input_known_real_idx: Sequence[int]
     input_known_categorical_idx: Sequence[int]
-    dtype: jnp.inexact = jnp.float32
+    dtype: ComputeDtype = jnp.float32
 
     @nn.compact
     def __call__(self, inputs: Float[Array, "batch time n"]) -> InputStruct:
@@ -245,7 +245,7 @@ def make_temporal_fusion_transformer(
     model_config: ModelConfig,
     data_config: DataConfig,
     jit_module: bool = False,
-    dtype: jnp.inexact = jnp.float32,
+    dtype: ComputeDtype = jnp.float32,
     return_attention: bool = False,
 ) -> TemporalFusionTransformer:
     module = TemporalFusionTransformer

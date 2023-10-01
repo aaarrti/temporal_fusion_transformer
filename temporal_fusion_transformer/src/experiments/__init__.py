@@ -9,3 +9,4 @@ from temporal_fusion_transformer.src.experiments.configs import (
 # if util.find_spec("polars") is not None and util.find_spec("tensorflow") is not None:
 from temporal_fusion_transformer.src.experiments.electricity import Electricity
 from temporal_fusion_transformer.src.experiments.favorita import Favorita
+from temporal_fusion_transformer.src.experiments import util
