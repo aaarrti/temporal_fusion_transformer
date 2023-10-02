@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Literal, Tuple
 
+from temporal_fusion_transformer.src.experiments.util import classproperty
+
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
     import numpy as np
@@ -70,7 +72,7 @@ class MultiHorizonTimeSeriesDataset(ABC):
         """
         raise NotImplementedError
 
-    @property
+    @classproperty
     @abstractmethod
     def trainer(self) -> TrainerBase:
         raise NotImplementedError

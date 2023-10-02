@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import tensorflow as tf
 
     from temporal_fusion_transformer.src.config_dict import OptimizerConfig
-    from temporal_fusion_transformer.src.lib_types import PRNGCollection
+    from temporal_fusion_transformer.src.lib_types import PRNGCollection, ComputeDtype
     from temporal_fusion_transformer.src.training.training_hooks import (
         EarlyStoppingConfig,
     )
@@ -147,7 +147,7 @@ def load_dataset(
     prng_seed: int,
     num_encoder_steps: int,
     shuffle_buffer_size: int = 1024,
-    dtype=jnp.float32,
+    dtype: ComputeDtype = jnp.float32,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
 

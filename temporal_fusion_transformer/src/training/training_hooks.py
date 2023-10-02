@@ -43,9 +43,7 @@ if TYPE_CHECKING:
         training_state: TrainStateContainer
 
 
-# FIXME: can't schedule new future after poll is closed.
-pool = clu.asynclib.Pool()
-
+_DEFAULT_POOL = Pool(max_workers=1)
 if sys.version_info >= (3, 10):
     dc_kw = dict(slots=True)
 else:
@@ -104,7 +102,10 @@ def _make_training_hooks(
     monitor_exception: bool = True,
     save_path: str | None = None,
     monitor_gpu_memory: bool = True,
+    pool: Pool | None = None,
 ) -> TrainingHooks:
+    if pool is None:
+        pool = _DEFAULT_POOL
     hooks_list = [
         make_metrics_hooks(
             num_training_steps=num_training_steps,
@@ -127,11 +128,10 @@ def _make_training_hooks(
 
     hooks = combine_hooks(*hooks_list)
 
-    def close_pool(*args, **kwargs):
+    def join_pool(*args, **kwargs):
         pool.join()
-        pool.close()
 
-    hooks.on_training_end.append(close_pool)
+    hooks.on_training_end.append(join_pool)
 
     return hooks
 
@@ -140,7 +140,11 @@ def make_checkpoint_hooks(
     checkpoint_directory: str | None,
     delete_checkpoints_after_training: bool,
     save_path: str | None,
+    pool: Pool | None = None,
 ) -> TrainingHooks:
+    if pool is None:
+        pool = _DEFAULT_POOL
+
     hooks = TrainingHooks()
     if checkpoint_directory is None:
         return hooks
@@ -215,8 +219,12 @@ def make_metrics_hooks(
     logdir: str,
     report_progress_frequency: int | None = 50,
     log_metrics_frequency: bool = 100,
+    pool: Pool | None = None,
 ) -> TrainingHooks:
     logging.info(f"Writing tensorboard logs to {logdir}")
+
+    if pool is None:
+        pool = _DEFAULT_POOL
 
     hooks = TrainingHooks()
     running_on_linux = platform.system().lower() == "linux"
@@ -278,7 +286,10 @@ def make_metrics_hooks(
     return hooks
 
 
-def make_profiler_hook(profile: bool, logdir: str) -> TrainingHooks:
+def make_profiler_hook(profile: bool, logdir: str, pool: Pool | None = None) -> TrainingHooks:
+    if pool is None:
+        pool = _DEFAULT_POOL
+
     hooks = TrainingHooks()
 
     profiler = clu.periodic_actions.Profile(
@@ -302,8 +313,11 @@ def make_profiler_hook(profile: bool, logdir: str) -> TrainingHooks:
     return hooks
 
 
-def make_garbage_collection_hooks() -> TrainingHooks:
+def make_garbage_collection_hooks(pool: Pool | None = None) -> TrainingHooks:
     """We need to manually call python GC to free up XLA memory. See https://github.com/google/jax/issues/14882"""
+
+    if pool is None:
+        pool = _DEFAULT_POOL
 
     @pool
     def gc_func(*args, **kwargs):
@@ -368,8 +382,11 @@ def make_early_stopping_hook() -> TrainingHooks:
     return hooks
 
 
-def make_gpu_memory_monitoring_hook(monitor_gpu_memory: bool) -> TrainingHooks:
+def make_gpu_memory_monitoring_hook(monitor_gpu_memory: bool, pool: Pool | None = None) -> TrainingHooks:
     hooks = TrainingHooks()
+
+    if pool is None:
+        pool = _DEFAULT_POOL
 
     @pool
     def monitor_fn(*args, step: int, **kwargs):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Mapping, TypedDict, Literal
+from typing import TYPE_CHECKING, Callable, List, Mapping, TypedDict, Literal, Type
 
 import numpy as np
 from absl import logging
@@ -22,6 +22,11 @@ except ModuleNotFoundError as ex:
 if TYPE_CHECKING:
     import polars as pl
     from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+
+class classproperty(property):
+    def __get__(self, _, owner_cls: Type):  # noqa
+        return self.fget(owner_cls)
 
 
 class StandardScalerPytree(TypedDict):

@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from absl import logging
+from matplotlib import pyplot as plt
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src.experiments.base import (
@@ -105,6 +106,17 @@ class Favorita(MultiHorizonTimeSeriesDataset):
             jit_module=jit_module,
             return_attention=return_attention,
         )
+
+    def plot_predictions(
+        self,
+        df: pl.DataFrame,
+        entity: str,
+        preprocessor: DataPreprocessorBase,
+        model: PredictFn,
+        batch_size: int = 32,
+        truncate_past: datetime | None = None,
+    ) -> plt.Figure:
+        pass
 
 
 class DataPreprocessor(DataPreprocessorBase):
