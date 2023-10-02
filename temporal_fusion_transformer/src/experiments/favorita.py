@@ -222,7 +222,7 @@ class Trainer(TrainerBase):
 
 class PreprocessorDict(TypedDict):
     real: Mapping[str, StandardScaler]
-    target: StandardScaler
+    target: Mapping[str, StandardScaler]
     categorical: Mapping[str, LabelEncoder]
 
 
@@ -514,18 +514,23 @@ def apply_preprocessor(
 ) -> pl.DataFrame:
     lf = df.lazy()
 
-    log_sales = preprocessor["target"].transform(df[_TARGETS].to_numpy().reshape(-1, 1))
-    lf = lf.drop("log_sales").with_columns(log_sales=pl.lit(log_sales.reshape(-1)).cast(pl.Float32))
+    total = len(_CATEGORICAL_INPUTS) + len(_REAL_INPUTS) + len(_TARGETS)
 
-    for i in tqdm(_REAL_INPUTS):
-        x = df[i].to_numpy().reshape(-1, 1)
-        x = preprocessor["real"][i].transform(x)
-        lf = lf.drop(i).with_columns(pl.lit(x.reshape(-1)).alias(i))
+    with tqdm(total=total, desc="Training preprocessor...") as pbar:
+        for i in tqdm(_TARGETS):
+            x = df[i].to_numpy().reshape(-1, 1)
+            x = preprocessor["target"][i].transform(x)
+            lf = lf.drop(i).with_columns(pl.lit(x.reshape(-1)).alias(i))
 
-    for i in tqdm(_CATEGORICAL_INPUTS):
-        x = df[i].to_numpy()
-        x = preprocessor["categorical"][i].transform(x)
-        lf = lf.drop(i).with_columns(pl.lit(x).alias(i))
+        for i in tqdm(_REAL_INPUTS):
+            x = df[i].to_numpy().reshape(-1, 1)
+            x = preprocessor["real"][i].transform(x)
+            lf = lf.drop(i).with_columns(pl.lit(x.reshape(-1)).alias(i))
+
+        for i in tqdm(_CATEGORICAL_INPUTS):
+            x = df[i].to_numpy()
+            x = preprocessor["categorical"][i].transform(x)
+            lf = lf.drop(i).with_columns(pl.lit(x).alias(i))
 
     df = lf.collect().shrink_to_fit(in_place=True).rechunk()
     return df

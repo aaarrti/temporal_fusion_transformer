@@ -343,13 +343,6 @@ _TARGETS = ["power_usage"]
 
 if TYPE_CHECKING:
 
-    class CategoricalPreprocessorDict(TypedDict):
-        day: LabelEncoder
-        day_of_week: LabelEncoder
-        hour: LabelEncoder
-        id: LabelEncoder
-        month: LabelEncoder
-
     class PreprocessorDict(TypedDict):
         """
         real and target have keys [MT_001 ... MT_370]
@@ -379,7 +372,7 @@ def make_dataset(
     )
     training_time_series: tf.data.Dataset = make_dataset_fn(training_df)
     validation_time_series: tf.data.Dataset = make_dataset_fn(validation_df)
-    return training_time_series, validation_time_series, test_df, DataPreprocessor(preprocessor)
+    return training_time_series, validation_time_series, test_df, preprocessor
 
 
 def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_processed: bool = True):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Mapping, TypedDict
+from typing import TYPE_CHECKING, Callable, List, Mapping, TypedDict, Literal
 
 import numpy as np
 from absl import logging
@@ -128,6 +128,29 @@ def time_series_dataset_from_dataframe(
     id_column: str,
     preprocess_fn: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
 ) -> tf.data.Dataset:
+    """
+
+    - Group by `id_column`
+    - apply `preprocess_fn`
+    - apply `keras.utils.timeseries_dataset_from_array`
+    - join groups in 1 TF dataset
+
+    Parameters
+    ----------
+    df
+    inputs
+    targets
+    total_time_steps
+    id_column
+    preprocess_fn
+
+    Returns
+    -------
+
+    tf_ds:
+        Not batched tf.data.Dataset
+
+    """
     from keras.utils import timeseries_dataset_from_array
 
     if preprocess_fn is not None:
@@ -202,13 +225,36 @@ def persist_dataset(
     test_df: pl.DataFrame,
     preprocessor: Mapping[str, ...],
     save_dir: str,
+    compression: Literal["GZIP"] | None = "GZIP",
+    test_split_save_format: Literal["csv", "parquet"] = "parquet",
 ):
+    """
+
+    Parameters
+    ----------
+    training_ds
+    validation_ds
+    test_df
+    preprocessor
+    save_dir
+    compression
+    test_split_save_format:
+        By default will save test split in Parquet format. For smaller dataset you can use CSV though.
+
+    Returns
+    -------
+
+    """
     logging.info("Saving (preprocessed) train split")
-    training_ds.save(f"{save_dir}/training", compression="GZIP")
+    training_ds.save(f"{save_dir}/training", compression=compression)
     logging.info("Saving (preprocessed) validation split")
-    validation_ds.save(f"{save_dir}/validation", compression="GZIP")
+    validation_ds.save(f"{save_dir}/validation", compression=compression)
     logging.info("Saving (not preprocessed) test split (as parquet)")
-    test_df.write_parquet(f"{save_dir}/test.parquet")
+    if test_split_save_format == "parquet":
+        test_df.write_parquet(f"{save_dir}/test.parquet")
+    if test_split_save_format == "csv":
+        test_df.write_csv(f"{save_dir}/test.csv")
+
     logging.info("Saving preprocessor state")
     serialize_preprocessor(preprocessor, save_dir)
 
