@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 from functools import partial
 from glob import glob
 from importlib import util
-from typing import TYPE_CHECKING, Callable, List, Literal, Mapping, Tuple, TypedDict
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable, List, Literal, Mapping, Tuple, TypedDict
 
 import jax
 import jax.numpy as jnp

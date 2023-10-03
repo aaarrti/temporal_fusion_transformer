@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.dates import ticker, RRuleLocator
-
-from typing import Tuple, List
+from matplotlib.dates import RRuleLocator, ticker
 
 DataTuple = Tuple[List[datetime], np.ndarray]
 

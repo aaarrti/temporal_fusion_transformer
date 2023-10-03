@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import tensorflow as tf
 
     from temporal_fusion_transformer.src.config_dict import OptimizerConfig
-    from temporal_fusion_transformer.src.lib_types import PRNGCollection, ComputeDtype
+    from temporal_fusion_transformer.src.lib_types import ComputeDtype, PRNGCollection
     from temporal_fusion_transformer.src.training.training_hooks import (
         EarlyStoppingConfig,
     )

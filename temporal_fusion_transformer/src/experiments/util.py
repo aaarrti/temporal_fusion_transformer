@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Mapping, TypedDict, Literal, Type
+from typing import TYPE_CHECKING, Callable, List, Literal, Mapping, Type, TypedDict
 
 import numpy as np
 from absl import logging

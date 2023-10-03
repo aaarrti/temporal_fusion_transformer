@@ -153,7 +153,7 @@ def _train(
 
     tx = make_optimizer(config.optimizer, num_training_steps * epochs)
 
-    loss_fn = make_quantile_loss_fn(config.model.quantiles, dtype=compute_dtype)
+    loss_fn = make_quantile_loss_fn(data_config.quantiles, dtype=compute_dtype)
 
     if dynamic_scale == "auto" and compute_dtype == jnp.float16:
         dynamic_scale = DynamicScale()

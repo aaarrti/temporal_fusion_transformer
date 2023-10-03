@@ -1,8 +1,9 @@
+from datetime import datetime
+
 from absl import flags
 from absl_extra.logging_utils import setup_logging
 from absl_extra.notifier import NoOpNotifier
 from absl_extra.tasks import register_task, run
-from datetime import datetime
 
 import temporal_fusion_transformer as tft
 

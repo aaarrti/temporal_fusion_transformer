@@ -4,14 +4,15 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
+from math import ceil
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Callable, List, Literal, Mapping, Tuple, TypedDict
-from math import ceil
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from absl import logging
+from jax.tree_util import tree_map
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src.experiments.base import (
@@ -49,11 +50,11 @@ if TYPE_CHECKING:
     )
 
 try:
+    import matplotlib.pyplot as plt
     import polars as pl
     import tensorflow as tf
-    from sklearn.preprocessing import LabelEncoder, StandardScaler
-    import matplotlib.pyplot as plt
     from matplotlib import dates as mdates
+    from sklearn.preprocessing import LabelEncoder, StandardScaler
 except ModuleNotFoundError as ex:
     logging.warning(ex)
 
@@ -88,11 +89,11 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         cutoff_days:
             Tuple of start and end dates, before/after which data is not included.
         """
-        total_time_steps = fixed_parameters.get_config("electricity").total_time_steps
         self.validation_boundary = validation_boundary
         self.test_boundary = test_boundary
         self.cutoff_days = cutoff_days
-        self.total_time_steps = total_time_steps
+        self.total_time_steps = fixed_parameters.get_config("electricity").total_time_steps
+        self.num_encoder_steps = fixed_parameters.get_config("electricity").num_encoder_steps
         self.split_overlap_days = split_overlap_days
 
     def make_dataset(
@@ -147,6 +148,7 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         truncate_past: datetime | None = datetime(2014, 9, 4),
     ) -> plt.Figure:
         from temporal_fusion_transformer.src.inference import plotting
+        from temporal_fusion_transformer.src.modeling.tft_model import TftOutputs
 
         df = df.filter(pl.col("id") == entity).pipe(
             lambda i: i.with_columns(timestamp=pl.Series(preprocessor.restore_timestamps(i)))
@@ -167,6 +169,8 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             tf_ds.batch(batch_size).as_numpy_iterator(), total=num_batches, desc="Predicting..."
         ):
             y_predicted_batch = model(x_batch)
+            if isinstance(y_predicted_batch, TftOutputs):
+                y_predicted_batch = y_predicted_batch.logits
             y_predicted.extend(y_predicted_batch)
             x.extend(x_batch)
             y.extend(y_batch)
@@ -209,6 +213,98 @@ class Electricity(MultiHorizonTimeSeriesDataset):
             formatter=mdates.DateFormatter("%m.%d %H"),
             locator=mdates.HourLocator(interval=20),
         )
+
+    def plot_feature_importance(
+        self,
+        df: pl.DataFrame,
+        entity: str,
+        preprocessor: DataPreprocessor,
+        model: PredictFn,
+        batch_size: int = 32,
+        truncate_past: datetime | None = datetime(2014, 9, 4),
+    ) -> plt.Figure:
+        fig = plt.figure(figsize=(7, 4))
+
+        df = df.filter(pl.col("id") == entity).pipe(
+            lambda i: i.with_columns(timestamp=pl.Series(preprocessor.restore_timestamps(i)))
+        )
+        max_date = df["timestamp"].max()
+
+        df = df.filter(pl.col("timestamp") >= (max_date - timedelta(hours=self.total_time_steps))).drop("timestamp")
+
+        tf_ds = preprocessor.convert_dataframe_to_tf_dataset(df)
+
+        x = []
+        y = []
+
+        num_batches = ceil(float(tf_ds.cardinality()) / batch_size)
+
+        for x_batch, y_batch in tqdm(
+            tf_ds.batch(batch_size).as_numpy_iterator(), total=num_batches, desc="Predicting..."
+        ):
+            y_predicted_batch = model(x_batch)
+            x.extend(x_batch)
+            y.append(y_predicted_batch)
+
+        x = np.asarray(x)
+        y = tree_map(lambda *args: jnp.concatenate([*args], axis=0), *y)
+
+        for i in range(len(_REAL_INPUTS + _CATEGORICAL_INPUTS)):
+            past_df = preprocessor.inverse_transform(
+                time_series_to_array(x[:, : self.num_encoder_steps]),
+                time_series_to_array(y.historical_flags[..., i][..., None]),
+            )
+            future_df = preprocessor.inverse_transform(
+                time_series_to_array(x[:, self.num_encoder_steps :]),
+                time_series_to_array(y.future_flags[..., i][..., None]),
+            )
+            y_i = preprocessor.restore_timestamps(past_df) + preprocessor.restore_timestamps(future_df)
+            x_i = (
+                preprocessor.preprocessor["target"][entity]
+                .transform(
+                    np.concatenate([past_df["power_usage"].to_numpy(), future_df["power_usage"].to_numpy()]).reshape(
+                        (-1, 1)
+                    )
+                )
+                .reshape(-1)
+            )
+            y_i_truncated = []
+            x_i_truncated = []
+
+            for ii, jj in zip(x_i, y_i):
+                if truncate_past is None or jj >= truncate_past:
+                    x_i_truncated.append(ii)
+                    y_i_truncated.append(jj)
+
+            plt.plot(y_i_truncated, x_i_truncated)
+
+        static_df = preprocessor.inverse_transform(
+            time_series_to_array(x),
+            time_series_to_array(
+                np.concatenate([y.static_flags[:, None] for _ in range(self.total_time_steps)], axis=1)
+            ),
+        )
+        static_y = preprocessor.restore_timestamps(static_df)
+        static_x = (
+            preprocessor.preprocessor["target"][entity]
+            .transform(static_df["power_usage"].to_numpy().reshape((-1, 1)))
+            .reshape(-1)
+            .reshape(-1),
+        )
+        static_x_truncated = []
+        static_y_truncated = []
+        for ii, jj in zip(static_x, static_y):
+            if truncate_past is None or jj >= truncate_past:
+                static_x_truncated.append(ii)
+                static_y_truncated.append(jj)
+
+        plt.plot(static_y_truncated, static_x_truncated)
+        plt.legend([i.title() for i in _REAL_INPUTS + _CATEGORICAL_INPUTS + ["Id"]])
+        plt.title(f"{entity} feature importance".title())
+        plt.xticks(rotation=90, fontsize=12)
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%m.%d %H"))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=20))
+        return fig
 
 
 class DataPreprocessor(DataPreprocessorBase):
@@ -471,16 +567,20 @@ def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
     real_scalers = defaultdict(lambda: StandardScaler())
     label_encoders = defaultdict(lambda: LabelEncoder())
 
-    label_encoders["id"].fit(df["id"].to_numpy())
+    total = (count_groups(df, "id") * 2) + len(_CATEGORICAL_INPUTS) + 1
 
-    num_groups = count_groups(df, "id")
+    with tqdm(total=total, desc="Training preprocessor ...") as pbar:
+        label_encoders["id"].fit(df["id"].to_numpy())
+        pbar.update(1)
 
-    for i, sub_df in tqdm(df.groupby("id"), desc="Training scalers", total=num_groups):
-        target_scalers[i].fit(df[_TARGETS].to_numpy(order="c"))
-        real_scalers[i].fit(df[_REAL_INPUTS].to_numpy(order="c"))
+        for i, sub_df in df.groupby("id"):
+            target_scalers[i].fit(df[_TARGETS].to_numpy(order="c"))
+            real_scalers[i].fit(df[_REAL_INPUTS].to_numpy(order="c"))
+            pbar.update(2)
 
-    for i in tqdm(_CATEGORICAL_INPUTS, desc="Fitting label encoders"):
-        label_encoders[i].fit(df[i].to_numpy())
+        for i in _CATEGORICAL_INPUTS:
+            label_encoders[i].fit(df[i].to_numpy())
+            pbar.update(1)
 
     return {
         "real": dict(**real_scalers),
@@ -505,33 +605,38 @@ def apply_preprocessor(df: pl.DataFrame, preprocessor: PreprocessorDict, skip_ta
     """
     lf_list = []
 
-    num_groups = count_groups(df, "id")
+    total = (count_groups(df, "id") * 2) + len(_CATEGORICAL_INPUTS) + 1
 
-    for i, sub_df in tqdm(df.groupby("id"), total=num_groups, desc="Applying scalers..."):
-        sub_df: pl.DataFrame
-        sub_lf: pl.LazyFrame = sub_df.lazy()
+    with tqdm(total=total, desc="Applying preprocessor...") as pbar:
+        for i, sub_df in df.groupby("id"):
+            sub_df: pl.DataFrame
+            sub_lf: pl.LazyFrame = sub_df.lazy()
 
-        x_real = sub_df[_REAL_INPUTS].to_numpy(order="c")
-        x_real = preprocessor["real"][i].transform(x_real)
+            x_real = sub_df[_REAL_INPUTS].to_numpy(order="c")
+            x_real = preprocessor["real"][i].transform(x_real)
 
-        sub_lf = sub_lf.with_columns([pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real.T, _REAL_INPUTS)])
+            sub_lf = sub_lf.with_columns([pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real.T, _REAL_INPUTS)])
+            pbar.update(1)
 
-        if not skip_targets:
             x_target = sub_df[_TARGETS].to_numpy(order="c")
             x_target = preprocessor["target"][i].transform(x_target)
             sub_lf = sub_lf.with_columns([pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target.T, _TARGETS)])
+            pbar.update(1)
 
-        lf_list.append(sub_lf)
+            lf_list.append(sub_lf)
 
-    df: pl.DataFrame = pl.concat(lf_list).collect()
+        df: pl.DataFrame = pl.concat(lf_list).collect()
 
-    for i in tqdm(_CATEGORICAL_INPUTS, desc="Applying label encoders..."):
-        x = df[i].to_numpy()
-        x = preprocessor["categorical"][i].transform(x)
-        df = df.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))
+        for i in _CATEGORICAL_INPUTS:
+            x = df[i].to_numpy()
+            x = preprocessor["categorical"][i].transform(x)
+            df = df.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))
+            pbar.update(1)
 
-    ids = preprocessor["categorical"]["id"].transform(df["id"].to_numpy())
-    df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
+        ids = preprocessor["categorical"]["id"].transform(df["id"].to_numpy())
+        df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
+        pbar.update(1)
+
     df = df.shrink_to_fit(in_place=True).rechunk()
     return df
 
