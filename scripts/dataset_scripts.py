@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from absl import flags
 from absl_extra.logging_utils import setup_logging
 from absl_extra.notifier import NoOpNotifier
