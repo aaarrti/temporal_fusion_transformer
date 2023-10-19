@@ -29,7 +29,7 @@ import libs.tft_model
 import libs.utils as utils
 import numpy as np
 import pandas as pd
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 ExperimentConfig = expt_settings.configs.ExperimentConfig
 HyperparamOptManager = libs.hyperparam_opt.HyperparamOptManager
@@ -51,11 +51,9 @@ def main(expt_name, use_gpu, restart_opt, model_folder, hyperparam_iterations, d
     """
 
     if not isinstance(data_formatter, data_formatters.base.GenericDataFormatter):
-        raise ValueError(
-            "Data formatters should inherit from" + f"AbstractDataFormatter! Type={type(data_formatter)}"
-        )
+        raise ValueError("Data formatters should inherit from" + f"AbstractDataFormatter! Type={type(data_formatter)}")
 
-    default_keras_session = tf.keras.backend.get_session()
+    default_keras_session = tf.compat.v1.keras.backend.get_session()
 
     if use_gpu:
         tf_config = utils.get_default_tensorflow_config(tf_device="gpu", gpu_id=0)
@@ -92,9 +90,9 @@ def main(expt_name, use_gpu, restart_opt, model_folder, hyperparam_iterations, d
             )
         )
 
-        tf.reset_default_graph()
-        with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
-            tf.keras.backend.set_session(sess)
+        tf.compat.v1.reset_default_graph()
+        with tf.Graph().as_default(), tf.compat.v1.Session(config=tf_config) as sess:
+            tf.compat.v1.keras.backend.set_session(sess)
 
             params = opt_manager.get_next_parameters()
             model = ModelClass(params, use_cudnn=use_gpu)
@@ -103,7 +101,7 @@ def main(expt_name, use_gpu, restart_opt, model_folder, hyperparam_iterations, d
                 model.cache_batched_data(train, "train", num_samples=train_samples)
                 model.cache_batched_data(valid, "valid", num_samples=valid_samples)
 
-            sess.run(tf.global_variables_initializer())
+            sess.run(tf.compat.v1.global_variables_initializer())
             model.fit()
 
             val_loss = model.evaluate()
@@ -116,12 +114,12 @@ def main(expt_name, use_gpu, restart_opt, model_folder, hyperparam_iterations, d
 
             opt_manager.update_score(params, val_loss, model)
 
-            tf.keras.backend.set_session(default_keras_session)
+            tf.compat.v1.keras.backend.set_session(default_keras_session)
 
     print("*** Running tests ***")
-    tf.reset_default_graph()
-    with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
-        tf.keras.backend.set_session(sess)
+    tf.compat.v1.reset_default_graph()
+    with tf.Graph().as_default(), tf.compat.v1.Session(config=tf_config) as sess:
+        tf.compat.v1.keras.backend.set_session(sess)
         best_params = opt_manager.get_best_params()
         model = ModelClass(best_params, use_cudnn=use_gpu)
 
@@ -147,7 +145,7 @@ def main(expt_name, use_gpu, restart_opt, model_folder, hyperparam_iterations, d
             extract_numerical_data(targets), extract_numerical_data(p90_forecast), 0.9
         )
 
-        tf.keras.backend.set_session(default_keras_session)
+        tf.compat.v1.keras.backend.set_session(default_keras_session)
 
     print(f"Hyperparam optimisation completed @ {dte.datetime.now()}")
     print(f"Best validation loss = {val_loss}")

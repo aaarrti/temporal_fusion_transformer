@@ -179,3 +179,4 @@ scripts/favorita.sql
 models
 *.msgpack
 notebooks/.virtual_documents
+thrirdparty/google-research/tft/outputs

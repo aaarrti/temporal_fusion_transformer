@@ -23,7 +23,8 @@ def test_dummy_model():
     
     x = jnp.ones(shape=[8, 30, 6], dtype=jnp.float32)
     
-    y = model.predict(x)
+    model.run_eagerly = True
+    y = model(x)
     
     assert y.dtype == jnp.float32
     chex.assert_shape(y, (8, 10, 1, 3))

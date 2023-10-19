@@ -398,8 +398,7 @@ def process_favorita(config):
 
     if not os.path.exists(zip_file):
         raise ValueError(
-            f"Favorita zip file not found in {zip_file}!"
-            + f" Please manually download data from Kaggle @ {url}"
+            f"Favorita zip file not found in {zip_file}!" + f" Please manually download data from Kaggle @ {url}"
         )
 
     # Unpack main zip file

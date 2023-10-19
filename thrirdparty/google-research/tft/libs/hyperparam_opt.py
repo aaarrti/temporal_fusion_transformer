@@ -260,9 +260,7 @@ class DistributedHyperparamOptManager(HyperparamOptManager):
 
         # Sanity checks
         if worker_number > max_workers:
-            raise ValueError(
-                f"Worker number ({max_workers}) cannot be larger than the total number of workers!"
-            )
+            raise ValueError(f"Worker number ({max_workers}) cannot be larger than the total number of workers!")
         if worker_number > search_iterations:
             raise ValueError(
                 "Worker number ({}) cannot be larger than the max search iterations ({})!".format(

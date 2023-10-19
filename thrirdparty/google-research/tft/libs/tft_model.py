@@ -857,7 +857,7 @@ class TemporalFusionTransformer:
         def get_lstm(return_state):
             """Returns LSTM cell initialized with default parameters."""
             if self.use_cudnn:
-                lstm = tf.keras.layers.CuDNNLSTM(
+                lstm = tf.compat.v1.keras.layers.CuDNNLSTM(
                     self.hidden_layer_size,
                     return_sequences=True,
                     return_state=return_state,
@@ -945,7 +945,7 @@ class TemporalFusionTransformer:
           Fully defined Keras model.
         """
 
-        with tf.variable_scope(self.name):
+        with tf.compat.v1.variable_scope(self.name):
             transformer_layer, all_inputs, attention_components = self._build_base_graph()
 
             outputs = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(self.output_size * len(self.quantiles)))(
@@ -954,7 +954,7 @@ class TemporalFusionTransformer:
 
             self._attention_components = attention_components
 
-            adam = tf.keras.optimizers.Adam(lr=self.learning_rate, clipnorm=self.max_gradient_norm)
+            adam = tf.keras.optimizers.legacy.Adam(lr=self.learning_rate, clipnorm=self.max_gradient_norm)
 
             model = tf.keras.Model(inputs=all_inputs, outputs=outputs)
 
@@ -1134,11 +1134,7 @@ class TemporalFusionTransformer:
             """Returns formatted dataframes for prediction."""
 
             flat_prediction = pd.DataFrame(
-                prediction[:, :, 0],
-                columns=[
-                    f"t+{i}"
-                    for i in range(self.time_steps - self.num_encoder_steps)
-                ]
+                prediction[:, :, 0], columns=[f"t+{i}" for i in range(self.time_steps - self.num_encoder_steps)]
             )
             cols = list(flat_prediction.columns)
             flat_prediction["forecast_time"] = time[:, self.num_encoder_steps - 1, 0]
@@ -1180,7 +1176,7 @@ class TemporalFusionTransformer:
             input_placeholder = self._input_placeholder
             attention_weights = {}
             for k in self._attention_components:
-                attention_weight = tf.keras.backend.get_session().run(
+                attention_weight = tf.compat.v1.keras.backend.get_session().run(
                     self._attention_components[k], {input_placeholder: input_batch.astype(np.float32)}
                 )
                 attention_weights[k] = attention_weight
@@ -1240,7 +1236,7 @@ class TemporalFusionTransformer:
         # issue with Keras that leads to different performance evaluation results
         # when model is reloaded (https://github.com/keras-team/keras/issues/4875).
 
-        utils.save(tf.keras.backend.get_session(), model_folder, cp_name=self.name, scope=self.name)
+        utils.save(tf.compat.v1.keras.backend.get_session(), model_folder, cp_name=self.name, scope=self.name)
 
     def load(self, model_folder, use_keras_loadings=False):
         """Loads TFT weights.
@@ -1259,7 +1255,7 @@ class TemporalFusionTransformer:
             self.model.load_weights(serialisation_path)
         else:
             # Loads tensorflow graph for optimal models.
-            utils.load(tf.keras.backend.get_session(), model_folder, cp_name=self.name, scope=self.name)
+            utils.load(tf.compat.v1.keras.backend.get_session(), model_folder, cp_name=self.name, scope=self.name)
 
     @classmethod
     def get_hyperparm_choices(cls):

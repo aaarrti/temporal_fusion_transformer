@@ -405,7 +405,7 @@ class GatedResidualNetwork(layers.Layer):
         super().__init__(name=name, **kwargs)
 
         if output_size is None:
-            skip_connection = identity
+            skip_connection = layers.Identity()
         else:
             skip_connection = layers.Dense(output_size)
             if time_distributed:
@@ -526,19 +526,30 @@ class InputEmbedding(layers.Layer):
 
         self.static_embeds = [layers.Embedding(size, latent_dim) for size in static_categories_sizes]
         self.known_embeds = [layers.Embedding(size, latent_dim) for size in known_categories_sizes]
-        self.known_dense = [layers.Dense(latent_dim) for _ in range(num_known_real_inputs)]
-        self.observed_dense = [layers.Dense(latent_dim) for _ in range(num_observed_inputs)]
+        self.known_dense = [
+            layers.TimeDistributed(layers.Dense(latent_dim))
+            for _ in range(num_known_real_inputs)
+        ]
+        self.observed_dense = [
+            layers.TimeDistributed(layers.Dense(latent_dim))
+            for _ in range(num_observed_inputs)
+        ]
 
     def __call__(self, inputs: InputDict, **kwargs) -> EmbeddingDict:
         return super().__call__(inputs, **kwargs)
 
     def call(self, inputs: InputDict, **kwargs) -> EmbeddingDict:
+        """
+        - categorical -> Embedding
+        - real -> TimeDistributed(Dense)
+
+        """
         static_input_embeddings = [layer(inputs["static"][:, 0, i]) for i, layer in enumerate(self.known_embeds)]
 
         static_input_embeddings = ops.stack(static_input_embeddings, axis=1)
 
         known_categorical_inputs_embeddings = [
-            inputs["known_categorical"][..., i] for i, layer in enumerate(self.known_embeds)
+            layer(inputs["known_categorical"][..., i]) for i, layer in enumerate(self.known_embeds)
         ]
 
         known_real_inputs_embeddings = [
@@ -556,6 +567,8 @@ class InputEmbedding(layers.Layer):
         observed_input_embeddings = [
             layer(inputs["observed"][..., i, newaxis]) for i, layer in enumerate(self.observed_dense)
         ]
+        
+        observed_input_embeddings = ops.stack(observed_input_embeddings, axis=-1)
 
         return {
             "static": static_input_embeddings,
@@ -608,17 +621,21 @@ class StaticCovariatesEncoder(layers.Layer):
         self.gru_2 = make_gru()
         self.gru_3 = make_gru()
         self.gru_4 = make_gru()
+        self.flatten = layers.Flatten()
 
     def __call__(self, inputs: Array, **kwargs) -> StaticContextDict:
         return super().__call__(inputs, **kwargs)
 
     def call(self, inputs: Array, **kwargs) -> StaticContextDict:
-        flat_x = flatten(inputs)
+        flat_x = self.flatten(inputs)
         mlp_outputs, _ = self.gru(flat_x)
 
         sparse_weights = ops.nn.softmax(mlp_outputs)[..., newaxis]
 
-        transformed_embeddings = [layer(inputs[:, i][:, newaxis]) for i, layer in enumerate(self.gru_blocks)]
+        transformed_embeddings = [
+            layer(inputs[:, i, newaxis])[0]
+            for i, layer in enumerate(self.gru_blocks)
+        ]
 
         transformed_embeddings = ops.concatenate(transformed_embeddings, axis=1)
         static_context_vector = ops.sum(sparse_weights * transformed_embeddings, axis=1)
@@ -688,7 +705,7 @@ class VariableSelectionNetwork(layers.Layer):
         return super().__call__(inputs, **kwargs)
 
     def call(self, inputs: ContextInput, **kwargs):
-        grn_in = ops.reshape(inputs, [-1, self.num_time_steps, self.latent_dim * self.num_inputs])
+        grn_in = ops.reshape(inputs['inputs'], [-1, self.num_time_steps, self.latent_dim * self.num_inputs])
         mlp_outputs, static_gate = self.context_grn({"inputs": grn_in, "context": inputs["context"][:, newaxis]})
 
         sparse_weights = ops.nn.softmax(mlp_outputs)[:, :, newaxis]
@@ -832,27 +849,3 @@ class KerasLayerKwargs(TypedDict, total=False):
     dtype: str | None
     autocast: bool
     name: str | None
-
-
-# ----------------------------------------------------------------------
-
-
-def flatten(arr: Array) -> Array:
-    """
-    Flattens array preserving batch size
-    Examples
-    ----------
-
-    >>> x = jnp.ones((8, 40, 5))
-    >>> y = flatten(x)
-    >>> y.shape
-    (8, 200)
-
-    """
-    batch_size = arr.shape[0]
-    new_arr = ops.reshape(arr, (batch_size, -1))
-    return new_arr
-
-
-def identity(arr: Array) -> Array:
-    return ops.identity(arr)
