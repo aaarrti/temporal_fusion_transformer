@@ -99,6 +99,18 @@ class MultiHorizonTimeSeriesDataset(ABC):
     ) -> plt.Figure:
         raise NotImplementedError
 
+    @abstractmethod
+    def plot_feature_importance(
+        self,
+        df: pl.DataFrame,
+        entity: str,
+        preprocessor: DataPreprocessorBase,
+        model: PredictFn,
+        batch_size: int = 32,
+        truncate_past: datetime | None = None,
+    ) -> plt.Figure:
+        raise NotImplementedError
+
 
 class DataPreprocessorBase(ABC):
     @staticmethod

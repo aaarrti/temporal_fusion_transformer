@@ -178,5 +178,4 @@ thirdparty
 scripts/favorita.sql
 models
 *.msgpack
-thrirdparty
 notebooks/.virtual_documents

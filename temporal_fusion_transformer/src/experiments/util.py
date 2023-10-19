@@ -191,12 +191,17 @@ def time_series_dataset_from_dataframe(
         return make_time_series_fn(df)
 
     def generator():
-        for id_i, df_i in tqdm(df.groupby(id_column), total=num_groups, desc="Converting to time-series dataset"):
+        num_errors = 0
+        num_ok = 0
+        for _, df_i in tqdm(df.groupby(id_column), total=num_groups, desc="Converting to time-series dataset"):
             try:
                 time_series_i = make_time_series_fn(df_i)
+                num_ok += 1
                 yield time_series_i
             except ValueError as e:
-                logging.error(e)
+                # logging.error(e)
+                num_errors += 1
+        logging.info(f"{num_erros = }, {num_ok = }")
 
     return functoolz.reduce(lambda a, b: a.concatenate(b), generator())
 

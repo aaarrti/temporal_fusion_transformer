@@ -57,9 +57,9 @@ class Favorita(MultiHorizonTimeSeriesDataset):
 
     def __init__(
         self,
-        start_date: datetime | None = datetime(2016, 1, 1),
+        start_date: datetime | None = datetime(2015, 1, 1),
         end_date: datetime | None = datetime(2016, 6, 1),
-        validation_boundary: datetime = datetime(2016, 4, 1),
+        validation_boundary: datetime = datetime(2015, 12, 1),
     ):
         config = fixed_parameters.get_config("favorita")
         self.start_date = start_date
@@ -108,6 +108,17 @@ class Favorita(MultiHorizonTimeSeriesDataset):
         )
 
     def plot_predictions(
+        self,
+        df: pl.DataFrame,
+        entity: str,
+        preprocessor: DataPreprocessorBase,
+        model: PredictFn,
+        batch_size: int = 32,
+        truncate_past: datetime | None = None,
+    ) -> plt.Figure:
+        pass
+
+    def plot_feature_importance(
         self,
         df: pl.DataFrame,
         entity: str,
@@ -342,13 +353,11 @@ def split_data(
     lf = df.lazy()
     forecast_horizon = total_time_steps - num_encoder_steps
 
-    test_boundary = validation_boundary + timedelta(hours=forecast_horizon)
+    test_boundary = validation_boundary + timedelta(days=forecast_horizon)
 
-    training_df: pl.DataFrame = lf.filter(pl.col("date").lt(validation_boundary).over("traj_id")).collect()
-    validation_df = df.filter(pl.col("date").ge(validation_boundary).over("traj_id")).filter(
-        pl.col("date").lt(test_boundary).over("traj_id")
-    )
-    test_df = df.filter(pl.col("date").ge(test_boundary).over("traj_id"))
+    training_df: pl.DataFrame = lf.filter(pl.col("date").lt(validation_boundary)).collect()
+    validation_df = df.filter(pl.col("date").ge(validation_boundary)).filter(pl.col("date").lt(test_boundary))
+    test_df = df.filter(pl.col("date").ge(test_boundary))
 
     # Filter out identifiers not present in training (i.e. cold-started items).
     identifiers = training_df["traj_id"].unique().to_list()
@@ -411,11 +420,11 @@ def read_parquet(
 
     df: pl.DataFrame = (
         temporal.join(oil, on="date", how="left")
-        .with_columns(pl.col("oil_price").fill_null(strategy="forward").over("traj_id"))
+        .with_columns(pl.col("oil_price").fill_null(strategy="forward"))
         .join(store_info, on="store_nbr")
         .join(items, on="item_nbr")
         .join(transactions, on=["store_nbr", "date"])
-        .with_columns(pl.col("transactions").fill_null(strategy="forward").over("traj_id"))
+        .with_columns(pl.col("transactions").fill_null(strategy="forward"))
         .join(national_holidays, on="date", how="left")
         .join(regional_holidays, on=["date", "state"], how="left")
         .join(local_holidays, on=["date", "city"], how="left")
@@ -473,13 +482,11 @@ def read_temporal(
         .rechunk()
         .upsample("date", every="1d", by="traj_id")
         .lazy()
-        .with_columns(
-            [pl.col(i).fill_null(strategy="forward").over("traj_id") for i in ["store_nbr", "item_nbr", "onpromotion"]]
-        )
+        .with_columns([pl.col(i).fill_null(strategy="forward") for i in ["store_nbr", "item_nbr", "onpromotion"]])
         .with_columns(pl.col("open").fill_null(0))
         .with_columns(pl.col("unit_sales").log())
         .rename({"unit_sales": "log_sales"})
-        .with_columns(pl.col("log_sales").fill_null(strategy="forward").over("traj_id"))
+        .with_columns(pl.col("log_sales").fill_null(strategy="forward"))
     )
 
     return downcast_dataframe(temporal, streaming=True)
@@ -502,20 +509,27 @@ def downcast_dataframe(df: pl.DataFrame | pl.LazyFrame, streaming: bool = False)
 
 def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
     # In contrast to favorita for favorita we don't group before training StandardScaler
-    target_scaler = StandardScaler()
+    target_scalers = defaultdict(lambda: StandardScaler())
     real_scalers = defaultdict(lambda: StandardScaler())
     label_encoders = defaultdict(lambda: LabelEncoder())
-    # label_encoders["traj_id"].fit(df["traj_id"].to_numpy())
-    target_scaler.fit(df[_TARGETS].to_numpy(order="c"))
-    for i in _REAL_INPUTS:
-        real_scalers[i].fit(df[i].to_numpy().reshape(-1, 1))
+    total = len(_CATEGORICAL_INPUTS) + len(_REAL_INPUTS) + len(_TARGETS)
 
-    for i in tqdm(_CATEGORICAL_INPUTS, desc="Fitting label encoders"):
-        label_encoders[i].fit(df[i].to_numpy())
+    with tqdm(total=total, desc="Training preprocessor...") as pbar:
+        for i in _TARGETS:
+            target_scalers[i].fit(df[i].to_numpy().reshape(-1, 1))
+            pbar.update(1)
+
+        for i in _REAL_INPUTS:
+            real_scalers[i].fit(df[i].to_numpy().reshape(-1, 1))
+            pbar.update(1)
+
+        for i in _CATEGORICAL_INPUTS:
+            label_encoders[i].fit(df[i].to_numpy())
+            pbar.update(1)
 
     return {
         "real": dict(**real_scalers),
-        "target": target_scaler,
+        "target": dict(**target_scalers),
         "categorical": dict(**label_encoders),
     }
 
@@ -528,21 +542,24 @@ def apply_preprocessor(
 
     total = len(_CATEGORICAL_INPUTS) + len(_REAL_INPUTS) + len(_TARGETS)
 
-    with tqdm(total=total, desc="Training preprocessor...") as pbar:
-        for i in tqdm(_TARGETS):
+    with tqdm(total=total, desc="Applying preprocessor...") as pbar:
+        for i in _TARGETS:
             x = df[i].to_numpy().reshape(-1, 1)
             x = preprocessor["target"][i].transform(x)
             lf = lf.drop(i).with_columns(pl.lit(x.reshape(-1)).alias(i))
+            pbar.update(1)
 
-        for i in tqdm(_REAL_INPUTS):
+        for i in _REAL_INPUTS:
             x = df[i].to_numpy().reshape(-1, 1)
             x = preprocessor["real"][i].transform(x)
             lf = lf.drop(i).with_columns(pl.lit(x.reshape(-1)).alias(i))
+            pbar.update(1)
 
-        for i in tqdm(_CATEGORICAL_INPUTS):
+        for i in _CATEGORICAL_INPUTS:
             x = df[i].to_numpy()
             x = preprocessor["categorical"][i].transform(x)
             lf = lf.drop(i).with_columns(pl.lit(x).alias(i))
+            pbar.update(1)
 
     df = lf.collect().shrink_to_fit(in_place=True).rechunk()
     return df
