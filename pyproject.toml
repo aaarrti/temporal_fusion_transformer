@@ -13,48 +13,12 @@ maintainers = [
 classifiers = [
     "Development Status :: 3 - Alpha",
 ]
-dependencies = [
-    "flax==0.7.4",
-    "jax==0.4.13;sys_platform=='darwin'",
-    "jax[cpu]==0.4.13;sys_platform=='darwin'",
-    "jaxlib==0.4.13",
-    "jaxtyping==0.2.21",
-    "numpy==1.24.3"
-]
+dependencies = []
 [project.optional-dependencies]
-tensorflow = [
-    "tensorflow==2.14.0; sys_platform == 'linux'",
-    "tensorflow_macos==2.14.0; sys_platform == 'darwin'",
-]
-training = [
-    "absl-py==1.4.0",
-    "ml-collections==0.1.1",
-    "clu==0.0.9",
-    "msgpack==1.0.5",
-    "optax==0.1.7",
-    "orbax_checkpoint==0.3.5",
-    # No pinned version for my package, since I always want the lastest
-    "absl_extra",
-    "temporal_fusion_transformer[tensorflow]"
-]
-datasets = [
-    "toolz==0.12.0",
-    "polars==0.18.15",
-    "tqdm==4.66.1",
-    "temporal_fusion_transformer[tensorflow]"
-]
-tests = [
-    "pytest",
-    "chex==0.1.7"
-]
-dev = [
-    "temporal_fusion_transformer[tests,datasets,training]",
-    "black[jupyter]",
-    "isort==5.12.0",
-    "jupyter",
-    "ruff==0.0.289",
-    "mypy==1.5.1"
-]
+training = []
+datasets = []
+tests = []
+dev = []
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"
 

@@ -1,44 +1,46 @@
 from __future__ import annotations
 
-from typing import Literal, TYPE_CHECKING
-from keras_core import ops
-from keras_core import optimizers, metrics, callbacks
-from keras_core.mixed_precision import global_policy
+from typing import TYPE_CHECKING, Literal
 
-from temporal_fusion_transformer.src.v2.modeling import TemporalFusionTransformer
-from temporal_fusion_transformer.src.v2.loss_fn import QuantilePinballLoss
+from keras_core import callbacks, optimizers
+from loss_fn import QuantilePinballLoss
 from ml_collections import ConfigDict
+from modeling import TemporalFusionTransformer
 
 if TYPE_CHECKING:
     import tensorflow as tf
-    from keras_core.src.backend.jax.trainer import JAXTrainer
 
 
-def train(
+def train_model(
     *,
-    data: tuple[tf.data.Dataset, tf.data.Dataset],
+    dataset: tuple[tf.data.Dataset, tf.data.Dataset],
     config: ConfigDict,
     epochs: int = 1,
     steps_per_execution: int = 1,
     training_callbacks="auto",
     save_filename: str = "model.keras",
+    verbose="auto",
 ):
-    model = TemporalFusionTransformer.from_config(config.model.to_dict())
+    model = TemporalFusionTransformer.from_config_dict(config)
 
-    num_train_steps = int(data[0].cardinality())
+    num_train_steps = int(dataset[0].cardinality())
 
     model.compile(
-        loss=QuantilePinballLoss(dtype=global_policy().compute_dtype, quantiles=config.model.quantiles),
-        metrics=make_metrics(),
-        optimizer=make_optimizer(config.optimizer, num_train_steps),
+        loss=QuantilePinballLoss(quantiles=config.quantiles),
+        optimizer=make_optimizer(config.model.optimizer, num_train_steps),
         steps_per_execution=steps_per_execution,
     )
 
     if training_callbacks == "auto":
         training_callbacks = default_callbacks()
 
-    model.fit(data[0], validation_data=data[1], epochs=epochs, callbacks=training_callbacks, verbose=1)
-    model.save_weights(save_filename)
+    model.fit(dataset[0], validation_data=dataset[1], epochs=epochs, callbacks=training_callbacks, verbose=verbose)
+
+    if save_filename is not None:
+        model.save_weights(save_filename)
+        return None
+    else:
+        return model
 
 
 def default_callbacks():
@@ -56,61 +58,45 @@ def default_callbacks():
     ]
 
 
-def make_metrics():
-    return []
-
-
 def make_optimizer(config: ConfigDict, num_train_steps: int):
-    return _make_optimizer(
-        num_train_steps=num_train_steps,
-        **config.to_dict(),
-    )
-
-
-def _make_optimizer(
-    *,
-    initial_learning_rate: float,
-    decay_steps: float,
-    alpha: float,
-    use_ema: bool,
-    num_train_steps: int,
-    clipnorm: float | None,
-    weight_decay: float | None,
-) -> optimizers.Optimizer:
     """
 
-    Parameters
-    ----------
-    initial_learning_rate
-    decay_steps
-    alpha
-    use_ema
-    clipnorm
-    weight_decay
-    num_train_steps
+    config must contain following fields:
 
-    Returns
-    -------
+    - initial_learning_rate
+    - decay_steps
+    - alpha
+    - use_ema
+    - clipnorm
+    - weight_decay
+    - num_train_steps
 
     """
+    clipnorm = config.clipnorm
+    weight_decay = config.weight_decay
 
     if clipnorm == 0:
         clipnorm = None
     if weight_decay == 0:
         weight_decay = None
 
-    lr = optimizers.schedules.CosineDecay(
-        initial_learning_rate=initial_learning_rate, decay_steps=int(decay_steps * num_train_steps), alpha=alpha
-    )
+    if config.decay_steps == 0:
+        lr = optimizers.schedules.CosineDecay(
+            initial_learning_rate=config.learning_rate,
+            decay_steps=int(config.decay_steps * num_train_steps),
+            alpha=config.alpha,
+        )
+    else:
+        lr = config.learning_rate
 
-    return optimizers.Lion(learning_rate=lr, use_ema=use_ema, clipnorm=clipnorm, weight_decay=weight_decay)
+    return optimizers.Lion(learning_rate=lr, use_ema=config.use_ema, clipnorm=clipnorm, weight_decay=weight_decay)
 
 
 def load_dataset(
     data_dir: str,
     batch_size: int,
-    prng_seed: int,
     num_encoder_steps: int,
+    prng_seed: int = 33,
     shuffle_buffer_size: int = 1024,
     dtype="float32",
 ) -> tuple[tf.data.Dataset, tf.data.Dataset]:

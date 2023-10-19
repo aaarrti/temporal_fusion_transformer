@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from typing import Sequence
-from keras_core import ops, backend, mixed_precision
+
+from keras_core import backend, mixed_precision, ops
 from keras_core.src.losses import LossFunctionWrapper
 
 newaxis = None
@@ -10,7 +11,7 @@ newaxis = None
 class QuantilePinballLoss(LossFunctionWrapper):
     def __init__(self, quantiles: Sequence[float], **kwargs):
         quantiles = ops.cast(quantiles, mixed_precision.dtype_policy().compute_dtype)
-        super().__init__(**kwargs, fn=quantiles, quantiles=quantiles)
+        super().__init__(**kwargs, fn=quantile_pinball_loss, tau=quantiles)
 
 
 def quantile_pinball_loss(y_true, y_pred, tau):

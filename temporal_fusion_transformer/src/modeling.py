@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import TypedDict, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypedDict
 
 import keras_core as keras
-from keras_core import layers, ops, backend, random
+from keras_core import layers, ops
 from toolz import dicttoolz
+
+from temporal_fusion_transformer.src.utils.utils import flatten_dict
 
 if TYPE_CHECKING:
     from jax import Array
@@ -89,11 +91,10 @@ class TemporalFusionTransformer(keras.Model):
         self.historical_lstm = layers.LSTM(
             latent_dim,
             return_state=True,
+            return_sequences=True,
         )
 
-        self.future_lstm = layers.LSTM(
-            latent_dim,
-        )
+        self.future_lstm = layers.LSTM(latent_dim, return_sequences=True)
 
         self.output_skip_connection = GatedLinearUnit(
             latent_dim=latent_dim,
@@ -119,7 +120,7 @@ class TemporalFusionTransformer(keras.Model):
                 num_attention_heads=num_attention_heads,
                 latent_dim=latent_dim,
                 dropout_rate=dropout_rate,
-                attention_dropout_rate=attention_dropout_rate
+                attention_dropout_rate=attention_dropout_rate,
             )
             for _ in range(num_decoder_blocks)
         ]
@@ -137,7 +138,7 @@ class TemporalFusionTransformer(keras.Model):
 
         # Isolate known and observed historical inputs.
         historical_inputs = [embeddings["known"][:, : self.num_encoder_steps]]
-        if embeddings["observed"] is not None:
+        if embeddings["observed"].size > 0:
             historical_inputs.append(embeddings["observed"][:, : self.num_encoder_steps])
 
         historical_inputs = ops.concatenate(historical_inputs, axis=-1)
@@ -151,16 +152,16 @@ class TemporalFusionTransformer(keras.Model):
             {"inputs": future_inputs, "context": static_context["enrichment"]}
         )
 
-        state_carry, history_lstm = self.historical_lstm(
+        history_lstm, state_h, state_c = self.historical_lstm(
             historical_features,
-            initial_carry=(static_context["state_h"], static_context["state_c"]),
+            initial_state=[static_context["state_h"], static_context["state_c"]],
         )
-        future_lstm = self.future_lstm(future_features, initial_carry=state_carry)
+        future_lstm = self.future_lstm(future_features, initial_state=[state_h, state_c])
 
-        lstm_outputs = ops.concatenate([history_lstm, future_lstm], axis=1)
+        lstm_layer = ops.concatenate([history_lstm, future_lstm], axis=1)
         input_embeddings = ops.concatenate([historical_features, future_features], axis=1)
 
-        lstm_outputs, _ = self.lstm_skip_connection(lstm_outputs)
+        lstm_outputs, _ = self.lstm_skip_connection(lstm_layer)
         temporal_features = self.temporal_ln(lstm_outputs + input_embeddings)
 
         enriched, _ = self.static_context_skip_connection(
@@ -196,10 +197,10 @@ class TemporalFusionTransformer(keras.Model):
 
     @classmethod
     def from_config_dict(cls, config: ConfigDict) -> TemporalFusionTransformer:
-        kwargs = config.to_dict()
-        allowed_kwargs = inspect.signature(cls.__init__).parameters.items()
+        kwargs = {**config.model.to_dict(), **config.data.to_dict()}
+        allowed_kwargs = inspect.signature(cls.__init__).parameters
         init_kwargs = dicttoolz.keyfilter(lambda k: k in allowed_kwargs, kwargs)
-        return TemporalFusionTransformer(**init_kwargs)
+        return TemporalFusionTransformer(**init_kwargs, num_quantiles=len(config.quantiles))
 
 
 # -------------------------------------------------------------------------------------------------------------
@@ -291,17 +292,17 @@ class InputPreprocessor(layers.Layer):
         if len(input_known_real_idx) > 0:
             known_real = ops.cast(inputs[..., input_known_real_idx], self.dtype)
         else:
-            known_real = None
+            known_real = ops.array([])
 
         if len(input_known_categorical_idx) > 0:
             known_categorical = ops.cast(inputs[..., input_known_categorical_idx], "int32")
         else:
-            known_categorical = None
+            known_categorical = ops.array([])
 
         if len(input_observed_idx) > 0:
             observed = ops.cast(inputs[..., input_observed_idx], self.dtype)
         else:
-            observed = None
+            observed = ops.array([])
 
         return {
             "static": static,
@@ -422,7 +423,7 @@ class GatedResidualNetwork(layers.Layer):
         self.pre_activation = activation
         self.dense = dense
         self.glu = GatedLinearUnit(
-            latent_dim=latent_dim,
+            latent_dim=output_size or latent_dim,
             dropout_rate=dropout_rate,
             time_distributed=time_distributed,
         )
@@ -461,7 +462,7 @@ class ContextualGatedResidualNetwork(GatedResidualNetwork):
             **kwargs,
         )
 
-        context_dense = layers.Dense(latent_dim)
+        context_dense = layers.Dense(latent_dim, use_bias=False)
         if time_distributed:
             context_dense = layers.TimeDistributed(context_dense)
         self.context_dense = context_dense
@@ -526,17 +527,16 @@ class InputEmbedding(layers.Layer):
 
         self.static_embeds = [layers.Embedding(size, latent_dim) for size in static_categories_sizes]
         self.known_embeds = [layers.Embedding(size, latent_dim) for size in known_categories_sizes]
-        self.known_dense = [
-            layers.TimeDistributed(layers.Dense(latent_dim))
-            for _ in range(num_known_real_inputs)
-        ]
-        self.observed_dense = [
-            layers.TimeDistributed(layers.Dense(latent_dim))
-            for _ in range(num_observed_inputs)
-        ]
+        self.known_dense = [layers.TimeDistributed(layers.Dense(latent_dim)) for _ in range(num_known_real_inputs)]
+        self.observed_dense = [layers.TimeDistributed(layers.Dense(latent_dim)) for _ in range(num_observed_inputs)]
 
     def __call__(self, inputs: InputDict, **kwargs) -> EmbeddingDict:
         return super().__call__(inputs, **kwargs)
+
+    # FIXME: /Users/artemsereda/miniconda3/envs/py310/lib/python3.10/site-packages/keras_core/src/layers/layer.py:355:
+    #  UserWarning: `build()` was called on layer 'embed', however the layer does not have a `build()` method implemented
+    #  and it looks like it has unbuilt state. This will cause the layer to be marked as built, despite not being actually built,
+    #  which may cause failures down the line. Make sure to implement a proper `build()` method.
 
     def call(self, inputs: InputDict, **kwargs) -> EmbeddingDict:
         """
@@ -567,8 +567,10 @@ class InputEmbedding(layers.Layer):
         observed_input_embeddings = [
             layer(inputs["observed"][..., i, newaxis]) for i, layer in enumerate(self.observed_dense)
         ]
-        
-        observed_input_embeddings = ops.stack(observed_input_embeddings, axis=-1)
+
+        observed_input_embeddings = (
+            ops.stack(observed_input_embeddings, axis=-1) if len(observed_input_embeddings) > 0 else ops.array([])
+        )
 
         return {
             "static": static_input_embeddings,
@@ -587,7 +589,7 @@ class StaticCovariatesEncoder(layers.Layer):
         latent_dim,
         dropout_rate,
         num_static_inputs,
-        name="static_covariates_encoder",
+        name="static_encoder",
         **kwargs,
     ):
         """
@@ -632,10 +634,7 @@ class StaticCovariatesEncoder(layers.Layer):
 
         sparse_weights = ops.nn.softmax(mlp_outputs)[..., newaxis]
 
-        transformed_embeddings = [
-            layer(inputs[:, i, newaxis])[0]
-            for i, layer in enumerate(self.gru_blocks)
-        ]
+        transformed_embeddings = [layer(inputs[:, i, newaxis])[0] for i, layer in enumerate(self.gru_blocks)]
 
         transformed_embeddings = ops.concatenate(transformed_embeddings, axis=1)
         static_context_vector = ops.sum(sparse_weights * transformed_embeddings, axis=1)
@@ -705,12 +704,16 @@ class VariableSelectionNetwork(layers.Layer):
         return super().__call__(inputs, **kwargs)
 
     def call(self, inputs: ContextInput, **kwargs):
-        grn_in = ops.reshape(inputs['inputs'], [-1, self.num_time_steps, self.latent_dim * self.num_inputs])
-        mlp_outputs, static_gate = self.context_grn({"inputs": grn_in, "context": inputs["context"][:, newaxis]})
+        mlp_outputs, static_gate = self.context_grn(
+            {
+                "inputs": ops.reshape(inputs["inputs"], [-1, self.num_time_steps, self.latent_dim * self.num_inputs]),
+                "context": ops.expand_dims(inputs["context"], axis=1),
+            }
+        )
 
         sparse_weights = ops.nn.softmax(mlp_outputs)[:, :, newaxis]
 
-        transformed_embeddings = [layer(inputs["inputs"][..., i]) for i, layer in enumerate(self.gru)]
+        transformed_embeddings = [layer(inputs["inputs"][..., i])[0] for i, layer in enumerate(self.gru)]
 
         transformed_embeddings = ops.stack(transformed_embeddings, axis=-1)
         temporal_ctx = ops.sum(sparse_weights * transformed_embeddings, axis=-1)
@@ -743,9 +746,7 @@ class DecoderBlock(layers.Layer):
         """
         super().__init__(name=name, **kwargs)
         self.sa = layers.MultiHeadAttention(
-            num_heads=num_attention_heads,
-            dropout=attention_dropout_rate,
-            key_dim=latent_dim
+            num_heads=num_attention_heads, dropout=attention_dropout_rate, key_dim=latent_dim, use_bias=False
         )
         self.glu = GatedLinearUnit(
             latent_dim=latent_dim,
@@ -776,7 +777,7 @@ class ContextInput(TypedDict):
     context: Array
 
 
-class EmbeddingDict(TypedDict, total=False):
+class EmbeddingDict(TypedDict):
     """
     Attributes
     ----------
@@ -816,7 +817,7 @@ class StaticContextDict(TypedDict):
     weight: Array
 
 
-class InputDict(TypedDict, total=False):
+class InputDict(TypedDict):
     """
     Attributes
     ----------
@@ -841,11 +842,3 @@ class TftOutputs(TypedDict):
     static_flags: Array
     historical_flags: Array
     future_flags: Array
-
-
-class KerasLayerKwargs(TypedDict, total=False):
-    activity_regularizer: Any
-    trainable: bool
-    dtype: str | None
-    autocast: bool
-    name: str | None

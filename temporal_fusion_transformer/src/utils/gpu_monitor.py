@@ -1,9 +1,7 @@
-from keras_core.callbacks import Callback
-
-
-from keras.utils import TimedThread
-from absl_extra.cuda_utils import get_memory_info
 from absl import logging as log
+from absl_extra.cuda_utils import get_memory_info
+from keras.utils import TimedThread
+from keras_core.callbacks import Callback
 
 
 class MonitorThread(TimedThread):

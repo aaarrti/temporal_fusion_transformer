@@ -3,68 +3,71 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from datetime import datetime, timedelta
-from functools import partial
-from math import ceil
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Callable, List, Literal, Mapping, Tuple, TypedDict
+from typing import TYPE_CHECKING, Tuple, Type
 
-import jax
-import jax.numpy as jnp
-import numpy as np
+import keras_core as keras
+import polars as pl
+import tensorflow as tf
 from absl import logging
-from jax.tree_util import tree_map
+from keras.mixed_precision import global_policy
+from keras_core import layers
 from tqdm.auto import tqdm
+from tree import map_structure
 
+from temporal_fusion_transformer.src import training
 from temporal_fusion_transformer.src.experiments.base import (
-    DataPreprocessorBase,
+    Experiment,
     MultiHorizonTimeSeriesDataset,
-    TrainerBase,
+    Preprocessor,
 )
-from temporal_fusion_transformer.src.experiments.configs import (
-    fixed_parameters,
-    hyperparameters,
-)
-from temporal_fusion_transformer.src.experiments.util import (
+from temporal_fusion_transformer.src.experiments.config import get_config
+from temporal_fusion_transformer.src.experiments.utils import (
     count_groups,
-    deserialize_preprocessor,
     persist_dataset,
     time_series_dataset_from_dataframe,
-    time_series_to_array,
 )
+from temporal_fusion_transformer.src.utils.utils import classproperty
 
-if TYPE_CHECKING:
-    import polars as pl
-    import tensorflow as tf
-    from sklearn.preprocessing import LabelEncoder, StandardScaler
-
-    from temporal_fusion_transformer.src.config_dict import (
-        ConfigDict,
-        DataConfig,
-        ModelConfig,
-    )
-    from temporal_fusion_transformer.src.experiments.base import PredictFn
-    from temporal_fusion_transformer.src.lib_types import (
-        DeviceTypeT,
-        HooksT,
-        TrainingResult,
-    )
-
-try:
-    import matplotlib.pyplot as plt
-    import polars as pl
-    import tensorflow as tf
-    from matplotlib import dates as mdates
-    from sklearn.preprocessing import LabelEncoder, StandardScaler
-except ModuleNotFoundError as ex:
-    logging.warning(ex)
+_ID_COLUMN = "id"
+_REAL_INPUTS = ["year"]
+_CATEGORICAL_INPUTS = ["month", "day", "hour", "day_of_week"]
+_INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
+_TARGETS = ["power_usage"]
 
 
 # ------ We export class based API for convenience ------------
 
 
-class Electricity(MultiHorizonTimeSeriesDataset):
-    trainer = property(lambda self: Trainer())
+class Electricity(Experiment):
+    @classproperty
+    def dataset(self) -> Type[ElectricityDataset]:
+        return ElectricityDataset
 
+    def preprocessor(self) -> Type[ElectricityPreprocessor]:
+        return ElectricityPreprocessor
+
+    @staticmethod
+    def train_model(
+        data_dir: str = "data/electricity",
+        batch_size=128,
+        epochs: int = 1,
+        save_filename: str | None = "data/electricity/model.keras",
+        **kwargs,
+    ) -> keras.Model | None:
+        config = get_config("electricity")
+        dataset = training.load_dataset(
+            data_dir=data_dir,
+            batch_size=batch_size,
+            num_encoder_steps=config.data.num_encoder_steps,
+            dtype=global_policy().compute_dtype,
+        )
+        return training.train_model(
+            dataset=dataset, epochs=epochs, save_filename=save_filename, config=config, **kwargs
+        )
+
+
+class ElectricityDataset(MultiHorizonTimeSeriesDataset):
     def __init__(
         self,
         validation_boundary: datetime = datetime(2014, 8, 8),
@@ -92,383 +95,284 @@ class Electricity(MultiHorizonTimeSeriesDataset):
         self.validation_boundary = validation_boundary
         self.test_boundary = test_boundary
         self.cutoff_days = cutoff_days
-        self.total_time_steps = fixed_parameters.get_config("electricity").total_time_steps
-        self.num_encoder_steps = fixed_parameters.get_config("electricity").num_encoder_steps
+        config = get_config("electricity").data
+        self.total_time_steps = config.total_time_steps
+        self.num_encoder_steps = config.num_encoder_steps
         self.split_overlap_days = split_overlap_days
-
-    def make_dataset(
-        self, data_dir: str, save_dir: str | None = None
-    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
-        training_ds, validation_ds, test_df, preprocessor = make_dataset(
-            data_dir,
-            validation_boundary=self.validation_boundary,
-            test_boundary=self.test_boundary,
-            total_time_steps=self.total_time_steps,
-            split_overlap_days=self.split_overlap_days,
-            cutoff_days=self.cutoff_days,
-        )
-        if save_dir is not None:
-            persist_dataset(training_ds, validation_ds, test_df, preprocessor.preprocessor, save_dir)
-        else:
-            return training_ds, validation_ds, test_df, preprocessor
 
     def convert_to_parquet(self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True):
         return convert_to_parquet(download_dir, output_dir, delete_processed=delete_processed)
 
-    def reload_preprocessor(self, filename: str) -> DataPreprocessor:
-        return DataPreprocessor.load(filename)
+    def make_dataset(
+        self, data_dir: str, save_dir: str | None = None
+    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, Preprocessor]:
+        df = read_parquet(data_dir, cutoff_days=self.cutoff_days)
+        logging.info(f"{df.columns = }")
 
-    def reload_model(
-        self,
-        filename: str,
-        config: ModelConfig | None = None,
-        jit_module: bool = False,
-        return_attention: bool = True,
-    ) -> PredictFn:
-        from temporal_fusion_transformer.src.inference.util import reload_model
+        preprocessor = ElectricityPreprocessor.from_dataframe(df)
+        preprocessor.adapt(df)
 
-        if config is None:
-            config = hyperparameters.get_config("electricity").model
-
-        return reload_model(
-            filename,
-            model_config=config,
-            data_config=fixed_parameters.get_config("electricity"),
-            jit_module=jit_module,
-            return_attention=return_attention,
+        training_df, validation_df, test_df = split_data(
+            df, self.validation_boundary, self.test_boundary, self.split_overlap_days
         )
 
-    def plot_predictions(
-        self,
-        df: pl.DataFrame,
-        entity: str,
-        preprocessor: DataPreprocessor,
-        model: PredictFn,
-        batch_size: int = 32,
-        truncate_past: datetime | None = datetime(2014, 9, 4),
-    ) -> plt.Figure:
-        from temporal_fusion_transformer.src.inference import plotting
-        from temporal_fusion_transformer.src.modeling.tft_model import TftOutputs
+        kwargs = {
+            "inputs": _INPUTS,
+            "targets": _TARGETS,
+            "total_time_steps": self.total_time_steps,
+            "id_column": "id",
+            "preprocessor": preprocessor,
+        }
+        training_time_series = time_series_dataset_from_dataframe(training_df, **kwargs)
+        validation_time_series = time_series_dataset_from_dataframe(validation_df, **kwargs)
 
-        df = df.filter(pl.col("id") == entity).pipe(
-            lambda i: i.with_columns(timestamp=pl.Series(preprocessor.restore_timestamps(i)))
-        )
-        max_date = df["timestamp"].max()
+        if save_dir is not None:
+            persist_dataset(training_time_series, validation_time_series, test_df, preprocessor, save_dir)
+        else:
+            return training_time_series, validation_time_series, test_df, preprocessor
 
-        df = df.filter(pl.col("timestamp") >= (max_date - timedelta(hours=self.total_time_steps))).drop("timestamp")
+    # def plot_predictions(
+    #    self,
+    #    df: pl.DataFrame,
+    #    entity: str,
+    #    preprocessor: Preprocessor,
+    #    model: PredictFn,
+    #    batch_size: int = 32,
+    #    truncate_past: datetime | None = datetime(2014, 9, 4),
+    # ) -> plt.Figure:
+    #    from temporal_fusion_transformer.src.inference import plotting
+    #    from temporal_fusion_transformer.src.modeling.tft_model import TftOutputs
+    #
+    #    df = df.filter(pl.col("id") == entity).pipe(
+    #        lambda i: i.with_columns(timestamp=pl.Series(preprocessor.restore_timestamps(i)))
+    #    )
+    #    max_date = df["timestamp"].max()
+    #
+    #    df = df.filter(pl.col("timestamp") >= (max_date - timedelta(hours=self.total_time_steps))).drop("timestamp")
+    #
+    #    tf_ds = preprocessor.convert_dataframe_to_tf_dataset(df)
+    #
+    #    x = []
+    #    y = []
+    #    y_predicted = []
+    #
+    #    num_batches = ceil(float(tf_ds.cardinality()) / batch_size)
+    #
+    #    for x_batch, y_batch in tqdm(
+    #        tf_ds.batch(batch_size).as_numpy_iterator(), total=num_batches, desc="Predicting..."
+    #    ):
+    #        y_predicted_batch = model(x_batch)
+    #        if isinstance(y_predicted_batch, TftOutputs):
+    #            y_predicted_batch = y_predicted_batch.logits
+    #        y_predicted.extend(y_predicted_batch)
+    #        x.extend(x_batch)
+    #        y.extend(y_batch)
+    #
+    #    x = np.asarray(x)
+    #    y = np.asarray(y)
+    #    y_predicted = np.asarray(y_predicted)
+    #
+    #    ground_truth_df = preprocessor.inverse_transform(time_series_to_array(x), time_series_to_array(y))
+    #    ts = preprocessor.restore_timestamps(ground_truth_df)
+    #    pu = ground_truth_df["power_usage"].to_numpy()
+    #
+    #    quantiles = fixed_parameters.get_config("electricity").quantiles
+    #    num_encoder_steps = fixed_parameters.get_config("electricity").num_encoder_steps
+    #
+    #    predicted_df = [
+    #        preprocessor.inverse_transform(
+    #            time_series_to_array(x[:, num_encoder_steps:]), time_series_to_array(y_predicted[..., i])
+    #        )
+    #        for i in range(len(quantiles))
+    #    ]
+    #
+    #    ground_truth_past_ts = ts[:num_encoder_steps]
+    #    ground_truth_past_pu = pu[:num_encoder_steps]
+    #
+    #    ground_truth_past_ts_truncated = []
+    #    ground_truth_past_pu_truncated = []
+    #
+    #    for i, j in zip(ground_truth_past_ts, ground_truth_past_pu):
+    #        if truncate_past is None or i >= truncate_past:
+    #            ground_truth_past_ts_truncated.append(i)
+    #            ground_truth_past_pu_truncated.append(j)
+    #
+    #    return plotting.plot_predictions(
+    #        ground_truth_past=(ground_truth_past_ts_truncated, ground_truth_past_pu_truncated),
+    #        ground_truth_observed=(ts[num_encoder_steps:], pu[num_encoder_steps:]),
+    #        predictions=[(preprocessor.restore_timestamps(i), i["power_usage"].to_numpy()) for i in predicted_df],
+    #        title=f"{entity} power usage".title(),
+    #        quantiles=quantiles,
+    #        formatter=mdates.DateFormatter("%m.%d %H"),
+    #        locator=mdates.HourLocator(interval=20),
+    #    )
 
-        tf_ds = preprocessor.convert_dataframe_to_tf_dataset(df)
-
-        x = []
-        y = []
-        y_predicted = []
-
-        num_batches = ceil(float(tf_ds.cardinality()) / batch_size)
-
-        for x_batch, y_batch in tqdm(
-            tf_ds.batch(batch_size).as_numpy_iterator(), total=num_batches, desc="Predicting..."
-        ):
-            y_predicted_batch = model(x_batch)
-            if isinstance(y_predicted_batch, TftOutputs):
-                y_predicted_batch = y_predicted_batch.logits
-            y_predicted.extend(y_predicted_batch)
-            x.extend(x_batch)
-            y.extend(y_batch)
-
-        x = np.asarray(x)
-        y = np.asarray(y)
-        y_predicted = np.asarray(y_predicted)
-
-        ground_truth_df = preprocessor.inverse_transform(time_series_to_array(x), time_series_to_array(y))
-        ts = preprocessor.restore_timestamps(ground_truth_df)
-        pu = ground_truth_df["power_usage"].to_numpy()
-
-        quantiles = fixed_parameters.get_config("electricity").quantiles
-        num_encoder_steps = fixed_parameters.get_config("electricity").num_encoder_steps
-
-        predicted_df = [
-            preprocessor.inverse_transform(
-                time_series_to_array(x[:, num_encoder_steps:]), time_series_to_array(y_predicted[..., i])
-            )
-            for i in range(len(quantiles))
-        ]
-
-        ground_truth_past_ts = ts[:num_encoder_steps]
-        ground_truth_past_pu = pu[:num_encoder_steps]
-
-        ground_truth_past_ts_truncated = []
-        ground_truth_past_pu_truncated = []
-
-        for i, j in zip(ground_truth_past_ts, ground_truth_past_pu):
-            if truncate_past is None or i >= truncate_past:
-                ground_truth_past_ts_truncated.append(i)
-                ground_truth_past_pu_truncated.append(j)
-
-        return plotting.plot_predictions(
-            ground_truth_past=(ground_truth_past_ts_truncated, ground_truth_past_pu_truncated),
-            ground_truth_observed=(ts[num_encoder_steps:], pu[num_encoder_steps:]),
-            predictions=[(preprocessor.restore_timestamps(i), i["power_usage"].to_numpy()) for i in predicted_df],
-            title=f"{entity} power usage".title(),
-            quantiles=quantiles,
-            formatter=mdates.DateFormatter("%m.%d %H"),
-            locator=mdates.HourLocator(interval=20),
-        )
-
-    def plot_feature_importance(
-        self,
-        df: pl.DataFrame,
-        entity: str,
-        preprocessor: DataPreprocessor,
-        model: PredictFn,
-        batch_size: int = 32,
-        truncate_past: datetime | None = datetime(2014, 9, 4),
-    ) -> plt.Figure:
-        fig = plt.figure(figsize=(7, 4))
-
-        df = df.filter(pl.col("id") == entity).pipe(
-            lambda i: i.with_columns(timestamp=pl.Series(preprocessor.restore_timestamps(i)))
-        )
-        max_date = df["timestamp"].max()
-
-        df = df.filter(pl.col("timestamp") >= (max_date - timedelta(hours=self.total_time_steps))).drop("timestamp")
-
-        tf_ds = preprocessor.convert_dataframe_to_tf_dataset(df)
-
-        x = []
-        y = []
-
-        num_batches = ceil(float(tf_ds.cardinality()) / batch_size)
-
-        for x_batch, y_batch in tqdm(
-            tf_ds.batch(batch_size).as_numpy_iterator(), total=num_batches, desc="Predicting..."
-        ):
-            y_predicted_batch = model(x_batch)
-            x.extend(x_batch)
-            y.append(y_predicted_batch)
-
-        x = np.asarray(x)
-        y = tree_map(lambda *args: jnp.concatenate([*args], axis=0), *y)
-
-        for i in range(len(_REAL_INPUTS + _CATEGORICAL_INPUTS)):
-            past_df = preprocessor.inverse_transform(
-                time_series_to_array(x[:, : self.num_encoder_steps]),
-                time_series_to_array(y.historical_flags[..., i][..., None]),
-            )
-            future_df = preprocessor.inverse_transform(
-                time_series_to_array(x[:, self.num_encoder_steps :]),
-                time_series_to_array(y.future_flags[..., i][..., None]),
-            )
-            y_i = preprocessor.restore_timestamps(past_df) + preprocessor.restore_timestamps(future_df)
-            x_i = (
-                preprocessor.preprocessor["target"][entity]
-                .transform(
-                    np.concatenate([past_df["power_usage"].to_numpy(), future_df["power_usage"].to_numpy()]).reshape(
-                        (-1, 1)
-                    )
-                )
-                .reshape(-1)
-            )
-            y_i_truncated = []
-            x_i_truncated = []
-
-            for ii, jj in zip(x_i, y_i):
-                if truncate_past is None or jj >= truncate_past:
-                    x_i_truncated.append(ii)
-                    y_i_truncated.append(jj)
-
-            plt.plot(y_i_truncated, x_i_truncated)
-
-        static_df = preprocessor.inverse_transform(
-            time_series_to_array(x),
-            time_series_to_array(
-                np.concatenate([y.static_flags[:, None] for _ in range(self.total_time_steps)], axis=1)
-            ),
-        )
-        static_y = preprocessor.restore_timestamps(static_df)
-        static_x = (
-            preprocessor.preprocessor["target"][entity]
-            .transform(static_df["power_usage"].to_numpy().reshape((-1, 1)))
-            .reshape(-1)
-            .reshape(-1),
-        )
-        static_x_truncated = []
-        static_y_truncated = []
-        for ii, jj in zip(static_x, static_y):
-            if truncate_past is None or jj >= truncate_past:
-                static_x_truncated.append(ii)
-                static_y_truncated.append(jj)
-
-        plt.plot(static_y_truncated, static_x_truncated)
-        plt.legend([i.title() for i in _REAL_INPUTS + _CATEGORICAL_INPUTS + ["Id"]])
-        plt.title(f"{entity} feature importance".title())
-        plt.xticks(rotation=90, fontsize=12)
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%m.%d %H"))
-        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=20))
-        return fig
+    # def plot_feature_importance(
+    #    self,
+    #    df: pl.DataFrame,
+    #    entity: str,
+    #    preprocessor: Preprocessor,
+    #    model: PredictFn,
+    #    batch_size: int = 32,
+    #    truncate_past: datetime | None = datetime(2014, 9, 4),
+    # ) -> plt.Figure:
+    #    fig = plt.figure(figsize=(7, 4))
+    #
+    #    df = df.filter(pl.col("id") == entity).pipe(
+    #        lambda i: i.with_columns(timestamp=pl.Series(preprocessor.restore_timestamps(i)))
+    #    )
+    #    max_date = df["timestamp"].max()
+    #
+    #    df = df.filter(pl.col("timestamp") >= (max_date - timedelta(hours=self.total_time_steps))).drop("timestamp")
+    #
+    #    tf_ds = preprocessor.convert_dataframe_to_tf_dataset(df)
+    #
+    #    x = []
+    #    y = []
+    #
+    #    num_batches = ceil(float(tf_ds.cardinality()) / batch_size)
+    #
+    #    for x_batch, y_batch in tqdm(
+    #        tf_ds.batch(batch_size).as_numpy_iterator(), total=num_batches, desc="Predicting..."
+    #    ):
+    #        y_predicted_batch = model(x_batch)
+    #        x.extend(x_batch)
+    #        y.append(y_predicted_batch)
+    #
+    #    x = np.asarray(x)
+    #    y = tree_map(lambda *args: jnp.concatenate([*args], axis=0), *y)
+    #
+    #    for i in range(len(_REAL_INPUTS + _CATEGORICAL_INPUTS)):
+    #        past_df = preprocessor.inverse_transform(
+    #            time_series_to_array(x[:, : self.num_encoder_steps]),
+    #            time_series_to_array(y.historical_flags[..., i][..., None]),
+    #        )
+    #        future_df = preprocessor.inverse_transform(
+    #            time_series_to_array(x[:, self.num_encoder_steps :]),
+    #            time_series_to_array(y.future_flags[..., i][..., None]),
+    #        )
+    #        y_i = preprocessor.restore_timestamps(past_df) + preprocessor.restore_timestamps(future_df)
+    #        x_i = (
+    #            preprocessor.preprocessor["target"][entity]
+    #            .transform(
+    #                np.concatenate([past_df["power_usage"].to_numpy(), future_df["power_usage"].to_numpy()]).reshape(
+    #                    (-1, 1)
+    #                )
+    #            )
+    #            .reshape(-1)
+    #        )
+    #        y_i_truncated = []
+    #        x_i_truncated = []
+    #
+    #        for ii, jj in zip(x_i, y_i):
+    #            if truncate_past is None or jj >= truncate_past:
+    #                x_i_truncated.append(ii)
+    #                y_i_truncated.append(jj)
+    #
+    #        plt.plot(y_i_truncated, x_i_truncated)
+    #
+    #    static_df = preprocessor.inverse_transform(
+    #        time_series_to_array(x),
+    #        time_series_to_array(
+    #            np.concatenate([y.static_flags[:, None] for _ in range(self.total_time_steps)], axis=1)
+    #        ),
+    #    )
+    #    static_y = preprocessor.restore_timestamps(static_df)
+    #    static_x = (
+    #        preprocessor.preprocessor["target"][entity]
+    #        .transform(static_df["power_usage"].to_numpy().reshape((-1, 1)))
+    #        .reshape(-1)
+    #        .reshape(-1),
+    #    )
+    #    static_x_truncated = []
+    #    static_y_truncated = []
+    #    for ii, jj in zip(static_x, static_y):
+    #        if truncate_past is None or jj >= truncate_past:
+    #            static_x_truncated.append(ii)
+    #            static_y_truncated.append(jj)
+    #
+    #    plt.plot(static_y_truncated, static_x_truncated)
+    #    plt.legend([i.title() for i in _REAL_INPUTS + _CATEGORICAL_INPUTS + ["Id"]])
+    #    plt.title(f"{entity} feature importance".title())
+    #    plt.xticks(rotation=90, fontsize=12)
+    #    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%m.%d %H"))
+    #    plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=20))
+    #    return fig
 
 
-class DataPreprocessor(DataPreprocessorBase):
-    __slots__ = ["preprocessor"]
+class ElectricityPreprocessor(Preprocessor):
+    def adapt(self, df: pl.DataFrame) -> None:
+        total = (count_groups(df, "id") * 2) + len(_CATEGORICAL_INPUTS) + 1
 
-    def __repr__(self):
-        return repr(self.preprocessor)
+        with tqdm(total=total, desc="Training preprocessor ...") as pbar:
+            self.state["categorical"]["id"].adapt(df["id"].to_numpy())
+            pbar.update(1)
 
-    def __init__(self, preprocessor: PreprocessorDict, total_time_steps: int | None = None):
-        if total_time_steps is None:
-            total_time_steps = fixed_parameters.get_config("electricity").total_time_steps
-        self.preprocessor = preprocessor
-        self.total_time_steps = total_time_steps
+            for i, sub_df in df.groupby("id"):
+                self.state["target"][i].adapt(df[_TARGETS].to_numpy(order="c"))
+                self.state["real"][i].adapt(df[_REAL_INPUTS].to_numpy(order="c"))
+                pbar.update(2)
 
-    @staticmethod
-    def load(file_name: str) -> DataPreprocessorBase:
-        preprocessor = deserialize_preprocessor(file_name)
-        return DataPreprocessor(preprocessor)
+            for i in _CATEGORICAL_INPUTS:
+                self.state["categorical"][i].adapt(df[i].to_numpy())
+                pbar.update(1)
+        self.built = True
 
     def apply(self, df: pl.DataFrame) -> pl.DataFrame:
-        return apply_preprocessor(df, self.preprocessor)
+        lf_list = []
 
-    def convert_dataframe_to_tf_dataset(self, df: pl.DataFrame) -> tf.data.Dataset:
-        return time_series_dataset_from_dataframe(
-            df,
-            inputs=_INPUTS,
-            targets=_TARGETS,
-            id_column=_ID_COLUMN,
-            preprocess_fn=self.apply,
-            total_time_steps=self.total_time_steps,
-        )
+        total = (count_groups(df, "id") * 2) + len(_CATEGORICAL_INPUTS) + 1
 
-    def inverse_transform(self, x_batch: np.ndarray, y_batch: np.ndarray) -> pl.DataFrame:
-        return inverse_transform(self.preprocessor, x_batch, y_batch)
+        with tqdm(total=total, desc="Applying preprocessor...") as pbar:
+            for df_id, sub_df in df.groupby("id"):
+                sub_df: pl.DataFrame
+                sub_lf: pl.LazyFrame = sub_df.lazy()
 
-    def restore_timestamps(self, df: pl.DataFrame) -> List[datetime]:
-        return restore_timestamps(df)
+                x_real = sub_df[_REAL_INPUTS].to_numpy(order="c")
+                x_real = self.transform_one(x_real, "real", df_id)
 
+                sub_lf = sub_lf.with_columns(
+                    [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real.T, _REAL_INPUTS)]
+                )
+                pbar.update(1)
 
-class Trainer(TrainerBase):
-    def run(
-        self,
-        *,
-        data_dir: str,
-        batch_size: int,
-        config: ConfigDict | Literal["auto"] = "auto",
-        epochs: int = 1,
-        mixed_precision: bool = False,
-        jit_module: bool = False,
-        verbose: bool = True,
-        hooks: HooksT = "auto",
-    ) -> TrainingResult:
-        from temporal_fusion_transformer.src.training.training import train
-        from temporal_fusion_transformer.src.training.training_lib import load_dataset
+                x_target = sub_df[_TARGETS].to_numpy(order="c")
+                x_target = self.transform_one(x_target, "target", df_id)
+                sub_lf = sub_lf.with_columns(
+                    [pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target.T, _TARGETS)]
+                )
+                pbar.update(1)
 
-        if config == "auto":
-            config = hyperparameters.get_config("electricity")
+                lf_list.append(sub_lf)
 
-        data_config = fixed_parameters.get_config("electricity")
+            df: pl.DataFrame = pl.concat(lf_list).collect()
 
-        data = load_dataset(
-            data_dir,
-            batch_size,
-            prng_seed=config.prng_seed,
-            dtype=jnp.float16 if mixed_precision else jnp.float32,
-            shuffle_buffer_size=config.shuffle_buffer_size,
-            num_encoder_steps=data_config.num_encoder_steps,
-        )
+            for i in _CATEGORICAL_INPUTS:
+                x = df[i].to_numpy()
+                x = self.transform_one(x, "categorical", i)
+                df = df.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))
+                pbar.update(1)
 
-        return train(
-            data=data,
-            config=config,
-            data_config=data_config,
-            mixed_precision=mixed_precision,
-            epochs=epochs,
-            verbose=verbose,
-            hooks=hooks,
-        )
+            ids = self.transform_one(df["id"].to_numpy(), "categorical", "id")
+            df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
+            pbar.update(1)
 
-    def run_distributed(
-        self,
-        *,
-        data_dir: str,
-        batch_size: int,
-        device_type: DeviceTypeT,
-        config: ConfigDict | Literal["auto"] = "auto",
-        epochs: int = 1,
-        mixed_precision: bool = False,
-        jit_module: bool = False,
-        verbose: bool = True,
-        prefetch_buffer_size: int = 0,
-        hooks: HooksT = "auto",
-    ) -> TrainingResult:
-        from temporal_fusion_transformer.src.training.training import train_distributed
-        from temporal_fusion_transformer.src.training.training_lib import load_dataset
+        df = df.shrink_to_fit(in_place=True).rechunk()
+        return df
 
-        if config == "auto":
-            config = hyperparameters.get_config("electricity")
-
-        data_config = fixed_parameters.get_config("electricity")
-        num_devices = jax.device_count()
-
-        data = load_dataset(
-            data_dir,
-            batch_size * num_devices,
-            prng_seed=config.prng_seed,
-            dtype=jnp.float16 if mixed_precision else jnp.float32,
-            shuffle_buffer_size=config.shuffle_buffer_size,
-            num_encoder_steps=data_config.num_encoder_steps,
-        )
-
-        return train_distributed(
-            data=data,
-            config=config,
-            data_config=data_config,
-            mixed_precision=mixed_precision,
-            epochs=epochs,
-            device_type=device_type,
-            prefetch_buffer_size=prefetch_buffer_size,
-            verbose=verbose,
-            hooks=hooks,
-        )
+    @staticmethod
+    def from_dataframe(df: pl.DataFrame) -> ElectricityPreprocessor:
+        ids = df["id"].unique().to_list()
+        state = {
+            "target": {i: layers.Normalization() for i in ids},
+            "real": {i: layers.Normalization() for i in ids},
+            "categorical": {i: layers.IntegerLookup() for i in _CATEGORICAL_INPUTS},
+        }
+        state["categorical"]["id"] = layers.StringLookup()
+        return ElectricityPreprocessor(state)
 
 
-# -------------- actual implementations ------------------------------------------------------------------------------
-
-_ID_COLUMN = "id"
-_REAL_INPUTS = ["year"]
-_CATEGORICAL_INPUTS = ["month", "day", "hour", "day_of_week"]
-_INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
-_TARGETS = ["power_usage"]
-
-if TYPE_CHECKING:
-
-    class PreprocessorDict(TypedDict):
-        """
-        real and target have keys [MT_001 ... MT_370]
-
-        """
-
-        real: Mapping[str, StandardScaler]
-        target: Mapping[str, StandardScaler]
-        categorical: Mapping[str, LabelEncoder]
-
-
-def make_dataset(
-    data_dir: str,
-    validation_boundary: datetime = datetime(2014, 8, 8),
-    test_boundary: datetime = datetime(2014, 9, 1),
-    split_overlap_days: int = 7,
-    cutoff_days: Tuple[datetime, datetime] = (datetime(2014, 1, 1), datetime(2014, 9, 8)),
-    total_time_steps: int = 192,
-) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessor]:
-    df = read_parquet(data_dir, cutoff_days=cutoff_days)
-    logging.info(f"{df.columns = }")
-    preprocessor = train_preprocessor(df)
-    training_df, validation_df, test_df = split_data(df, validation_boundary, test_boundary, split_overlap_days)
-
-    make_dataset_fn: Callable[[pl.DataFrame], tf.data.Dataset] = partial(
-        make_time_series_dataset, total_time_steps=total_time_steps, preprocessor=preprocessor
-    )
-    training_time_series: tf.data.Dataset = make_dataset_fn(training_df)
-    validation_time_series: tf.data.Dataset = make_dataset_fn(validation_df)
-    return training_time_series, validation_time_series, test_df, preprocessor
+# -------------- actual implementations ----------------------------------------
 
 
 def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_processed: bool = True):
@@ -559,163 +463,70 @@ def split_data(
     )
 
 
-# ------------------------- preprocessing and co ----------------
-
-
-def train_preprocessor(df: pl.DataFrame) -> PreprocessorDict:
-    target_scalers = defaultdict(lambda: StandardScaler())
-    real_scalers = defaultdict(lambda: StandardScaler())
-    label_encoders = defaultdict(lambda: LabelEncoder())
-
-    total = (count_groups(df, "id") * 2) + len(_CATEGORICAL_INPUTS) + 1
-
-    with tqdm(total=total, desc="Training preprocessor ...") as pbar:
-        label_encoders["id"].fit(df["id"].to_numpy())
-        pbar.update(1)
-
-        for i, sub_df in df.groupby("id"):
-            target_scalers[i].fit(df[_TARGETS].to_numpy(order="c"))
-            real_scalers[i].fit(df[_REAL_INPUTS].to_numpy(order="c"))
-            pbar.update(2)
-
-        for i in _CATEGORICAL_INPUTS:
-            label_encoders[i].fit(df[i].to_numpy())
-            pbar.update(1)
-
-    return {
-        "real": dict(**real_scalers),
-        "target": dict(**target_scalers),
-        "categorical": dict(**label_encoders),
-    }
-
-
-def apply_preprocessor(df: pl.DataFrame, preprocessor: PreprocessorDict, skip_targets: bool = False) -> pl.DataFrame:
-    """
-
-    Parameters
-    ----------
-    df
-    preprocessor
-    skip_targets:
-        Set to true, if data contains no ground truth targets, e.g., during inference on new data.
-
-    Returns
-    -------
-
-    """
-    lf_list = []
-
-    total = (count_groups(df, "id") * 2) + len(_CATEGORICAL_INPUTS) + 1
-
-    with tqdm(total=total, desc="Applying preprocessor...") as pbar:
-        for i, sub_df in df.groupby("id"):
-            sub_df: pl.DataFrame
-            sub_lf: pl.LazyFrame = sub_df.lazy()
-
-            x_real = sub_df[_REAL_INPUTS].to_numpy(order="c")
-            x_real = preprocessor["real"][i].transform(x_real)
-
-            sub_lf = sub_lf.with_columns([pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_real.T, _REAL_INPUTS)])
-            pbar.update(1)
-
-            x_target = sub_df[_TARGETS].to_numpy(order="c")
-            x_target = preprocessor["target"][i].transform(x_target)
-            sub_lf = sub_lf.with_columns([pl.lit(i).alias(j).cast(pl.Float32) for i, j in zip(x_target.T, _TARGETS)])
-            pbar.update(1)
-
-            lf_list.append(sub_lf)
-
-        df: pl.DataFrame = pl.concat(lf_list).collect()
-
-        for i in _CATEGORICAL_INPUTS:
-            x = df[i].to_numpy()
-            x = preprocessor["categorical"][i].transform(x)
-            df = df.drop(i).with_columns(pl.lit(x).alias(i).cast(pl.Int8))
-            pbar.update(1)
-
-        ids = preprocessor["categorical"]["id"].transform(df["id"].to_numpy())
-        df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
-        pbar.update(1)
-
-    df = df.shrink_to_fit(in_place=True).rechunk()
-    return df
-
-
-def make_time_series_dataset(df, preprocessor, total_time_steps: int = 192):
-    return time_series_dataset_from_dataframe(
-        df,
-        inputs=_INPUTS,
-        targets=_TARGETS,
-        total_time_steps=total_time_steps,
-        id_column=_ID_COLUMN,
-        preprocess_fn=partial(apply_preprocessor, preprocessor=preprocessor),
-    )
-
-
 # -------------------- inference ---------------
 
 
-def inverse_transform(
-    preprocessor: PreprocessorDict,
-    x_batch: np.ndarray,
-    y_batch: np.ndarray,
-) -> pl.DataFrame:
-    ids = np.asarray(x_batch[..., 5], dtype=np.int32)
-
-    ids_str = preprocessor["categorical"]["id"].inverse_transform(ids)
-
-    if len(np.unique(ids)) == 1:
-        return inverse_transform_for_single_id(preprocessor, x_batch, y_batch, ids_str[0])
-
-    lf_list = []
-
-    for id_i in tqdm(ids_str):
-        idx_i = np.argwhere(ids == id_i).reshape(-1)
-        x_i = np.take(x_batch, idx_i, axis=0)
-        y_i = np.take(y_batch, idx_i, axis=0)
-
-        df = inverse_transform_for_single_id(preprocessor, x_i, y_i, id_i)
-
-        lf_list.append(df.lazy())
-
-    return pl.concat(lf_list).collect()
-
-
-def inverse_transform_for_single_id(
-    preprocessor: PreprocessorDict,
-    x_batch: np.ndarray,
-    y_batch: np.ndarray,
-    entity_id: str,
-) -> pl.LazyFrame:
-    config: DataConfig = fixed_parameters.get_config("electricity")
-
-    y_new = preprocessor["target"][entity_id].inverse_transform(y_batch).reshape(-1)
-
-    x_categorical = np.take(x_batch, list(config.input_known_categorical_idx) + list(config.input_static_idx), axis=-1)
-
-    x_categorical_new = [
-        preprocessor["categorical"][j].inverse_transform(np.asarray(i, dtype=np.int32))
-        for i, j in zip(x_categorical.T, _CATEGORICAL_INPUTS + [_ID_COLUMN])
-    ]
-
-    x_real = np.take(x_batch, list(config.input_known_real_idx) + list(config.input_observed_idx), axis=-1)
-
-    x_real_new = preprocessor["real"][entity_id].inverse_transform(x_real).reshape(-1)
-
-    return (
-        pl.DataFrame()
-        .with_columns([pl.lit(i).alias(j) for i, j in zip(x_categorical_new, _CATEGORICAL_INPUTS + [_ID_COLUMN])])
-        .with_columns([pl.lit(x_real_new).alias("year").cast(pl.UInt16), pl.lit(y_new).alias("power_usage")])
-        .rechunk()
-    )
+# def inverse_transform(
+#    preprocessor: PreprocessorDict,
+#    x_batch: np.ndarray,
+#    y_batch: np.ndarray,
+# ) -> pl.DataFrame:
+#    ids = np.asarray(x_batch[..., 5], dtype=np.int32)
+#
+#    ids_str = preprocessor["categorical"]["id"].inverse_transform(ids)
+#
+#    if len(np.unique(ids)) == 1:
+#        return inverse_transform_for_single_id(preprocessor, x_batch, y_batch, ids_str[0])
+#
+#    lf_list = []
+#
+#    for id_i in tqdm(ids_str):
+#        idx_i = np.argwhere(ids == id_i).reshape(-1)
+#        x_i = np.take(x_batch, idx_i, axis=0)
+#        y_i = np.take(y_batch, idx_i, axis=0)
+#
+#        df = inverse_transform_for_single_id(preprocessor, x_i, y_i, id_i)
+#
+#        lf_list.append(df.lazy())
+#
+#    return pl.concat(lf_list).collect()
 
 
-def restore_timestamps(df: pl.DataFrame) -> List[datetime]:
-    return df.with_columns(
-        [
-            pl.datetime("year", "month", "day", "hour")
-            .dt.strftime("%Y/%m/%d %H:%M:%S")
-            .alias("timestamp")
-            .str.to_datetime()
-        ]
-    )["timestamp"].to_list()
+# def inverse_transform_for_single_id(
+#    preprocessor: PreprocessorDict,
+#    x_batch: np.ndarray,
+#    y_batch: np.ndarray,
+#    entity_id: str,
+# ) -> pl.LazyFrame:
+#    config: DataConfig = fixed_parameters.get_config("electricity")
+#
+#    y_new = preprocessor["target"][entity_id].inverse_transform(y_batch).reshape(-1)
+#
+#    x_categorical = np.take(x_batch, list(config.input_known_categorical_idx) + list(config.input_static_idx), axis=-1)
+#
+#    x_categorical_new = [
+#        preprocessor["categorical"][j].inverse_transform(np.asarray(i, dtype=np.int32))
+#        for i, j in zip(x_categorical.T, _CATEGORICAL_INPUTS + [_ID_COLUMN])
+#    ]
+#
+#    x_real = np.take(x_batch, list(config.input_known_real_idx) + list(config.input_observed_idx), axis=-1)
+#
+#    x_real_new = preprocessor["real"][entity_id].inverse_transform(x_real).reshape(-1)
+#
+#    return (
+#        pl.DataFrame()
+#        .with_columns([pl.lit(i).alias(j) for i, j in zip(x_categorical_new, _CATEGORICAL_INPUTS + [_ID_COLUMN])])
+#        .with_columns([pl.lit(x_real_new).alias("year").cast(pl.UInt16), pl.lit(y_new).alias("power_usage")])
+#        .rechunk()
+#    )
+
+
+# def restore_timestamps(df: pl.DataFrame) -> List[datetime]:
+#    return df.with_columns(
+#        [
+#            pl.datetime("year", "month", "day", "hour")
+#            .dt.strftime("%Y/%m/%d %H:%M:%S")
+#            .alias("timestamp")
+#            .str.to_datetime()
+#        ]
+#    )["timestamp"].to_list()

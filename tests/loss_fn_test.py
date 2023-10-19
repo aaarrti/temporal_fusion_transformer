@@ -1,7 +1,8 @@
 import chex
 import jax.numpy as jnp
 import jax.random
-from src.v2.loss_fn import quantile_pinball_loss
+
+from temporal_fusion_transformer.src.loss_fn import quantile_pinball_loss
 
 PRNG_KEY = jax.random.PRNGKey(0)
 quantiles = jnp.asarray([0.1, 0.5, 0.9], jnp.float32)

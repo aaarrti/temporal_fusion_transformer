@@ -2,27 +2,41 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import TYPE_CHECKING, List, Literal, Tuple
+from typing import TYPE_CHECKING, Dict, Literal, Tuple, Type, TypedDict
 
-from temporal_fusion_transformer.src.experiments.util import classproperty
+import keras_core
+import keras_core as keras
+import numpy as np
+from keras_core import layers
+from keras_core.src.saving import serialization_lib
+from tree import map_structure
+
+from temporal_fusion_transformer.src.utils.utils import classproperty
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
-    import numpy as np
     import polars as pl
     import tensorflow as tf
 
-    from temporal_fusion_transformer.src.config_dict import ConfigDict, ModelConfig
-    from temporal_fusion_transformer.src.lib_types import (
-        DeviceTypeT,
-        HooksT,
-        PredictFn,
-        TrainingResult,
-    )
-    from temporal_fusion_transformer.src.training.metrics import MetricContainer
-    from temporal_fusion_transformer.src.training.training_lib import (
-        TrainStateContainer,
-    )
+
+class Experiment:
+    @classproperty
+    def dataset(self) -> Type[MultiHorizonTimeSeriesDataset]:
+        raise NotImplementedError
+
+    @classproperty
+    def preprocessor(self) -> Type[Preprocessor]:
+        raise NotImplementedError
+
+    @staticmethod
+    def train_model(
+        data_dir: str = "data", batch_size=128, epochs: int = 1, save_filename: str | None = "model.keras", **kwargs
+    ) -> keras.Model | None:
+        raise NotImplementedError
+
+    @staticmethod
+    def train_model_distributed(*args, **kwargs):
+        raise NotImplementedError
 
 
 class MultiHorizonTimeSeriesDataset(ABC):
@@ -49,7 +63,7 @@ class MultiHorizonTimeSeriesDataset(ABC):
     @abstractmethod
     def make_dataset(
         self, data_dir: str, save_dir: str | None = None
-    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, DataPreprocessorBase] | None:
+    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, Preprocessor] | None:
         """
         This method expect data to be in parquet format.
 
@@ -72,122 +86,78 @@ class MultiHorizonTimeSeriesDataset(ABC):
         """
         raise NotImplementedError
 
-    @classproperty
-    @abstractmethod
-    def trainer(self) -> TrainerBase:
-        raise NotImplementedError
-
-    @abstractmethod
-    def reload_preprocessor(self, filename: str) -> DataPreprocessorBase:
-        raise NotImplementedError
-
-    @abstractmethod
-    def reload_model(
-        self, filename: str, config: ModelConfig, jit_module: bool, return_attention: bool = True
-    ) -> PredictFn:
-        raise NotImplementedError
-
-    @abstractmethod
+    # @abstractmethod
     def plot_predictions(
         self,
         df: pl.DataFrame,
         entity: str,
-        preprocessor: DataPreprocessorBase,
-        model: PredictFn,
+        preprocessor,
+        model,
         batch_size: int = 32,
         truncate_past: datetime | None = None,
     ) -> plt.Figure:
         raise NotImplementedError
 
-    @abstractmethod
+    # @abstractmethod
     def plot_feature_importance(
         self,
         df: pl.DataFrame,
         entity: str,
-        preprocessor: DataPreprocessorBase,
-        model: PredictFn,
+        preprocessor,
+        model,
         batch_size: int = 32,
         truncate_past: datetime | None = None,
     ) -> plt.Figure:
         raise NotImplementedError
 
 
-class DataPreprocessorBase(ABC):
-    @staticmethod
-    @abstractmethod
-    def load(file_name: str) -> DataPreprocessorBase:
-        raise NotImplementedError
+if TYPE_CHECKING:
+    import polars as pl
+    import tensorflow as tf
 
-    @abstractmethod
+
+class PreprocessorState(TypedDict):
+    real: Dict[str, layers.Normalization]
+    target: Dict[str, layers.Normalization]
+    categorical: Dict[str, layers.IntegerLookup | layers.StringLookup]
+
+
+class Preprocessor(keras_core.Model):
+    state: PreprocessorState
+
+    def __init__(self, state: PreprocessorState, name="preprocessor", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.state = state
+        self.run_eagerly = True
+
+    def __call__(self, df: pl.DataFrame, **kwargs) -> pl.DataFrame:
+        return self.apply(df)
+
+    def adapt(self, df: pl.DataFrame):
+        pass
+
     def apply(self, df: pl.DataFrame) -> pl.DataFrame:
-        raise NotImplementedError
+        return df
 
-    @abstractmethod
-    def convert_dataframe_to_tf_dataset(self, df: pl.DataFrame) -> tf.data.Dataset:
-        raise NotImplementedError
+    def transform_one(self, arr: np.ndarray, kind: Literal["real", "target", "categorical"], key: str) -> np.ndarray:
+        return np.asarray(self.state[kind][key](arr))
 
-    @abstractmethod
-    def inverse_transform(self, x_batch: np.ndarray, y_batch: np.ndarray) -> pl.DataFrame:
-        """
+    def get_config(self):
+        config = super().get_config()
+        state = map_structure(serialization_lib.serialize_keras_object, self.state)
+        config["state"] = state
+        return config
 
-        Parameters
-        ----------
-        x_batch:
-            2D batch of inputs passed to model.
-        y_batch
-            2D batch of model outputs.
+    @classmethod
+    def from_config(cls, config, custom_objects=None):
+        config["state"] = {
+            "real": {k: serialization_lib.deserialize_keras_object(v) for k, v in config["state"]["real"].items()},
+            "target": {k: serialization_lib.deserialize_keras_object(v) for k, v in config["state"]["target"].items()},
+            "categorical": {
+                k: serialization_lib.deserialize_keras_object(v) for k, v in config["state"]["categorical"].items()
+            },
+        }
 
-        Returns
-        -------
-
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def restore_timestamps(self, df: pl.DataFrame) -> List[datetime]:
-        """
-        Before using this method, inverse_transform must be applied to `df`.
-
-        Parameters
-        ----------
-        df
-
-        Returns
-        -------
-
-        """
-        raise NotImplementedError
-
-
-class TrainerBase(ABC):
-    @abstractmethod
-    def run(
-        self,
-        *,
-        data_dir: str,
-        batch_size: int,
-        config: ConfigDict | Literal["auto"] = "auto",
-        epochs: int = 1,
-        mixed_precision: bool = False,
-        jit_module: bool = False,
-        verbose: bool = True,
-        hooks: HooksT = "auto",
-    ) -> TrainingResult:
-        raise NotImplementedError
-
-    @abstractmethod
-    def run_distributed(
-        self,
-        *,
-        data_dir: str,
-        batch_size: int,
-        device_type: DeviceTypeT,
-        config: ConfigDict | Literal["auto"] = "auto",
-        epochs: int = 1,
-        mixed_precision: bool = False,
-        jit_module: bool = False,
-        verbose: bool = True,
-        prefetch_buffer_size: int = 0,
-        hooks: HooksT = "auto",
-    ) -> Tuple[Tuple[MetricContainer, MetricContainer], TrainStateContainer]:
-        raise NotImplementedError
+        model = super().from_config(config, custom_objects)
+        model.built = True
+        return model

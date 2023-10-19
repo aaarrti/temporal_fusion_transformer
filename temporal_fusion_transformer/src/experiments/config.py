@@ -2,9 +2,19 @@ from typing import Literal
 
 from ml_collections import ConfigDict
 
+Choice = Literal["electricity", "favorita"]
+
+
+def get_config(choice: Choice) -> ConfigDict:
+    config = ConfigDict()
+    config.data = get_data_config(choice)
+    config.model = get_model_config(choice)
+    config.quantiles = [0.1, 0.5, 0.9]
+    return config
+
 
 # Those are fixed parameters, they can NEVER change.
-def get_config(choice: Literal["electricity", "favorita", "hamburg_air_quality"]):
+def get_data_config(choice: Choice) -> ConfigDict:
     # fmt: off
     choices = {
         "electricity": {
@@ -85,3 +95,26 @@ def get_config(choice: Literal["electricity", "favorita", "hamburg_air_quality"]
     }
     # fmt: on
     return ConfigDict(choices[choice])
+
+
+# Those are hyperparameters (we can tune them)
+def get_model_config(choice: Choice) -> ConfigDict:
+    config = {
+        "electricity": {
+            "num_attention_heads": 8,
+            "num_decoder_blocks": 4,
+            "latent_dim": 256,
+            "dropout_rate": 0.1,
+            "attention_dropout_rate": 0.1,
+            "optimizer": {
+                "learning_rate": 5e-4,
+                "decay_steps": 0.0,
+                "alpha": 0.8,
+                "clipnorm": 0.0,
+                "use_ema": False,
+                "weight_decay": 0.0,
+            },
+        },
+        "favorita": {},
+    }
+    return config[choice]
