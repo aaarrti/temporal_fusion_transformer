@@ -4,26 +4,27 @@ import os
 
 os.environ["KERAS_BACKEND"] = "jax"
 import jax
-from absl import app, flags, logging
-from absl_extra.logging_utils import setup_logging
-from absl_extra.notifier import NoOpNotifier
-from absl_extra.tasks import register_task
-from absl_extra.tasks import run as main
-from keras_core import mixed_precision
-
+from absl import app, flags
+from keras_core import distribution, mixed_precision
+import logging
+import json
 import temporal_fusion_transformer as tft
 
 # jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_debug_infs", True)
 jax.config.update("jax_softmax_custom_jvp", True)
 jax.config.update("jax_default_dtype_bits", "32")
-# for cuda
-# jax.config.update("jax_default_matmul_precision", "tensorfloat32")
-# jax.config.update("jax_default_matmul_precision", "bfloat16")
 
-# setup_logging()
-setup_logging(log_level="INFO")
+
+tft.setup_logging(log_level="INFO")
 FLAGS = flags.FLAGS
+flags.DEFINE_enum(
+    "task",
+    enum_values=["parquet", "dataset", "model", "model_distributed", "hyperparams", "inference"],
+    help="Task to run.",
+    default=None,
+    required=True,
+)
 flags.DEFINE_enum(
     "experiment",
     enum_values=["electricity", "favorita"],
@@ -38,8 +39,15 @@ flags.DEFINE_boolean("mixed_precision", default=False, help="Use mixed (b)float1
 flags.DEFINE_boolean("verbose", default=True, help="Verbose mode for training")
 flags.DEFINE_integer("prng_seed", default=69, help="PRNG seed")
 
-
+# For TPU
+# mixed_precision.set_global_policy("mixed_bfloat16")
+# jax.config.update("jax_default_matmul_precision", "bfloat16")
+# For GPU
 # mixed_precision.set_global_policy("mixed_float16")
+# jax.config.update("jax_default_matmul_precision", "tensorfloat32")
+
+
+log = logging.getLogger(__name__)
 
 
 def choose_experiment(name: str) -> tft.experiments.Experiment:
@@ -54,7 +62,6 @@ def choose_experiment(name: str) -> tft.experiments.Experiment:
 # --------------------------------------------------------
 
 
-@register_task(name="parquet", notifier=NoOpNotifier())
 def parquet():
     experiment_name = FLAGS.experiment
     data_dir = FLAGS.data_dir
@@ -62,7 +69,6 @@ def parquet():
     ex.dataset().convert_to_parquet(f"{data_dir}/{experiment_name}")
 
 
-@register_task(name="dataset", notifier=NoOpNotifier())
 def dataset():
     data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
     data_dir = f"{data_dir}/{experiment_name}"
@@ -73,28 +79,39 @@ def dataset():
 # --------------------------------------------------------
 
 
-@register_task(name="model", notifier=NoOpNotifier())
 def model():
-    experiment_name = FLAGS.experiment
+    data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
+    data_dir = f"{data_dir}/{experiment_name}"
+
     ex = choose_experiment(experiment_name)
     ex.train_model(
-        epochs=FLAGS.epochs,
-        batch_size=FLAGS.batch_size,
-        verbose="auto",
+        epochs=FLAGS.epochs, batch_size=FLAGS.batch_size, verbose="auto" if FLAGS.verbose else 1, data_dir=data_dir
     )
 
 
-# @register_task(name="model_distributed", notifier=NoOpNotifier())
-# def model_distributed(_):
-#    pass
+def model_distributed():
+    data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
+    data_dir = f"{data_dir}/{experiment_name}"
+
+    mesh = distribution.DataParallel()
+    distribution.set_distribution(mesh)
+
+    ex = choose_experiment(experiment_name)
+    ex.train_model(
+        epochs=FLAGS.epochs, batch_size=FLAGS.batch_size, verbose="auto" if FLAGS.verbose else 1, data_dir=data_dir
+    )
 
 
-# --------------------------------------------------------
-
-# @register_task(name="hyperparams", notifier=NoOpNotifier())
-# def hyperparams(_):
-#    pass
+def select_task(_):
+    log.info("-" * 50)
+    log.info(f"JAX devices = {jax.devices()}")
+    log.info(f"ABSL flags: {json.dumps(flags.FLAGS.flag_values_dict(), sort_keys=True, indent=4)}")
+    log.info("-" * 50)
+    
+    return {"model": model, "parquet": parquet, "dataset": dataset, "model_distributed": model_distributed}[
+        FLAGS.task
+    ]()
 
 
 if __name__ == "__main__":
-    main()
+    app.run(select_task)

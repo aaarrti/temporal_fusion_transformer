@@ -3,6 +3,7 @@ from importlib import util
 from typing import TYPE_CHECKING
 
 from temporal_fusion_transformer.src import experiments
+from temporal_fusion_transformer.src.utils import setup_logging
 
 if util.find_spec("tensorflow") is not None:
     from temporal_fusion_transformer.src.training import train_model

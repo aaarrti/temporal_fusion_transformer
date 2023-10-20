@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Literal, Type
+import logging
+from typing import TYPE_CHECKING, List, Literal
 
 import numpy as np
-from absl import logging
 from keras_core.utils import timeseries_dataset_from_array
 from toolz import functoolz
+
+log = logging.getLogger(__name__)
 
 try:
     import polars as pl
     import tensorflow as tf
     from tqdm.auto import tqdm
 except ModuleNotFoundError as ex:
-    logging.warning(ex)
+    log.warning(ex)
 
 
 if TYPE_CHECKING:
@@ -94,9 +96,9 @@ def time_series_dataset_from_dataframe(
                 num_ok += 1
                 yield time_series_i
             except ValueError as e:
-                logging.error(e)
+                log.error(e)
                 num_errors += 1
-        logging.info(f"{num_errors = }, {num_ok = }")
+        log.info(f"{num_errors = }, {num_ok = }")
 
     return functoolz.reduce(lambda a, b: a.concatenate(b), generator())
 
@@ -150,17 +152,17 @@ def persist_dataset(
     -------
 
     """
-    logging.info("Saving (preprocessed) train split")
+    log.info("Saving (preprocessed) train split")
     training_ds.save(f"{save_dir}/training", compression=compression)
-    logging.info("Saving (preprocessed) validation split")
+    log.info("Saving (preprocessed) validation split")
     validation_ds.save(f"{save_dir}/validation", compression=compression)
-    logging.info("Saving (not preprocessed) test split (as parquet)")
+    log.info("Saving (not preprocessed) test split (as parquet)")
     if test_split_save_format == "parquet":
         test_df.write_parquet(f"{save_dir}/test.parquet")
     if test_split_save_format == "csv":
         test_df.write_csv(f"{save_dir}/test.csv")
 
-    logging.info("Saving preprocessor state")
+    log.info("Saving preprocessor state")
     preprocessor.save(f"{save_dir}/preprocessor.keras")
 
 

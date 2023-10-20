@@ -11,7 +11,7 @@ from keras_core import layers
 from keras_core.src.saving import serialization_lib
 from tree import map_structure
 
-from temporal_fusion_transformer.src.utils.utils import classproperty
+from temporal_fusion_transformer.src.utils import classproperty
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
@@ -35,7 +35,9 @@ class Experiment:
         raise NotImplementedError
 
     @staticmethod
-    def train_model_distributed(*args, **kwargs):
+    def train_model_distributed(
+        data_dir: str = "data", batch_size=128, epochs: int = 1, save_filename: str | None = "model.keras", **kwargs
+    ):
         raise NotImplementedError
 
 

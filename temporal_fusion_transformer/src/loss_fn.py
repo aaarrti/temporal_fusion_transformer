@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from keras_core import backend, mixed_precision, ops
+from keras_core import mixed_precision, ops
 from keras_core.src.losses import LossFunctionWrapper
 
 newaxis = None

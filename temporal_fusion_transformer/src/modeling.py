@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Tuple, TypedDict
 
 import keras_core as keras
 from keras_core import layers, ops
 from toolz import dicttoolz
 
-from temporal_fusion_transformer.src.utils.utils import flatten_dict
+from temporal_fusion_transformer.src.utils import enumerate_v2
 
 if TYPE_CHECKING:
     from jax import Array
@@ -48,7 +48,8 @@ class TemporalFusionTransformer(keras.Model):
         attention_dropout_rate=0,
         num_outputs=1,
         return_attention=False,
-        name="TFT",
+        unroll: bool = False,
+        name="TemporalFusionTransformer",
         **kwargs,
     ):
         super().__init__(name=name, **kwargs)
@@ -88,13 +89,9 @@ class TemporalFusionTransformer(keras.Model):
             num_time_steps=total_time_steps - num_encoder_steps,
             num_inputs=num_known_real_inputs + num_known_categorical_inputs,
         )
-        self.historical_lstm = layers.LSTM(
-            latent_dim,
-            return_state=True,
-            return_sequences=True,
-        )
+        self.historical_lstm = layers.LSTM(latent_dim, return_state=True, return_sequences=True, unroll=unroll)
 
-        self.future_lstm = layers.LSTM(latent_dim, return_sequences=True)
+        self.future_lstm = layers.LSTM(latent_dim, return_sequences=True, unroll=unroll)
 
         self.output_skip_connection = GatedLinearUnit(
             latent_dim=latent_dim,
@@ -255,10 +252,10 @@ class InputPreprocessor(layers.Layer):
         if input_observed_idx is None:
             raise ValueError("When providing inputs as arrays, must specify provide `input_observed_idx`")
 
-        input_static_idx = list(input_static_idx)
-        input_known_real_idx = list(input_known_real_idx)
-        input_known_categorical_idx = list(input_known_categorical_idx)
-        input_observed_idx = list(input_observed_idx)
+        input_static_idx = ops.array(input_static_idx, "int32")
+        input_known_real_idx = ops.array(input_known_real_idx, "int32")
+        input_known_categorical_idx = ops.array(input_known_categorical_idx, "int32")
+        input_observed_idx = ops.array(input_observed_idx, "int32")
 
         declared_num_features = (
             len(input_static_idx)
@@ -350,7 +347,7 @@ class GatedLinearUnit(layers.Layer):
         self.dense = dense
         self.activation = activation
 
-    def __call__(self, inputs: Array) -> tuple[Array, Array]:
+    def __call__(self, inputs: Array) -> Tuple[Array, Array]:
         return super().__call__(inputs)
 
     def call(self, inputs):
@@ -533,10 +530,20 @@ class InputEmbedding(layers.Layer):
     def __call__(self, inputs: InputDict, **kwargs) -> EmbeddingDict:
         return super().__call__(inputs, **kwargs)
 
-    # FIXME: /Users/artemsereda/miniconda3/envs/py310/lib/python3.10/site-packages/keras_core/src/layers/layer.py:355:
-    #  UserWarning: `build()` was called on layer 'embed', however the layer does not have a `build()` method implemented
-    #  and it looks like it has unbuilt state. This will cause the layer to be marked as built, despite not being actually built,
-    #  which may cause failures down the line. Make sure to implement a proper `build()` method.
+    def build(self, input_shape: InputDictShape):
+        for layer in self.static_embeds:
+            layer.build((input_shape["static"][0], input_shape["static"][2]))
+
+        for layer in self.known_embeds:
+            layer.build(input_shape["known_categorical"][:2])
+
+        for layer in self.known_dense:
+            layer.build((*input_shape["known_real"][:2], 1))
+
+        for layer in self.observed_dense:
+            layer.build((*input_shape["observed"][:2], 1))
+
+        self.built = True
 
     def call(self, inputs: InputDict, **kwargs) -> EmbeddingDict:
         """
@@ -544,16 +551,16 @@ class InputEmbedding(layers.Layer):
         - real -> TimeDistributed(Dense)
 
         """
-        static_input_embeddings = [layer(inputs["static"][:, 0, i]) for i, layer in enumerate(self.known_embeds)]
+        static_input_embeddings = [layer(inputs["static"][:, 0, i]) for i, layer in enumerate_v2(self.known_embeds)]
 
         static_input_embeddings = ops.stack(static_input_embeddings, axis=1)
 
         known_categorical_inputs_embeddings = [
-            layer(inputs["known_categorical"][..., i]) for i, layer in enumerate(self.known_embeds)
+            layer(inputs["known_categorical"][..., i]) for i, layer in enumerate_v2(self.known_embeds)
         ]
 
         known_real_inputs_embeddings = [
-            layer(inputs["known_real"][..., i, newaxis]) for i, layer in enumerate(self.known_dense)
+            layer(inputs["known_real"][..., i, newaxis]) for i, layer in enumerate_v2(self.known_dense)
         ]
 
         known_inputs_embeddings = ops.concatenate(
@@ -565,7 +572,7 @@ class InputEmbedding(layers.Layer):
         )
 
         observed_input_embeddings = [
-            layer(inputs["observed"][..., i, newaxis]) for i, layer in enumerate(self.observed_dense)
+            layer(inputs["observed"][..., i, newaxis]) for i, layer in enumerate_v2(self.observed_dense)
         ]
 
         observed_input_embeddings = (
@@ -610,10 +617,8 @@ class StaticCovariatesEncoder(layers.Layer):
         """
         super().__init__(name=name, **kwargs)
 
-        def make_gru(**kwargs):
-            return GatedResidualNetwork(
-                latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=False, **kwargs
-            )
+        def make_gru(**kw):
+            return GatedResidualNetwork(latent_dim=latent_dim, dropout_rate=dropout_rate, time_distributed=False, **kw)
 
         self.gru = make_gru(
             output_size=num_static_inputs,
@@ -634,7 +639,7 @@ class StaticCovariatesEncoder(layers.Layer):
 
         sparse_weights = ops.nn.softmax(mlp_outputs)[..., newaxis]
 
-        transformed_embeddings = [layer(inputs[:, i, newaxis])[0] for i, layer in enumerate(self.gru_blocks)]
+        transformed_embeddings = [layer(inputs[:, i, newaxis])[0] for i, layer in enumerate_v2(self.gru_blocks)]
 
         transformed_embeddings = ops.concatenate(transformed_embeddings, axis=1)
         static_context_vector = ops.sum(sparse_weights * transformed_embeddings, axis=1)
@@ -713,7 +718,7 @@ class VariableSelectionNetwork(layers.Layer):
 
         sparse_weights = ops.nn.softmax(mlp_outputs)[:, :, newaxis]
 
-        transformed_embeddings = [layer(inputs["inputs"][..., i])[0] for i, layer in enumerate(self.gru)]
+        transformed_embeddings = [layer(inputs["inputs"][..., i])[0] for i, layer in enumerate_v2(self.gru)]
 
         transformed_embeddings = ops.stack(transformed_embeddings, axis=-1)
         temporal_ctx = ops.sum(sparse_weights * transformed_embeddings, axis=-1)
@@ -835,6 +840,13 @@ class InputDict(TypedDict):
     known_real: Array
     known_categorical: Array
     observed: Array
+
+
+class InputDictShape(TypedDict):
+    static: Tuple[int, ...] | Tuple[int, int, int]
+    known_real: Tuple[int, ...] | Tuple[int, int, int]
+    known_categorical: Tuple[int, ...] | Tuple[int, int, int]
+    observed: Tuple[int, ...] | Tuple[int, int, int]
 
 
 class TftOutputs(TypedDict):

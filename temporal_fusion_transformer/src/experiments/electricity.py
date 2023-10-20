@@ -1,19 +1,17 @@
 from __future__ import annotations
 
+import logging
 import os
-from collections import defaultdict
 from datetime import datetime, timedelta
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Tuple, Type
+from typing import Tuple, Type
 
 import keras_core as keras
 import polars as pl
 import tensorflow as tf
-from absl import logging
 from keras.mixed_precision import global_policy
 from keras_core import layers
 from tqdm.auto import tqdm
-from tree import map_structure
 
 from temporal_fusion_transformer.src import training
 from temporal_fusion_transformer.src.experiments.base import (
@@ -27,13 +25,14 @@ from temporal_fusion_transformer.src.experiments.utils import (
     persist_dataset,
     time_series_dataset_from_dataframe,
 )
-from temporal_fusion_transformer.src.utils.utils import classproperty
+from temporal_fusion_transformer.src.utils import classproperty
 
 _ID_COLUMN = "id"
 _REAL_INPUTS = ["year"]
 _CATEGORICAL_INPUTS = ["month", "day", "hour", "day_of_week"]
 _INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
 _TARGETS = ["power_usage"]
+log = logging.getLogger(__name__)
 
 
 # ------ We export class based API for convenience ------------
@@ -44,13 +43,14 @@ class Electricity(Experiment):
     def dataset(self) -> Type[ElectricityDataset]:
         return ElectricityDataset
 
+    @classproperty
     def preprocessor(self) -> Type[ElectricityPreprocessor]:
         return ElectricityPreprocessor
 
     @staticmethod
     def train_model(
         data_dir: str = "data/electricity",
-        batch_size=128,
+        batch_size: int = 128,
         epochs: int = 1,
         save_filename: str | None = "data/electricity/model.keras",
         **kwargs,
@@ -65,6 +65,12 @@ class Electricity(Experiment):
         return training.train_model(
             dataset=dataset, epochs=epochs, save_filename=save_filename, config=config, **kwargs
         )
+
+    @staticmethod
+    def train_model_distributed(
+        data_dir: str = "data", batch_size=128, epochs: int = 1, save_filename: str | None = "model.keras", **kwargs
+    ):
+        pass
 
 
 class ElectricityDataset(MultiHorizonTimeSeriesDataset):
@@ -107,7 +113,7 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
         self, data_dir: str, save_dir: str | None = None
     ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, Preprocessor]:
         df = read_parquet(data_dir, cutoff_days=self.cutoff_days)
-        logging.info(f"{df.columns = }")
+        log.info(f"{df.columns = }")
 
         preprocessor = ElectricityPreprocessor.from_dataframe(df)
         preprocessor.adapt(df)
@@ -376,8 +382,6 @@ class ElectricityPreprocessor(Preprocessor):
 
 
 def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_processed: bool = True):
-    import polars as pl
-
     if output_dir is None:
         output_dir = data_dir
 
@@ -434,7 +438,7 @@ def read_parquet(data_dir: str, cutoff_days: Tuple[datetime, datetime]) -> pl.Da
 
     df: pl.DataFrame = pl.concat(df_list)
     df = df.shrink_to_fit(in_place=True).rechunk()
-    logging.info(f"{df.null_count() = }")
+    log.info(f"{df.null_count() = }")
     return df
 
 

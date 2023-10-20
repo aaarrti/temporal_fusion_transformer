@@ -1,14 +1,30 @@
 from __future__ import annotations
 
+import gc
 from typing import TYPE_CHECKING, Literal
 
-from keras_core import callbacks, optimizers
-from loss_fn import QuantilePinballLoss
+from keras_core import callbacks, distribution, optimizers
 from ml_collections import ConfigDict
-from modeling import TemporalFusionTransformer
+
+from temporal_fusion_transformer.src.loss_fn import QuantilePinballLoss
+from temporal_fusion_transformer.src.metrics import make_quantile_error_metrics
+from temporal_fusion_transformer.src.modeling import TemporalFusionTransformer
 
 if TYPE_CHECKING:
     import tensorflow as tf
+    from keras_core.src.backend.jax.trainer import JAXTrainer
+
+
+class XlaGCCallback(callbacks.Callback):
+    """See https://github.com/google/jax/issues/14882."""
+
+    def __init__(self, interval=30):
+        super().__init__()
+        self.interval = interval
+
+    def on_batch_end(self, batch, logs=None):
+        if batch >= self.interval and batch % self.interval == 0:
+            gc.collect()
 
 
 def train_model(
@@ -21,15 +37,22 @@ def train_model(
     save_filename: str = "model.keras",
     verbose="auto",
 ):
-    model = TemporalFusionTransformer.from_config_dict(config)
+    model: JAXTrainer | TemporalFusionTransformer = TemporalFusionTransformer.from_config_dict(config)
 
     num_train_steps = int(dataset[0].cardinality())
+    quantiles = config.quantiles
 
     model.compile(
-        loss=QuantilePinballLoss(quantiles=config.quantiles),
+        loss=QuantilePinballLoss(quantiles),
         optimizer=make_optimizer(config.model.optimizer, num_train_steps),
         steps_per_execution=steps_per_execution,
+        metrics=make_quantile_error_metrics(quantiles),
     )
+
+    if verbose == "auto":
+        x = dataset[0].as_numpy_iterator().next()[0]
+        model(x)
+        model.summary(expand_nested=True)
 
     if training_callbacks == "auto":
         training_callbacks = default_callbacks()
@@ -55,6 +78,7 @@ def default_callbacks():
         callbacks.ModelCheckpoint(
             filepath="checkpoints", save_freq=1000, save_best_only=True, save_weights_only=True, verbose=1
         ),
+        XlaGCCallback(),
     ]
 
 
@@ -138,3 +162,22 @@ def load_dataset(
     training_ds = load_fn("training")
     validation_ds = load_fn("validation")
     return training_ds, validation_ds
+
+
+def train_model_distributed(
+    *,
+    dataset: tuple[tf.data.Dataset, tf.data.Dataset],
+    config: ConfigDict,
+    epochs: int = 1,
+    steps_per_execution: int = 1,
+    training_callbacks="auto",
+    save_filename: str = "model.keras",
+    verbose="auto",
+):
+    """
+    We support only data-parallel distributed training out of the box.
+    """
+
+    # Let Keras initialize it with defaults, since we are not doing any complicated partitioning/splitting/
+    mesh = distribution.DataParallel()
+    distribution.set_distribution(mesh)

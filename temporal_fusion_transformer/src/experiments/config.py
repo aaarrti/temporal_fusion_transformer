@@ -101,11 +101,12 @@ def get_data_config(choice: Choice) -> ConfigDict:
 def get_model_config(choice: Choice) -> ConfigDict:
     config = {
         "electricity": {
-            "num_attention_heads": 8,
-            "num_decoder_blocks": 4,
-            "latent_dim": 256,
+            "num_attention_heads": 4,
+            "num_decoder_blocks": 1,
+            "latent_dim": 160,
             "dropout_rate": 0.1,
-            "attention_dropout_rate": 0.1,
+            "attention_dropout_rate": 0.0,
+            "unroll": False,
             "optimizer": {
                 "learning_rate": 5e-4,
                 "decay_steps": 0.0,
