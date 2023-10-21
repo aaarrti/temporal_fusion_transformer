@@ -9,9 +9,10 @@ import keras_core as keras
 import numpy as np
 from keras_core import layers
 from keras_core.src.saving import serialization_lib
+from ml_collections import ConfigDict
 from tree import map_structure
 
-from temporal_fusion_transformer.src.utils import classproperty
+from temporal_fusion_transformer.src.config_dict import Config
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
@@ -20,30 +21,34 @@ if TYPE_CHECKING:
 
 
 class Experiment:
-    @classproperty
-    def dataset(self) -> Type[MultiHorizonTimeSeriesDataset]:
+    @property
+    def dataset_cls(self) -> Type[MultiHorizonTimeSeriesDataset]:
         raise NotImplementedError
 
-    @classproperty
-    def preprocessor(self) -> Type[Preprocessor]:
+    @property
+    def preprocessor_cls(self) -> Type[Preprocessor]:
         raise NotImplementedError
 
-    @staticmethod
+    @property
+    def config(self) -> Config:
+        raise NotImplementedError
+
     def train_model(
-        data_dir: str = "data", batch_size=128, epochs: int = 1, save_filename: str | None = "model.keras", **kwargs
+        self,
+        data_dir: str = "data",
+        batch_size=128,
+        epochs: int = 1,
+        save_filename: str | None = "model.keras",
+        **kwargs,
     ) -> keras.Model | None:
-        raise NotImplementedError
-
-    @staticmethod
-    def train_model_distributed(
-        data_dir: str = "data", batch_size=128, epochs: int = 1, save_filename: str | None = "model.keras", **kwargs
-    ):
         raise NotImplementedError
 
 
 class MultiHorizonTimeSeriesDataset(ABC):
     @abstractmethod
-    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True):
+    def convert_to_parquet(
+        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
+    ):
         """
         Convert data to parquet format to reduce memory requirement.
 
@@ -133,15 +138,23 @@ class Preprocessor(keras_core.Model):
         self.run_eagerly = True
 
     def __call__(self, df: pl.DataFrame, **kwargs) -> pl.DataFrame:
-        return self.apply(df)
+        if not self.built:
+            raise RuntimeError
+        return self.call(df)
 
     def adapt(self, df: pl.DataFrame):
         pass
 
-    def apply(self, df: pl.DataFrame) -> pl.DataFrame:
+    def call(self, df: pl.DataFrame, **kwargs) -> pl.DataFrame:
         return df
 
-    def transform_one(self, arr: np.ndarray, kind: Literal["real", "target", "categorical"], key: str) -> np.ndarray:
+    @staticmethod
+    def from_dataframe(df: pl.DataFrame) -> Preprocessor:
+        raise NotImplementedError
+
+    def transform_one(
+        self, arr: np.ndarray, kind: Literal["real", "target", "categorical"], key: str
+    ) -> np.ndarray:
         return np.asarray(self.state[kind][key](arr))
 
     def get_config(self):
@@ -153,10 +166,17 @@ class Preprocessor(keras_core.Model):
     @classmethod
     def from_config(cls, config, custom_objects=None):
         config["state"] = {
-            "real": {k: serialization_lib.deserialize_keras_object(v) for k, v in config["state"]["real"].items()},
-            "target": {k: serialization_lib.deserialize_keras_object(v) for k, v in config["state"]["target"].items()},
+            "real": {
+                k: serialization_lib.deserialize_keras_object(v)
+                for k, v in config["state"]["real"].items()
+            },
+            "target": {
+                k: serialization_lib.deserialize_keras_object(v)
+                for k, v in config["state"]["target"].items()
+            },
             "categorical": {
-                k: serialization_lib.deserialize_keras_object(v) for k, v in config["state"]["categorical"].items()
+                k: serialization_lib.deserialize_keras_object(v)
+                for k, v in config["state"]["categorical"].items()
             },
         }
 

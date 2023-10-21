@@ -12,6 +12,5 @@ From: nvcr.io/nvdlfwea/jax/jax:23.07-py3
 
 %runscript
     #!/bin/bash
-    /usr/bin/python -m pip install --upgrade --pre absl_extra
     /usr/bin/python -m pip install . --no-deps
     exec "$@"

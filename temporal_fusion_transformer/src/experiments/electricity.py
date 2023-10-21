@@ -4,13 +4,14 @@ import logging
 import os
 from datetime import datetime, timedelta
 from tempfile import TemporaryDirectory
-from typing import Tuple, Type
+from typing import Tuple, Type, ForwardRef
 
 import keras_core as keras
 import polars as pl
 import tensorflow as tf
 from keras.mixed_precision import global_policy
 from keras_core import layers
+from ml_collections import ConfigDict, config_dict, config_flags
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src import training
@@ -19,13 +20,12 @@ from temporal_fusion_transformer.src.experiments.base import (
     MultiHorizonTimeSeriesDataset,
     Preprocessor,
 )
-from temporal_fusion_transformer.src.experiments.config import get_config
 from temporal_fusion_transformer.src.experiments.utils import (
     count_groups,
     persist_dataset,
     time_series_dataset_from_dataframe,
 )
-from temporal_fusion_transformer.src.utils import classproperty
+from temporal_fusion_transformer.src.config_dict import Config
 
 _ID_COLUMN = "id"
 _REAL_INPUTS = ["year"]
@@ -34,43 +34,52 @@ _INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
 _TARGETS = ["power_usage"]
 log = logging.getLogger(__name__)
 
+_CONFIG = config_flags.DEFINE_config_file(
+    "electricity", default="temporal_fusion_transformer/src/experiments/config.py:electricity"
+)
+
 
 # ------ We export class based API for convenience ------------
 
 
 class Electricity(Experiment):
-    @classproperty
-    def dataset(self) -> Type[ElectricityDataset]:
+    @property
+    def dataset_cls(self) -> Type[ElectricityDataset]:
         return ElectricityDataset
 
-    @classproperty
-    def preprocessor(self) -> Type[ElectricityPreprocessor]:
-        return ElectricityPreprocessor
+    @property
+    def preprocessor_cls(self) -> Type[ElectricityPreprocessor]:
+        return ElectricityDataset
 
-    @staticmethod
+    @property
+    def config(self) -> Config:
+        return _CONFIG.value
+
     def train_model(
+        self,
         data_dir: str = "data/electricity",
         batch_size: int = 128,
         epochs: int = 1,
         save_filename: str | None = "data/electricity/model.keras",
         **kwargs,
     ) -> keras.Model | None:
-        config = get_config("electricity")
+        config = self.config
+
+        total_time_steps = config.data.total_time_steps
+
         dataset = training.load_dataset(
             data_dir=data_dir,
             batch_size=batch_size,
-            num_encoder_steps=config.data.num_encoder_steps,
+            encoder_steps=config.data.encoder_steps,
             dtype=global_policy().compute_dtype,
+            element_spec=(
+                tf.TensorSpec(shape=(total_time_steps, len(_INPUTS)), dtype=tf.float32),
+                tf.TensorSpec(shape=(total_time_steps, 1), dtype=tf.float32),
+            ),
         )
         return training.train_model(
             dataset=dataset, epochs=epochs, save_filename=save_filename, config=config, **kwargs
         )
-
-    @staticmethod
-    def train_model_distributed(
-        data_dir: str = "data", batch_size=128, epochs: int = 1, save_filename: str | None = "model.keras", **kwargs
-    ):
-        pass
 
 
 class ElectricityDataset(MultiHorizonTimeSeriesDataset):
@@ -101,12 +110,14 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
         self.validation_boundary = validation_boundary
         self.test_boundary = test_boundary
         self.cutoff_days = cutoff_days
-        config = get_config("electricity").data
+        config = Electricity().config.data
         self.total_time_steps = config.total_time_steps
         self.num_encoder_steps = config.num_encoder_steps
         self.split_overlap_days = split_overlap_days
 
-    def convert_to_parquet(self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True):
+    def convert_to_parquet(
+        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
+    ):
         return convert_to_parquet(download_dir, output_dir, delete_processed=delete_processed)
 
     def make_dataset(
@@ -133,7 +144,9 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
         validation_time_series = time_series_dataset_from_dataframe(validation_df, **kwargs)
 
         if save_dir is not None:
-            persist_dataset(training_time_series, validation_time_series, test_df, preprocessor, save_dir)
+            persist_dataset(
+                training_time_series, validation_time_series, test_df, preprocessor, save_dir
+            )
         else:
             return training_time_series, validation_time_series, test_df, preprocessor
 
@@ -183,17 +196,17 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
     #    pu = ground_truth_df["power_usage"].to_numpy()
     #
     #    quantiles = fixed_parameters.get_config("electricity").quantiles
-    #    num_encoder_steps = fixed_parameters.get_config("electricity").num_encoder_steps
+    #    encoder_steps = fixed_parameters.get_config("electricity").encoder_steps
     #
     #    predicted_df = [
     #        preprocessor.inverse_transform(
-    #            time_series_to_array(x[:, num_encoder_steps:]), time_series_to_array(y_predicted[..., i])
+    #            time_series_to_array(x[:, encoder_steps:]), time_series_to_array(y_predicted[..., i])
     #        )
     #        for i in range(len(quantiles))
     #    ]
     #
-    #    ground_truth_past_ts = ts[:num_encoder_steps]
-    #    ground_truth_past_pu = pu[:num_encoder_steps]
+    #    ground_truth_past_ts = ts[:encoder_steps]
+    #    ground_truth_past_pu = pu[:encoder_steps]
     #
     #    ground_truth_past_ts_truncated = []
     #    ground_truth_past_pu_truncated = []
@@ -205,7 +218,7 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
     #
     #    return plotting.plot_predictions(
     #        ground_truth_past=(ground_truth_past_ts_truncated, ground_truth_past_pu_truncated),
-    #        ground_truth_observed=(ts[num_encoder_steps:], pu[num_encoder_steps:]),
+    #        ground_truth_observed=(ts[encoder_steps:], pu[encoder_steps:]),
     #        predictions=[(preprocessor.restore_timestamps(i), i["power_usage"].to_numpy()) for i in predicted_df],
     #        title=f"{entity} power usage".title(),
     #        quantiles=quantiles,
@@ -250,11 +263,11 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
     #
     #    for i in range(len(_REAL_INPUTS + _CATEGORICAL_INPUTS)):
     #        past_df = preprocessor.inverse_transform(
-    #            time_series_to_array(x[:, : self.num_encoder_steps]),
+    #            time_series_to_array(x[:, : self.encoder_steps]),
     #            time_series_to_array(y.historical_flags[..., i][..., None]),
     #        )
     #        future_df = preprocessor.inverse_transform(
-    #            time_series_to_array(x[:, self.num_encoder_steps :]),
+    #            time_series_to_array(x[:, self.encoder_steps :]),
     #            time_series_to_array(y.future_flags[..., i][..., None]),
     #        )
     #        y_i = preprocessor.restore_timestamps(past_df) + preprocessor.restore_timestamps(future_df)
@@ -324,7 +337,7 @@ class ElectricityPreprocessor(Preprocessor):
                 pbar.update(1)
         self.built = True
 
-    def apply(self, df: pl.DataFrame) -> pl.DataFrame:
+    def call(self, df: pl.DataFrame, **kwargs) -> pl.DataFrame:
         lf_list = []
 
         total = (count_groups(df, "id") * 2) + len(_CATEGORICAL_INPUTS) + 1
@@ -360,7 +373,12 @@ class ElectricityPreprocessor(Preprocessor):
                 pbar.update(1)
 
             ids = self.transform_one(df["id"].to_numpy(), "categorical", "id")
-            df = df.drop("id").with_columns(id=pl.lit(ids).cast(pl.UInt16)).shrink_to_fit(in_place=True).rechunk()
+            df = (
+                df.drop("id")
+                .with_columns(id=pl.lit(ids).cast(pl.UInt16))
+                .shrink_to_fit(in_place=True)
+                .rechunk()
+            )
             pbar.update(1)
 
         df = df.shrink_to_fit(in_place=True).rechunk()
@@ -372,9 +390,11 @@ class ElectricityPreprocessor(Preprocessor):
         state = {
             "target": {i: layers.Normalization() for i in ids},
             "real": {i: layers.Normalization() for i in ids},
-            "categorical": {i: layers.IntegerLookup() for i in _CATEGORICAL_INPUTS},
+            "categorical": {
+                i: layers.IntegerLookup(num_oov_indices=0) for i in _CATEGORICAL_INPUTS
+            },
         }
-        state["categorical"]["id"] = layers.StringLookup()
+        state["categorical"]["id"] = layers.StringLookup(num_oov_indices=0)
         return ElectricityPreprocessor(state)
 
 
@@ -394,9 +414,9 @@ def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_proc
         with open(f"{tmpdir}/LD2011_2014.csv", "w+") as file:
             file.write(csv_content)
 
-        pl.scan_csv(f"{tmpdir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True).rename(
-            {"": "timestamp"}
-        ).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
+        pl.scan_csv(
+            f"{tmpdir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True
+        ).rename({"": "timestamp"}).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
 
     if delete_processed:
         os.remove(f"{data_dir}/LD2011_2014.txt")

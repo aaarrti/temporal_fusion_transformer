@@ -2,18 +2,32 @@ from __future__ import annotations
 
 import os
 
-os.environ["KERAS_BACKEND"] = "jax"
+# os.environ["KERAS_BACKEND"] = "jax"
+import json
+import logging
+import shutil
+
 import jax
 from absl import app, flags
 from keras_core import distribution, mixed_precision
-import logging
-import json
+import tensorflow as tf
+from keras_core.config import disable_traceback_filtering, enable_interactive_logging
+from keras_core.utils import set_random_seed
+from toolz import dicttoolz
+from ml_collections import ConfigDict
+
 import temporal_fusion_transformer as tft
 
 # jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_debug_infs", True)
 jax.config.update("jax_softmax_custom_jvp", True)
-jax.config.update("jax_default_dtype_bits", "32")
+# jax.config.update("jax_disable_jit", True)
+# jax.config.update("jax_include_full_tracebacks_in_locations", True)
+# jax.config.update("jax_traceback_filtering", "off")
+# disable_traceback_filtering()
+# tf.debugging.disable_traceback_filtering()
+# tf.config.run_functions_eagerly(True)
+set_random_seed(33)
 
 
 tft.setup_logging(log_level="INFO")
@@ -32,7 +46,9 @@ flags.DEFINE_enum(
     default=None,
     required=True,
 )
-flags.DEFINE_string("data_dir", default="data", help="Directory into which dataset should be downloaded.")
+flags.DEFINE_string(
+    "data_dir", default="data", help="Directory into which dataset should be downloaded."
+)
 flags.DEFINE_integer("batch_size", default=8, help="Training batch size")
 flags.DEFINE_integer("epochs", default=1, help="Number of epochs to train.")
 flags.DEFINE_boolean("mixed_precision", default=False, help="Use mixed (b)float16 for computations")
@@ -66,14 +82,14 @@ def parquet():
     experiment_name = FLAGS.experiment
     data_dir = FLAGS.data_dir
     ex = choose_experiment(experiment_name)
-    ex.dataset().convert_to_parquet(f"{data_dir}/{experiment_name}")
+    ex.dataset_cls().convert_to_parquet(f"{data_dir}/{experiment_name}")
 
 
 def dataset():
     data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
     data_dir = f"{data_dir}/{experiment_name}"
     ex = choose_experiment(experiment_name)
-    ex.dataset().make_dataset(data_dir, save_dir=data_dir)
+    ex.dataset_cls().make_dataset(data_dir, save_dir=data_dir)
 
 
 # --------------------------------------------------------
@@ -83,9 +99,18 @@ def model():
     data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
     data_dir = f"{data_dir}/{experiment_name}"
 
+    shutil.rmtree(
+        "/Users/artemsereda/Documents/IdeaProjects/temporal_fusion_transformer/data/xla_logs/",
+        ignore_errors=True,
+    )
+
     ex = choose_experiment(experiment_name)
     ex.train_model(
-        epochs=FLAGS.epochs, batch_size=FLAGS.batch_size, verbose="auto" if FLAGS.verbose else 1, data_dir=data_dir
+        epochs=FLAGS.epochs,
+        batch_size=FLAGS.batch_size,
+        verbose="auto" if FLAGS.verbose else 1,
+        data_dir=data_dir,
+        jit_compile=False,
     )
 
 
@@ -98,20 +123,37 @@ def model_distributed():
 
     ex = choose_experiment(experiment_name)
     ex.train_model(
-        epochs=FLAGS.epochs, batch_size=FLAGS.batch_size, verbose="auto" if FLAGS.verbose else 1, data_dir=data_dir
+        epochs=FLAGS.epochs,
+        batch_size=FLAGS.batch_size,
+        verbose="auto" if FLAGS.verbose else 1,
+        data_dir=data_dir,
     )
 
 
-def select_task(_):
+def main(_):
     log.info("-" * 50)
+    log.info(f"TF devices = {tf.config.get_visible_devices()}")
     log.info(f"JAX devices = {jax.devices()}")
-    log.info(f"ABSL flags: {json.dumps(flags.FLAGS.flag_values_dict(), sort_keys=True, indent=4)}")
+
+    def map_fn(v):
+        if isinstance(v, ConfigDict):
+            v = v.to_dict()
+            return dicttoolz.valmap(map_fn, v)
+        else:
+            return v
+
+    absl_flags = dicttoolz.valmap(map_fn, flags.FLAGS.flag_values_dict())
+
+    log.info(f"ABSL flags: {json.dumps(absl_flags, sort_keys=True, indent=4)}")
     log.info("-" * 50)
-    
-    return {"model": model, "parquet": parquet, "dataset": dataset, "model_distributed": model_distributed}[
-        FLAGS.task
-    ]()
+
+    return {
+        "model": model,
+        "parquet": parquet,
+        "dataset": dataset,
+        "model_distributed": model_distributed,
+    }[FLAGS.task]()
 
 
 if __name__ == "__main__":
-    app.run(select_task)
+    app.run(main)

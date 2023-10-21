@@ -28,10 +28,10 @@ requires = ["flit-core >= 3.4,<4"]
 build-backend = "flit_core.buildapi"
 
 [tool.black]
-line-length = 120
+line-length = 100
 
 [tool.isort]
 profile = "black"
 
 [tool.ruff]
-line-length = 120
+line-length = 100

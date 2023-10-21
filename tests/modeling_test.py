@@ -12,9 +12,9 @@ def test_dummy_model():
         input_known_categorical_idx=[1, 2],
         static_categories_sizes=[2],
         known_categories_sizes=[2, 2],
-        latent_dim=5,
+        hidden_layer_size=5,
         dropout_rate=0.1,
-        num_encoder_steps=20,
+        encoder_steps=20,
         total_time_steps=30,
         num_attention_heads=1,
         num_decoder_blocks=5,
@@ -22,7 +22,7 @@ def test_dummy_model():
     )
 
     x = jnp.ones(shape=[8, 30, 4], dtype=jnp.float32)
-    y = model.predict(x)
+    y = model(x)
 
     assert y.dtype == jnp.float32
     chex.assert_shape(y, (8, 10, 1, 3))

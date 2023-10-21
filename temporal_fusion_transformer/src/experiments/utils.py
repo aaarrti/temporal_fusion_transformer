@@ -56,7 +56,7 @@ def time_series_dataset_from_dataframe(
     """
 
     if preprocessor is not None:
-        df = preprocessor.apply(df)
+        df = preprocessor(df)
 
     # for some reason, keras would generate targets of shape [1, n] and inputs [time_steps, n],
     # but we need time-steps for y_batch also, we need is [time_steps, m]. We don't need `sequence_stride`,
@@ -90,7 +90,9 @@ def time_series_dataset_from_dataframe(
     def generator():
         num_errors = 0
         num_ok = 0
-        for _, df_i in tqdm(df.groupby(id_column), total=num_groups, desc="Converting to time-series dataset"):
+        for _, df_i in tqdm(
+            df.groupby(id_column), total=num_groups, desc="Converting to time-series dataset"
+        ):
             try:
                 time_series_i = make_time_series_fn(df_i)
                 num_ok += 1
@@ -152,6 +154,7 @@ def persist_dataset(
     -------
 
     """
+
     log.info("Saving (preprocessed) train split")
     training_ds.save(f"{save_dir}/training", compression=compression)
     log.info("Saving (preprocessed) validation split")

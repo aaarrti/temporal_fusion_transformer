@@ -9,6 +9,7 @@ def get_config(choice: Choice) -> ConfigDict:
     config = ConfigDict()
     config.data = get_data_config(choice)
     config.model = get_model_config(choice)
+    config.optimizer = get_optimizer_config(choice)
     config.quantiles = [0.1, 0.5, 0.9]
     return config
 
@@ -18,10 +19,9 @@ def get_data_config(choice: Choice) -> ConfigDict:
     # fmt: off
     choices = {
         "electricity": {
-            "num_encoder_steps": 168,  # 7 * 24
+            "encoder_steps": 168,  # 7 * 24
             "total_time_steps": 192,   # 8 * 24
             "num_outputs": 1,
-            "quantiles": [0.1, 0.5, 0.9],
             "known_categories_sizes": [
                 12,  # month
                 31,  # day
@@ -41,9 +41,8 @@ def get_data_config(choice: Choice) -> ConfigDict:
         },
         "favorita": {
             "total_time_steps": 120,
-            "num_encoder_steps": 90,
+            "encoder_steps": 90,
             "num_outputs": 1,
-            "quantiles": [0.1, 0.5, 0.9],
             "known_categories_sizes": [
                 12,  # month
                 31,  # day of month
@@ -91,31 +90,35 @@ def get_data_config(choice: Choice) -> ConfigDict:
                 17,   # open
             ],
         },
-        "hamburg_air_quality": {},
     }
     # fmt: on
     return ConfigDict(choices[choice])
 
 
 # Those are hyperparameters (we can tune them)
-def get_model_config(choice: Choice) -> ConfigDict:
+def get_model_config(choice: Choice):
     config = {
         "electricity": {
             "num_attention_heads": 4,
             "num_decoder_blocks": 1,
-            "latent_dim": 160,
+            "hidden_layer_size": 160,
             "dropout_rate": 0.1,
-            "attention_dropout_rate": 0.0,
             "unroll": False,
-            "optimizer": {
-                "learning_rate": 5e-4,
-                "decay_steps": 0.0,
-                "alpha": 0.8,
-                "clipnorm": 0.0,
-                "use_ema": False,
-                "weight_decay": 0.0,
-            },
         },
         "favorita": {},
     }
-    return config[choice]
+    return ConfigDict(config[choice])
+
+
+def get_optimizer_config(choice: Choice):
+    config = {
+        "electricity": {
+            "learning_rate": 5e-4,
+            "decay_steps": 0.0,
+            "alpha": 0.8,
+            "clipnorm": 0.0,
+            "use_ema": False,
+            "weight_decay": 0.0,
+        }
+    }
+    return ConfigDict(config[choice])

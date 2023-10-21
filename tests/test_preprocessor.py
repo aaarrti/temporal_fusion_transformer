@@ -63,7 +63,9 @@ def test_inverse_transform(inference_data, preprocessor_dict):
 def test_make_time_series(shape, num_time_steps):
     x = np.ones(shape)
     # Super memory greedy original implementation
-    ts1 = np.stack([x[i : len(x) - (num_time_steps - 1) + i, :] for i in range(num_time_steps)], axis=1)
+    ts1 = np.stack(
+        [x[i : len(x) - (num_time_steps - 1) + i, :] for i in range(num_time_steps)], axis=1
+    )
 
     tf_ds: tf.data.Dataset = timeseries_dataset_from_array(x, None, num_time_steps, batch_size=None)
     ts2 = np.asarray(list(tf_ds.as_numpy_iterator()))
@@ -75,7 +77,13 @@ def test_make_time_series(shape, num_time_steps):
 @pytest.mark.parametrize("shape, num_time_steps", [((100, 1), 10), ((100, 1), 3), ((337, 6), 192)])
 def test_time_series_to_array(shape, num_time_steps):
     x = np.random.uniform(size=shape)
-    ts = np.asarray(list(timeseries_dataset_from_array(x, None, num_time_steps, batch_size=None).as_numpy_iterator()))
+    ts = np.asarray(
+        list(
+            timeseries_dataset_from_array(
+                x, None, num_time_steps, batch_size=None
+            ).as_numpy_iterator()
+        )
+    )
 
     x_restored = time_series_to_array(ts)
 

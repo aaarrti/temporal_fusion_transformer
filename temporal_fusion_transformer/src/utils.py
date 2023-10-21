@@ -7,19 +7,15 @@ from typing import Callable, Iterable, Literal, Tuple, Type, TypeVar, no_type_ch
 log = logging.getLogger(__name__)
 T = TypeVar("T", bound=Type)
 R = TypeVar("R")
-
-
-class classproperty(property):
-    def __init__(self, fget=Callable[[T], R]):
-        super().__init__(fget=fget)
-
-    @no_type_check
-    def __get__(self, _, owner_cls: T) -> R:
-        return self.fget(owner_cls)
+R2 = TypeVar("R2")
 
 
 def enumerate_v2(it: Iterable[R], start: int = 0) -> Iterable[Tuple[int, R]]:
     return enumerate(it, start=start)
+
+
+def zip_v2(it1: Iterable[R], it2: Iterable[R2]) -> Iterable[Tuple[R, R2]]:
+    return zip(it1, it2)
 
 
 def setup_logging(
