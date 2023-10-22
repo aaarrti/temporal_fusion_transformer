@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from typing import Protocol, Sequence, Union
-from ml_collections import config_dict
+from typing import Any, Protocol, Sequence, Union
+
+try:
+    from ml_collections import FrozenConfigDict
+except ModuleNotFoundError:
+    FrozenConfigDict = Any
 
 
 class _DataConfig(Protocol):
@@ -77,9 +81,9 @@ class _OptimizerConfig(Protocol):
     weight_decay: float
 
 
-DataConfig = Union[_DataConfig, config_dict.FrozenConfigDict]
-ModelConfig = Union[_ModelConfig, config_dict.FrozenConfigDict]
-OptimizerConfig = Union[_OptimizerConfig, config_dict.FrozenConfigDict]
+DataConfig = Union[_DataConfig, FrozenConfigDict]
+ModelConfig = Union[_ModelConfig, FrozenConfigDict]
+OptimizerConfig = Union[_OptimizerConfig, FrozenConfigDict]
 
 
 class Config(Protocol):

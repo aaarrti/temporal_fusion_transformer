@@ -4,7 +4,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from tempfile import TemporaryDirectory
-from typing import Tuple, Type, ForwardRef
+from typing import ForwardRef, Tuple, Type
 
 import keras_core as keras
 import polars as pl
@@ -15,6 +15,7 @@ from ml_collections import ConfigDict, config_dict, config_flags
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src import training
+from temporal_fusion_transformer.src.config_dict import Config
 from temporal_fusion_transformer.src.experiments.base import (
     Experiment,
     MultiHorizonTimeSeriesDataset,
@@ -25,7 +26,6 @@ from temporal_fusion_transformer.src.experiments.utils import (
     persist_dataset,
     time_series_dataset_from_dataframe,
 )
-from temporal_fusion_transformer.src.config_dict import Config
 
 _ID_COLUMN = "id"
 _REAL_INPUTS = ["year"]
@@ -465,7 +465,7 @@ def read_parquet(data_dir: str, cutoff_days: Tuple[datetime, datetime]) -> pl.Da
 def split_data(
     df: pl.DataFrame,
     validation_boundary: datetime = datetime(2014, 8, 8),
-    test_boundary: int = datetime(2014, 9, 1),
+    test_boundary: datetime = datetime(2014, 9, 1),
     split_overlap_days: int = 7,
 ) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """

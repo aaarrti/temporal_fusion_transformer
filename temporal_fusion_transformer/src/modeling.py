@@ -4,9 +4,8 @@ import logging
 from typing import Sequence, Tuple
 
 import keras_core as keras
-from keras_core import KerasTensor, layers, ops, backend
+from keras_core import KerasTensor, layers, ops
 from keras_core.mixed_precision import global_policy
-from toolz import functoolz
 
 from temporal_fusion_transformer.src.utils import enumerate_v2, zip_v2
 
@@ -369,7 +368,7 @@ def gated_residual_network(
     *,
     hidden_layer_size: int,
     output_size: int | None = None,
-    dropout_rate: float = None,
+    dropout_rate: float | None = None,
     use_time_distributed: bool = True,
     additional_context: keras.KerasTensor | None = None,
     return_gate: bool = False,

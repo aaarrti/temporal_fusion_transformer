@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import os
 
-# os.environ["KERAS_BACKEND"] = "jax"
+os.environ["KERAS_BACKEND"] = "jax"
 import json
 import logging
 import shutil
 
 import jax
+import tensorflow as tf
 from absl import app, flags
 from keras_core import distribution, mixed_precision
-import tensorflow as tf
 from keras_core.config import disable_traceback_filtering, enable_interactive_logging
 from keras_core.utils import set_random_seed
-from toolz import dicttoolz
 from ml_collections import ConfigDict
+from toolz import dicttoolz
 
 import temporal_fusion_transformer as tft
 

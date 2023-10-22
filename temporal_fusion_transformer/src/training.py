@@ -9,10 +9,10 @@ from keras_core import callbacks, optimizers
 from ml_collections import ConfigDict
 from toolz import dicttoolz
 
+from temporal_fusion_transformer.src.config_dict import Config, OptimizerConfig
 from temporal_fusion_transformer.src.modeling import TemporalFusionTransformer
 from temporal_fusion_transformer.src.quantile_loss import QuantileLoss
 from temporal_fusion_transformer.src.quantile_metrics import make_quantile_error_metrics
-from temporal_fusion_transformer.src.config_dict import Config, OptimizerConfig
 
 if TYPE_CHECKING:
     import tensorflow as tf

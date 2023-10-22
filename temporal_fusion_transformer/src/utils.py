@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from importlib import util
-from typing import Callable, Iterable, Literal, Tuple, Type, TypeVar, no_type_check
+from typing import Iterable, Literal, Tuple, Type, TypeVar
 
 log = logging.getLogger(__name__)
 T = TypeVar("T", bound=Type)

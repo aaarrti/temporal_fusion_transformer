@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Sequence
+
 from jax import Array
 from keras_core import mixed_precision, ops
 from keras_core.src.losses import LossFunctionWrapper

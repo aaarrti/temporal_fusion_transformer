@@ -13,12 +13,28 @@ maintainers = [
 classifiers = [
     "Development Status :: 3 - Alpha",
 ]
-dependencies = []
+dependencies = [
+    "keras_core>=0.1.7",
+    "toolz",
+]
 [project.optional-dependencies]
-training = []
-datasets = []
-tests = []
-dev = []
+experiments = [
+    "tensorflow>=2.14.0",
+    "polars>=0.19.10",
+    "ml_collections",
+    "matplotlib",
+    "tqdm",
+]
+tests = [
+    "pytest",
+    "chex==0.1.84"
+]
+dev = [
+    "black",
+    "jupyter",
+    "isort",
+    "pydot"
+]
 [project.urls]
 "Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"
 
