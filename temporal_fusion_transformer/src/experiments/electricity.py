@@ -33,9 +33,9 @@ _CATEGORICAL_INPUTS = ["month", "day", "hour", "day_of_week"]
 _INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
 _TARGETS = ["power_usage"]
 log = logging.getLogger(__name__)
-
 _CONFIG = config_flags.DEFINE_config_file(
-    "electricity", default="temporal_fusion_transformer/src/experiments/config.py:electricity"
+    "electricity",
+    default=__file__.replace("electricity.py", "config.py:electricity")
 )
 
 
