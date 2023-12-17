@@ -13,7 +13,10 @@ if util.find_spec("tensorflow") is not None:
 #    from temporal_fusion_transformer.src.modeling.tft_model import TftOutputs
 #
 # from temporal_fusion_transformer.src import experiments, inference
-# from temporal_fusion_transformer.src.modeling.tft_model import TemporalFusionTransformer
+from temporal_fusion_transformer.src.modeling.modeling_v2 import (
+    TemporalFusionTransformer,
+)
+
 # from temporal_fusion_transformer.src.training import training
 # from temporal_fusion_transformer.src.training.training_hooks import (
 #    EarlyStoppingConfig,

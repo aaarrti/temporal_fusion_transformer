@@ -1,3 +1,3 @@
 import os
 
-os.environ["KERAS_BACKEND"] = "jax"
+os.environ["KERAS_BACKEND"] = "tensorflow"

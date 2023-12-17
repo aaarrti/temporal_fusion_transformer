@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import logging
-from typing import TYPE_CHECKING, Literal, Tuple
+from typing import TYPE_CHECKING, Literal
 
-import keras_core as keras
 from keras_core import callbacks, optimizers
 from ml_collections import ConfigDict
 from toolz import dicttoolz
 
-from temporal_fusion_transformer.src.config_dict import Config, OptimizerConfig
-from temporal_fusion_transformer.src.modeling import TemporalFusionTransformer
+from temporal_fusion_transformer.src.config import Config, OptimizerConfig
+from temporal_fusion_transformer.src.modeling.modeling_v2 import (
+    TemporalFusionTransformer,
+)
 from temporal_fusion_transformer.src.quantile_loss import QuantileLoss
-from temporal_fusion_transformer.src.quantile_metrics import make_quantile_error_metrics
+from temporal_fusion_transformer.src.quantile_metrics import make_quantile_rmse_metrics
 
 if TYPE_CHECKING:
     import tensorflow as tf
@@ -26,12 +28,14 @@ def train_model(
     config: Config,
     epochs: int = 1,
     training_callbacks="auto",
-    save_filename: str = "model.keras",
+    save_filename: str = "model.weights.h5",
     verbose="auto",
     **kwargs,
 ):
     model = TemporalFusionTransformer(
-        **config.model.to_dict(), **config.data.to_dict(), num_quantiles=len(config.quantiles)
+        **dataclasses.asdict(config.model),
+        **dataclasses.asdict(config.data),
+        num_quantiles=len(config.quantiles),
     )
 
     num_train_steps = int(dataset[0].cardinality())
@@ -45,8 +49,9 @@ def train_model(
     model.compile(
         loss=QuantileLoss(quantiles),
         optimizer=make_optimizer(config.optimizer, num_train_steps),
-        metrics=make_quantile_error_metrics(quantiles),
+        metrics=make_quantile_rmse_metrics(quantiles),
         **compile_kwargs,
+        # run_eagerly=True
     )
 
     x = dataset[0].as_numpy_iterator().next()[0]
@@ -134,7 +139,7 @@ def make_optimizer(config: OptimizerConfig, num_train_steps: int):
     else:
         lr = config.learning_rate
 
-    return optimizers.Lion(
+    return optimizers.Adam(
         learning_rate=lr, use_ema=config.use_ema, clipnorm=clipnorm, weight_decay=weight_decay
     )
 
@@ -146,7 +151,9 @@ def load_dataset(
     prng_seed: int = 33,
     shuffle_buffer_size: int = 1024,
     dtype="float32",
-    element_spec: Tuple[tf.TensorSpec, tf.TensorSpec] | None = None,
+    element_spec: tuple[tf.TensorSpec, tf.TensorSpec] | None = None,
+    compression: Literal["GZIP"] | None = "GZIP",
+    drop_remainder: bool = True,
 ) -> tuple[tf.data.Dataset, tf.data.Dataset]:
     """
 
@@ -161,6 +168,8 @@ def load_dataset(
     encoder_steps:
         Number of time steps to consider as past. Those steps will be discarded from y_batch.
     element_spec
+    compression
+    drop_remainder
 
     Returns
     -------
@@ -176,9 +185,9 @@ def load_dataset(
     def load_fn(split: Literal["training", "validation"]) -> tf.data.Dataset:
         return (
             tf.data.Dataset.load(
-                f"{data_dir}/{split}", compression="GZIP", element_spec=element_spec
+                f"{data_dir}/{split}", compression=compression, element_spec=element_spec
             )
-            .batch(batch_size, drop_remainder=True, num_parallel_calls=tf.data.AUTOTUNE)
+            .batch(batch_size, drop_remainder=drop_remainder, num_parallel_calls=tf.data.AUTOTUNE)
             .shuffle(shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
             .map(downcast_input)
             .map(lambda x, y: (x, y[:, encoder_steps:]))

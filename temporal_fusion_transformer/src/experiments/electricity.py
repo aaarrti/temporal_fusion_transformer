@@ -15,7 +15,7 @@ from ml_collections import ConfigDict, config_dict, config_flags
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src import training
-from temporal_fusion_transformer.src.config_dict import Config
+from temporal_fusion_transformer.src.config import Config
 from temporal_fusion_transformer.src.experiments.base import (
     Experiment,
     MultiHorizonTimeSeriesDataset,
@@ -34,8 +34,7 @@ _INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
 _TARGETS = ["power_usage"]
 log = logging.getLogger(__name__)
 _CONFIG = config_flags.DEFINE_config_file(
-    "electricity",
-    default=__file__.replace("electricity.py", "config.py:electricity")
+    "electricity", default=__file__.replace("electricity.py", "config.py:electricity")
 )
 
 
@@ -44,11 +43,11 @@ _CONFIG = config_flags.DEFINE_config_file(
 
 class Electricity(Experiment):
     @property
-    def dataset_cls(self) -> Type[ElectricityDataset]:
+    def dataset_cls(self) -> type[ElectricityDataset]:
         return ElectricityDataset
 
     @property
-    def preprocessor_cls(self) -> Type[ElectricityPreprocessor]:
+    def preprocessor_cls(self) -> type[ElectricityPreprocessor]:
         return ElectricityDataset
 
     @property
@@ -88,7 +87,7 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
         validation_boundary: datetime = datetime(2014, 8, 8),
         test_boundary: int = datetime(2014, 9, 1),
         split_overlap_days: int = 7,
-        cutoff_days: Tuple[datetime, datetime] = (datetime(2014, 1, 1), datetime(2014, 9, 8)),
+        cutoff_days: tuple[datetime, datetime] = (datetime(2014, 1, 1), datetime(2014, 9, 8)),
     ):
         """
         References
@@ -122,7 +121,7 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
 
     def make_dataset(
         self, data_dir: str, save_dir: str | None = None
-    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, Preprocessor]:
+    ) -> tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, Preprocessor]:
         df = read_parquet(data_dir, cutoff_days=self.cutoff_days)
         log.info(f"{df.columns = }")
 
@@ -405,7 +404,7 @@ def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_proc
     if output_dir is None:
         output_dir = data_dir
 
-    with open(f"{data_dir}/LD2011_2014.txt", "r") as file:
+    with open(f"{data_dir}/LD2011_2014.txt") as file:
         txt_content = file.read()
 
     csv_content = txt_content.replace(",", ".").replace(";", ",")
@@ -422,7 +421,7 @@ def convert_to_parquet(data_dir: str, output_dir: str | None = None, delete_proc
         os.remove(f"{data_dir}/LD2011_2014.txt")
 
 
-def read_parquet(data_dir: str, cutoff_days: Tuple[datetime, datetime]) -> pl.DataFrame:
+def read_parquet(data_dir: str, cutoff_days: tuple[datetime, datetime]) -> pl.DataFrame:
     lf = pl.scan_parquet(f"{data_dir}/LD2011_2014.parquet")
 
     num_cols = lf.columns[1:]
@@ -467,7 +466,7 @@ def split_data(
     validation_boundary: datetime = datetime(2014, 8, 8),
     test_boundary: datetime = datetime(2014, 9, 1),
     split_overlap_days: int = 7,
-) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """
     This dataset was recorded in interval [2011-01-01, 2015-01-01].
     """

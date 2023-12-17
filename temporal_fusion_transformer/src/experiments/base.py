@@ -12,7 +12,7 @@ from keras_core.src.saving import serialization_lib
 from ml_collections import ConfigDict
 from tree import map_structure
 
-from temporal_fusion_transformer.src.config_dict import Config
+from temporal_fusion_transformer.src.config import Config
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
@@ -22,11 +22,11 @@ if TYPE_CHECKING:
 
 class Experiment:
     @property
-    def dataset_cls(self) -> Type[MultiHorizonTimeSeriesDataset]:
+    def dataset_cls(self) -> type[MultiHorizonTimeSeriesDataset]:
         raise NotImplementedError
 
     @property
-    def preprocessor_cls(self) -> Type[Preprocessor]:
+    def preprocessor_cls(self) -> type[Preprocessor]:
         raise NotImplementedError
 
     @property
@@ -70,7 +70,7 @@ class MultiHorizonTimeSeriesDataset(ABC):
     @abstractmethod
     def make_dataset(
         self, data_dir: str, save_dir: str | None = None
-    ) -> Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, Preprocessor] | None:
+    ) -> tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, Preprocessor] | None:
         """
         This method expect data to be in parquet format.
 
@@ -124,9 +124,9 @@ if TYPE_CHECKING:
 
 
 class PreprocessorState(TypedDict):
-    real: Dict[str, layers.Normalization]
-    target: Dict[str, layers.Normalization]
-    categorical: Dict[str, layers.IntegerLookup | layers.StringLookup]
+    real: dict[str, layers.Normalization]
+    target: dict[str, layers.Normalization]
+    categorical: dict[str, layers.IntegerLookup | layers.StringLookup]
 
 
 class Preprocessor(keras_core.Model):
@@ -142,8 +142,9 @@ class Preprocessor(keras_core.Model):
             raise RuntimeError
         return self.call(df)
 
+    @abstractmethod
     def adapt(self, df: pl.DataFrame):
-        pass
+        raise NotImplementedError
 
     def call(self, df: pl.DataFrame, **kwargs) -> pl.DataFrame:
         return df

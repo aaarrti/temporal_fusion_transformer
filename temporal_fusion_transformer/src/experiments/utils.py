@@ -25,8 +25,8 @@ if TYPE_CHECKING:
 
 def time_series_dataset_from_dataframe(
     df: pl.DataFrame,
-    inputs: List[str],
-    targets: List[str],
+    inputs: list[str],
+    targets: list[str],
     total_time_steps: int,
     id_column: str,
     preprocessor: Preprocessor | None = None,
@@ -77,7 +77,7 @@ def time_series_dataset_from_dataframe(
             sequence_length=total_time_steps,
             batch_size=None,
         )
-        time_series = time_series.map(
+        time_series = time_series.map(lambda i: tf.cast(i, tf.float32)).map(
             lambda x: (x[..., :num_inputs], x[..., num_inputs:]),
             num_parallel_calls=tf.data.AUTOTUNE,
             deterministic=False,
@@ -111,7 +111,7 @@ def time_series_to_array(ts: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     ts:
-        2D time series, or 3D batched time series.
+        3D time series.
 
     Returns
     -------
@@ -154,6 +154,15 @@ def persist_dataset(
     -------
 
     """
+
+    if training_ds.cardinality() == 0:
+        raise ValueError("training_ds.cardinality() == 0")
+
+    if validation_ds.cardinality() == 0:
+        raise ValueError("validation_ds.cardinality() == 0")
+
+    if len(test_df) == 0:
+        raise ValueError("len(test_df) == 0")
 
     log.info("Saving (preprocessed) train split")
     training_ds.save(f"{save_dir}/training", compression=compression)

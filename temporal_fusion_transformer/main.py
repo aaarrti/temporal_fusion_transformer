@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 
-os.environ["KERAS_BACKEND"] = "jax"
+os.environ["KERAS_BACKEND"] = "tensorflow"
 import json
 import logging
 import shutil
+from dataclasses import asdict
 
 import jax
 import tensorflow as tf
@@ -17,17 +18,14 @@ from ml_collections import ConfigDict
 from toolz import dicttoolz
 
 import temporal_fusion_transformer as tft
+from temporal_fusion_transformer.src.config import Config
 
-# jax.config.update("jax_debug_nans", True)
-# jax.config.update("jax_debug_infs", True)
-jax.config.update("jax_softmax_custom_jvp", True)
-# jax.config.update("jax_disable_jit", True)
-# jax.config.update("jax_include_full_tracebacks_in_locations", True)
-# jax.config.update("jax_traceback_filtering", "off")
-# disable_traceback_filtering()
-# tf.debugging.disable_traceback_filtering()
 # tf.config.run_functions_eagerly(True)
+# tf.data.experimental.enable_debug_mode()
 set_random_seed(33)
+jax.config.update("jax_dynamic_shapes", True)
+jax.config.update("jax_softmax_custom_jvp", True)
+# jax.config.update("jax_log_compiles", True)
 
 
 tft.setup_logging(log_level="INFO")
@@ -41,7 +39,7 @@ flags.DEFINE_enum(
 )
 flags.DEFINE_enum(
     "experiment",
-    enum_values=["electricity", "favorita"],
+    enum_values=["electricity", "favorita", "air_passengers"],
     help="Name of the experiment_name.",
     default=None,
     required=True,
@@ -67,25 +65,27 @@ log = logging.getLogger(__name__)
 
 
 def choose_experiment(name: str) -> tft.experiments.Experiment:
-    if name == "electricity":
-        return tft.experiments.Electricity()
-    elif name == "favorita":
-        return tft.experiments.Favorita()
-    else:
+    def default():
         raise RuntimeError("this is unexpected")
+
+    return {
+        "electricty": tft.experiments.Electricity,
+        # "favorita": tft.experiments.Favorita,
+        "air_passengers": tft.experiments.AirPassengers,
+    }.get(name, default)()
 
 
 # --------------------------------------------------------
 
 
-def parquet():
+def parquet_task():
     experiment_name = FLAGS.experiment
     data_dir = FLAGS.data_dir
     ex = choose_experiment(experiment_name)
     ex.dataset_cls().convert_to_parquet(f"{data_dir}/{experiment_name}")
 
 
-def dataset():
+def dataset_task():
     data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
     data_dir = f"{data_dir}/{experiment_name}"
     ex = choose_experiment(experiment_name)
@@ -95,14 +95,13 @@ def dataset():
 # --------------------------------------------------------
 
 
-def model():
+def model_task():
     data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
     data_dir = f"{data_dir}/{experiment_name}"
 
-    shutil.rmtree(
-        "/Users/artemsereda/Documents/IdeaProjects/temporal_fusion_transformer/data/xla_logs/",
-        ignore_errors=True,
-    )
+    # shutil.rmtree(
+    #    "/Users/artemsereda/Documents/IdeaProjects/temporal_fusion_transformer/data/xla_logs/",
+    # )
 
     ex = choose_experiment(experiment_name)
     ex.train_model(
@@ -111,10 +110,11 @@ def model():
         verbose="auto" if FLAGS.verbose else 1,
         data_dir=data_dir,
         jit_compile=False,
+        save_filename=f"models/{experiment_name}/weights.h5",
     )
 
 
-def model_distributed():
+def model_distributed_task():
     data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
     data_dir = f"{data_dir}/{experiment_name}"
 
@@ -136,8 +136,11 @@ def main(_):
     log.info(f"JAX devices = {jax.devices()}")
 
     def map_fn(v):
-        if isinstance(v, ConfigDict):
-            v = v.to_dict()
+        if isinstance(v, (ConfigDict, Config)):
+            if isinstance(v, ConfigDict):
+                v = v.to_dict()
+            if isinstance(v, Config):
+                v = asdict(v)
             return dicttoolz.valmap(map_fn, v)
         else:
             return v
@@ -148,10 +151,10 @@ def main(_):
     log.info("-" * 50)
 
     return {
-        "model": model,
-        "parquet": parquet,
-        "dataset": dataset,
-        "model_distributed": model_distributed,
+        "model": model_task,
+        "parquet": parquet_task,
+        "dataset": dataset_task,
+        "model_distributed": model_distributed_task,
     }[FLAGS.task]()
 
 

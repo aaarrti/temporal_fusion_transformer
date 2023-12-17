@@ -2,16 +2,14 @@
 
 set -ex
 TARGET=$1
+mkdir -p data/"$TARGET"
+cd data/"$TARGET"
 
 if [ "$TARGET" = "electricity" ]; then
-  mkdir -p data/electricity
-  cd data/electricity
   kaggle datasets download -d sanketbodake1998/demand-energy-forecasting1
   unzip demand-energy-forecasting1.zip
   rm demand-energy-forecasting1.zip
 elif [ "$TARGET" = "favorita" ]; then
-  mkdir -p data/favorita
-  cd data/favorita
   kaggle competitions download -c favorita-grocery-sales-forecasting
   unzip favorita-grocery-sales-forecasting.zip
   rm favorita-grocery-sales-forecasting.zip
@@ -22,6 +20,11 @@ elif [ "$TARGET" = "favorita" ]; then
   done
   rm sample_submission.7z.csv
   rm test.7z.csv
+elif [ "$TARGET" = "air_passengers" ]; then
+  wget https://raw.githubusercontent.com/unit8co/darts/master/datasets/AirPassengers.csv
+elif [ "$TARGET" = "ice_cream_heater" ]; then
+  wget https://raw.githubusercontent.com/unit8co/darts/master/datasets/ice_cream_heater.csv
+
 fi
 
 
