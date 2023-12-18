@@ -2,10 +2,20 @@ import chex
 import jax.numpy as jnp
 import jax.random
 
-from temporal_fusion_transformer.src.quantile_loss import quantile_loss
+from temporal_fusion_transformer.src.quantile_loss import pinball_loss, quantile_loss
 
 PRNG_KEY = jax.random.PRNGKey(0)
 quantiles = jnp.asarray([0.1, 0.5, 0.9], jnp.float32)
+
+
+def test_pinball_loss():
+    y_true = jax.random.uniform(PRNG_KEY, (8, 24, 1))
+    y_pred = jax.random.uniform(PRNG_KEY, (8, 24, 1))
+    loss = pinball_loss(y_true, y_pred, quantiles)
+
+    chex.assert_rank(loss, 1)
+    chex.assert_shape(loss, (8,))
+    chex.assert_tree_all_finite(loss)
 
 
 def test_quantile_loss():

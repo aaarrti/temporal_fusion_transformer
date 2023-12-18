@@ -5,68 +5,60 @@ import inspect
 import logging
 from typing import TYPE_CHECKING, Literal
 
-from keras_core import callbacks, optimizers
+import numpy as np
+import tensorflow as tf
+from keras import callbacks, optimizers
 from ml_collections import ConfigDict
 from toolz import dicttoolz
 
-from temporal_fusion_transformer.src.config import Config, OptimizerConfig
-from temporal_fusion_transformer.src.modeling.modeling_v2 import (
-    TemporalFusionTransformer,
-)
-from temporal_fusion_transformer.src.quantile_loss import QuantileLoss
-from temporal_fusion_transformer.src.quantile_metrics import make_quantile_rmse_metrics
-
-if TYPE_CHECKING:
-    import tensorflow as tf
+from temporal_fusion_transformer.src.config import Config
+from temporal_fusion_transformer.src.modeling.tft_model import TemporalFusionTransformer
+from temporal_fusion_transformer.src.quantile_loss import PinballLoss, QuantileLoss
+from temporal_fusion_transformer.src.utils import count_inputs
 
 log = logging.getLogger(__name__)
 
 
-def train_model(
+class TerminateOnNan(callbacks.TerminateOnNaN):
+    def __init__(self):
+        super().__init__()
+        self.weights = None
+
+    def on_batch_end(self, batch, logs=None):
+        super().on_batch_end(batch, logs)
+        if self.model.stop_traininga and self.weights is not None:
+            log.warning("Restoring weight from previous epoch.")
+            self.model.weights = self.weights
+
+    def on_epoch_end(self, epoch, logs=None):
+        self.weights = self.model.weights
+
+
+def train_model_from_config(
     *,
     dataset: tuple[tf.data.Dataset, tf.data.Dataset],
     config: Config,
-    epochs: int = 1,
     training_callbacks="auto",
-    save_filename: str = "model.weights.h5",
     verbose="auto",
-    **kwargs,
 ):
-    model = TemporalFusionTransformer(
-        **dataclasses.asdict(config.model),
-        **dataclasses.asdict(config.data),
-        num_quantiles=len(config.quantiles),
-    )
+    model = TemporalFusionTransformer.from_dataclass_config(config)
 
     num_train_steps = int(dataset[0].cardinality())
     quantiles = config.quantiles
 
-    allowed_compile_kwargs = inspect.signature(model.compile).parameters
-    allowed_fit_kwargs = inspect.signature(model.fit).parameters
-    compile_kwargs = dicttoolz.keyfilter(lambda k: k in allowed_compile_kwargs, kwargs)
-    fit_kwargs = dicttoolz.keyfilter(lambda k: k in allowed_fit_kwargs, kwargs)
-
     model.compile(
         loss=QuantileLoss(quantiles),
-        optimizer=make_optimizer(config.optimizer, num_train_steps),
-        metrics=make_quantile_rmse_metrics(quantiles),
-        **compile_kwargs,
-        # run_eagerly=True
+        # loss={
+        #    f"q_{i+1}": PinballLoss(tau=q)
+        #    for i, q in enumerate(quantiles)
+        # },
+        optimizer=make_optimizer(config, num_train_steps),
+        # metrics=make_quantile_rmse_metrics(quantiles, config.num_outputs, metric_names=[]),
+        jit_compile=False,
     )
 
     x = dataset[0].as_numpy_iterator().next()[0]
-    verify_declared_number_of_features_matches(config.data, x)
-    # if verbose == "auto":
-    #   model(x)
-    #   keras.utils.plot_model(
-    #       model,
-    #       show_layer_names=True,
-    #       expand_nested=True,
-    #       show_layer_activations=True,
-    #       show_shapes=True,
-    #       # show_dtype=True,
-    #   )
-    #   model.summary(expand_nested=True)
+    verify_declared_number_of_features_matches(config, x)
 
     if training_callbacks == "auto":
         training_callbacks = default_callbacks()
@@ -74,17 +66,11 @@ def train_model(
     model.fit(
         dataset[0],
         validation_data=dataset[1],
-        epochs=epochs,
+        epochs=config.epochs,
         callbacks=training_callbacks,
-        verbose=verbose,
-        **fit_kwargs,
+        verbose=1,
     )
-
-    if save_filename is not None:
-        model.save_weights(save_filename)
-        return None
-    else:
-        return model
+    return model
 
 
 def default_callbacks():
@@ -108,7 +94,7 @@ def default_callbacks():
     ]
 
 
-def make_optimizer(config: OptimizerConfig, num_train_steps: int):
+def make_optimizer(config: Config, num_train_steps: int):
     """
 
     config must contain following fields:
@@ -134,13 +120,17 @@ def make_optimizer(config: OptimizerConfig, num_train_steps: int):
         lr = optimizers.schedules.CosineDecay(
             initial_learning_rate=config.learning_rate,
             decay_steps=int(config.decay_steps * num_train_steps),
-            alpha=config.alpha,
+            alpha=config.decay_alpha,
         )
     else:
         lr = config.learning_rate
 
     return optimizers.Adam(
-        learning_rate=lr, use_ema=config.use_ema, clipnorm=clipnorm, weight_decay=weight_decay
+        learning_rate=lr,
+        use_ema=config.use_ema,
+        clipnorm=clipnorm,
+        weight_decay=weight_decay,
+        # jit_compile=True
     )
 
 
@@ -148,7 +138,6 @@ def load_dataset(
     data_dir: str,
     batch_size: int,
     encoder_steps: int,
-    prng_seed: int = 33,
     shuffle_buffer_size: int = 1024,
     dtype="float32",
     element_spec: tuple[tf.TensorSpec, tf.TensorSpec] | None = None,
@@ -163,7 +152,6 @@ def load_dataset(
     batch_size
     shuffle_buffer_size:
         If set to None, will do a full-reshuffle.
-    prng_seed
     dtype
     encoder_steps:
         Number of time steps to consider as past. Those steps will be discarded from y_batch.
@@ -175,7 +163,6 @@ def load_dataset(
     -------
 
     """
-    import tensorflow as tf
 
     tf_dtype = tf.dtypes.as_dtype(dtype)
 
@@ -183,12 +170,14 @@ def load_dataset(
         return tf.cast(x, tf_dtype), tf.cast(y, tf_dtype)
 
     def load_fn(split: Literal["training", "validation"]) -> tf.data.Dataset:
+        load_kwargs = {}
+        if compression is not None:
+            load_kwargs["compression"] = compression
+
         return (
-            tf.data.Dataset.load(
-                f"{data_dir}/{split}", compression=compression, element_spec=element_spec
-            )
+            tf.data.Dataset.load(f"{data_dir}/{split}", element_spec=element_spec, **load_kwargs)
             .batch(batch_size, drop_remainder=drop_remainder, num_parallel_calls=tf.data.AUTOTUNE)
-            .shuffle(shuffle_buffer_size, seed=prng_seed, reshuffle_each_iteration=True)
+            .shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
             .map(downcast_input)
             .map(lambda x, y: (x, y[:, encoder_steps:]))
             .cache()
@@ -200,13 +189,33 @@ def load_dataset(
     return training_ds, validation_ds
 
 
-def verify_declared_number_of_features_matches(config: ConfigDict, x_batch):
-    declared_num_features = (
-        len(config.input_static_idx)
-        + len(config.input_known_real_idx)
-        + len(config.input_known_categorical_idx)
-        + len(config.input_observed_idx)
+def load_dataset_from_config(
+    data_dir: str, config: Config
+) -> tuple[tf.data.Dataset, tf.data.Dataset]:
+    num_inputs = count_inputs(config)
+
+    return load_dataset(
+        data_dir=data_dir,
+        batch_size=config.batch_size,
+        shuffle_buffer_size=config.shuffle_buffer_size,
+        drop_remainder=config.drop_remainder,
+        compression=config.compression,
+        encoder_steps=config.encoder_steps,
+        element_spec=(
+            tf.TensorSpec(
+                shape=(config.total_time_steps, num_inputs), dtype=tf.float32, name="inputs"
+            ),
+            tf.TensorSpec(
+                shape=(config.total_time_steps, config.num_outputs),
+                dtype=tf.float32,
+                name="outputs",
+            ),
+        ),
     )
+
+
+def verify_declared_number_of_features_matches(config: ConfigDict, x_batch: np.ndarray):
+    declared_num_features = count_inputs(config)
     num_features = x_batch.shape[-1]
 
     if num_features != declared_num_features:

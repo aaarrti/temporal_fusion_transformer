@@ -5,12 +5,15 @@ import inspect
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Sequence
+from datetime import datetime
 from importlib import util
 from types import FunctionType, MethodType
 from typing import Any, Literal, TypeVar
 
+import tomli
 import toolz
-from keras_core import backend
+
+from temporal_fusion_transformer.src.config import Config
 
 log = logging.getLogger(__name__)
 T = TypeVar("T", bound=type)
@@ -27,26 +30,17 @@ def zip_v2(it1: Iterable[R], it2: Iterable[R2]) -> Iterable[tuple[R, R2]]:
     return zip(it1, it2)
 
 
-def setup_logging(
-    *,
-    log_format: str = "%(asctime)s:[%(filename)s:%(lineno)s->%(funcName)s()]:%(levelname)s: %(message)s",
-    log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "DEBUG",
-):
-    import logging
+def dict_map(d: dict[str, R], map_fn: Callable[[R], R2]) -> dict[str, R2]:
+    new_dict = {}
 
-    import absl.logging
+    for k, v in d.items():
+        if isinstance(v, dict):
+            v = dict_map(v, map_fn)
+        else:
+            v = map_fn(v)
+        new_dict[k] = v
 
-    logging.basicConfig(
-        level=logging.getLevelName(log_level),
-        format=log_format,
-    )
-
-    absl.logging.set_verbosity(absl.logging.converter.ABSL_NAMES[log_level])
-
-    if util.find_spec("tensorflow"):
-        import tensorflow as tf
-
-        tf.get_logger().setLevel(log_level)
+    return new_dict
 
 
 @toolz.curry
@@ -111,3 +105,16 @@ def format_callable_args(
             filtered_args[k] = v
 
     return ", ".join(map("{0[0]} = {0[1]!r}".format, filtered_args.items()))
+
+
+def make_timestamp_tag() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M")
+
+
+def count_inputs(config: Config) -> int:
+    return (
+        len(config.input_observed_idx)
+        + len(config.input_static_idx)
+        + len(config.input_known_real_idx)
+        + len(config.input_known_categorical_idx)
+    )

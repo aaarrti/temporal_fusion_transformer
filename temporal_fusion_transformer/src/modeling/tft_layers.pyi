@@ -2,67 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import TypedDict
-import keras_core as keras
-from keras_core import layers
+from keras import layers
 import tensorflow as tf
-
-class TemporalFusionTransformer(keras.Model):
-    def __init__(
-        self,
-        *,
-        input_observed_idx: Sequence[int],
-        input_static_idx: Sequence[int],
-        input_known_real_idx: Sequence[int],
-        input_known_categorical_idx: Sequence[int],
-        static_categories_sizes: Sequence[int],
-        known_categories_sizes: Sequence[int],
-        hidden_layer_size: int,
-        dropout_rate: float,
-        encoder_steps: int,
-        total_time_steps: int,
-        num_attention_heads: int,
-        num_decoder_blocks: int,
-        num_quantiles: int,
-        num_outputs: int = 1,
-        return_attention: bool = False,
-        unroll: bool = False,
-        **kwargs,
-    ):
-        """
-        References
-        ----------
-
-        Bryan Lim, et.al., Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting
-        https://arxiv.org/pdf/1912.09363.pdf, https://github.com/google-research/google-research/tree/master/tft
-
-        Parameters
-        ----------
-        input_observed_idx
-        input_static_idx
-        input_known_real_idx
-        input_known_categorical_idx
-        static_categories_sizes
-        known_categories_sizes
-        hidden_layer_size
-        dropout_rate
-        encoder_steps
-        total_time_steps
-        num_attention_heads
-        num_decoder_blocks
-        num_quantiles
-        num_outputs
-        return_attention
-        unroll
-        kwargs
-
-        Returns
-        -------
-
-        """
-        ...
-    def __call__(self, x: tf.Tensor, **kwargs) -> tf.Tensor: ...
-
-# -------------------------------------------------------------------------------------------------------------
 
 class InputEmbedding(layers.Layer):
     def __init__(
@@ -80,7 +21,14 @@ class InputEmbedding(layers.Layer):
 
 class TransformerBlock(layers.Layer):
     def __init__(
-        self, num_attention_heads: int, hidden_layer_size: int, dropout_rate: float, **kwargs
+        self,
+        num_attention_heads: int,
+        hidden_layer_size: int,
+        dropout_rate: float,
+        kernel_regularizer=None,
+        bias_regularizer=None,
+        activity_regularizer=None,
+        **kwargs,
     ): ...
     def __call__(self, inputs: tf.Tensor) -> tf.Tensor: ...
 
@@ -101,6 +49,9 @@ class Linear(layers.Layer):
         activation: str | None = None,
         use_time_distributed: bool = False,
         use_bias: bool = True,
+        kernel_regularizer=None,
+        bias_regularizer=None,
+        activity_regularizer=None,
         **kwargs,
     ): ...
     def __call__(self, inputs: tf.Tensor) -> tf.Tensor: ...
@@ -126,6 +77,9 @@ class GatedLinearUnit(layers.Layer):
         dropout_rate: float | None = None,
         use_time_distributed: bool = True,
         activation: str | None = None,
+        kernel_regularizer=None,
+        bias_regularizer=None,
+        activity_regularizer=None,
         **kwargs,
     ): ...
     def __call__(self, x: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]: ...
@@ -166,6 +120,9 @@ class GatedResidualNetwork(layers.Layer):
         output_size: int | None = None,
         dropout_rate: float | None = None,
         use_time_distributed: bool = True,
+        kernel_regularizer=None,
+        bias_regularizer=None,
+        activity_regularizer=None,
         **kwargs,
     ): ...
     def __call__(self, x: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]: ...
@@ -197,7 +154,16 @@ class StaticVariableSelectionNetwork(layers.Layer):
       Tensor output for variable selection network
     """
 
-    def __init__(self, num_static: int, hidden_layer_size: int, dropout_rate: float, **kwargs): ...
+    def __init__(
+        self,
+        num_static: int,
+        hidden_layer_size: int,
+        dropout_rate: float,
+        kernel_regularizer=None,
+        bias_regularizer=None,
+        activity_regularizer=None,
+        **kwargs,
+    ): ...
     def __call__(self, x: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]: ...
 
 class VariableSelectionNetwork(layers.Layer):
@@ -214,5 +180,14 @@ class VariableSelectionNetwork(layers.Layer):
       Processed tensor outputs.
     """
 
-    def __init__(self, dropout_rate: float, hidden_layer_size: int, num_inputs: int, **kwargs): ...
+    def __init__(
+        self,
+        dropout_rate: float,
+        hidden_layer_size: int,
+        num_inputs: int,
+        kernel_regularizer=None,
+        bias_regularizer=None,
+        activity_regularizer=None,
+        **kwargs,
+    ): ...
     def __call__(self, x: ContextInput) -> tuple[tf.Tensor, tf.Tensor, tf.Tensor]: ...

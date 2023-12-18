@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, List, Literal
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-from keras_core.utils import timeseries_dataset_from_array
+from keras.utils import timeseries_dataset_from_array
 from toolz import functoolz
 
 log = logging.getLogger(__name__)
@@ -20,8 +21,6 @@ except ModuleNotFoundError as ex:
 if TYPE_CHECKING:
     import polars as pl
 
-    from temporal_fusion_transformer.src.experiments.base import Preprocessor
-
 
 def time_series_dataset_from_dataframe(
     df: pl.DataFrame,
@@ -29,7 +28,7 @@ def time_series_dataset_from_dataframe(
     targets: list[str],
     total_time_steps: int,
     id_column: str,
-    preprocessor: Preprocessor | None = None,
+    preprocessor: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
 ) -> tf.data.Dataset:
     """
 
@@ -102,7 +101,31 @@ def time_series_dataset_from_dataframe(
                 num_errors += 1
         log.info(f"{num_errors = }, {num_ok = }")
 
-    return functoolz.reduce(lambda a, b: a.concatenate(b), generator())
+    def concat_datasets(a: tf.data.Dataset, b: tf.data.Dataset) -> tf.data.Dataset:
+        return a.concatenate(b).cache()
+
+    return functoolz.reduce(concat_datasets, generator())
+
+
+def dataframe_from_time_series_dataset(
+    ds: tf.data.Dataset,
+    inputs_mappings: dict[str, int],
+    targets_mappings: dict[str, int],
+    inverse_preprocess: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
+) -> pl.DataFrame:
+    x = np.asarray([i for i, _ in ds.as_numpy_iterator()])
+    y = np.asarray([j for _, j in ds.as_numpy_iterator()])
+
+    x_flat = time_series_to_array(x)
+    y_flat = time_series_to_array(y)
+
+    inputs = {k: x_flat[..., v] for k, v in inputs_mappings.items()}
+    targets = {k: y_flat[..., v] for k, v in targets_mappings.items()}
+    df = pl.DataFrame({**inputs, **targets})
+    if inverse_preprocess is not None:
+        df = inverse_preprocess(df)
+
+    return df
 
 
 def time_series_to_array(ts: np.ndarray) -> np.ndarray:
@@ -121,7 +144,7 @@ def time_series_to_array(ts: np.ndarray) -> np.ndarray:
 
     """
     if np.ndim(ts) != 3:
-        raise ValueError("ts must be a 2D or 3d array")
+        raise ValueError("ts must be 3d array")
 
     first_ts = ts[0, :-1]
     rest = [i[-1] for i in ts]
@@ -132,7 +155,6 @@ def persist_dataset(
     training_ds: tf.data.Dataset,
     validation_ds: tf.data.Dataset,
     test_df: pl.DataFrame,
-    preprocessor: Preprocessor,
     save_dir: str,
     compression: Literal["GZIP"] | None = "GZIP",
     test_split_save_format: Literal["csv", "parquet"] = "parquet",
@@ -144,7 +166,6 @@ def persist_dataset(
     training_ds
     validation_ds
     test_df
-    preprocessor
     save_dir
     compression
     test_split_save_format:
@@ -168,15 +189,26 @@ def persist_dataset(
     training_ds.save(f"{save_dir}/training", compression=compression)
     log.info("Saving (preprocessed) validation split")
     validation_ds.save(f"{save_dir}/validation", compression=compression)
-    log.info("Saving (not preprocessed) test split (as parquet)")
+    log.info(f"Saving (not preprocessed) test split (as {test_split_save_format})")
     if test_split_save_format == "parquet":
         test_df.write_parquet(f"{save_dir}/test.parquet")
     if test_split_save_format == "csv":
         test_df.write_csv(f"{save_dir}/test.csv")
 
-    log.info("Saving preprocessor state")
-    preprocessor.save(f"{save_dir}/preprocessor.keras")
-
 
 def count_groups(df: pl.DataFrame, id_column: str) -> int:
     return len(df[id_column].unique_counts())
+
+
+def report_columns_mismatch(df: pl.DataFrame, expected_columns: list[str]):
+    expected_columns = set(expected_columns)
+    found_columns = set(df.columns)
+
+    unexpected_cols = found_columns.difference(expected_columns)
+    missing_cols = expected_columns.difference(found_columns)
+
+    if len(unexpected_cols) > 0:
+        log.error(f"Found unexpected columns: {tuple(unexpected_cols)}")
+
+    if len(missing_cols) > 0:
+        log.error(f"Missing expected columns: {tuple(missing_cols)}")

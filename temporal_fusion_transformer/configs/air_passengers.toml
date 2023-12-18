@@ -1,0 +1,45 @@
+total_time_steps = 12
+encoder_steps = 3
+num_outputs = 1
+static_categories_sizes = [
+    1 # id
+]
+known_categories_sizes = [
+    12  # month
+]
+input_static_idx = [
+    0   # id
+]
+input_known_categorical_idx = [
+    1   # month
+]
+input_known_real_idx = [
+    2  # year
+]
+input_observed_idx = []
+num_attention_heads = 4
+num_decoder_blocks = 1
+hidden_layer_size = 32
+dropout_rate = 0.1
+unroll = true
+quantiles = [0.1, 0.5, 0.9]
+batch_size = 8
+epochs = 30
+learning_rate = 1e-3
+decay_steps = 0.0
+decay_alpha = 0.0
+clipnorm = 0.0
+use_ema = false
+weight_decay = 0.0
+compression = 'None'
+drop_remainder = false
+shuffle_buffer_size = 1024
+test_split_save_format = 'csv'
+validation_boundary = 1958
+test_boundary = 1960
+# 3 months
+split_overlap = 3
+kernel_regularizer = "l1"
+bias_regularizer = "l1"
+activity_regularizer = "l1"
+recurrent_regularizer = "l1"

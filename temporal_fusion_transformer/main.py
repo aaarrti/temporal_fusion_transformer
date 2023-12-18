@@ -1,162 +1,100 @@
 from __future__ import annotations
 
-import os
+import logging.config
+
+logging.basicConfig(
+    format="%(asctime)s:%(name)s:[%(filename)s:%(lineno)s->%(funcName)s()]:%(levelname)s: %(message)s",
+    level=logging.DEBUG,
+)
+import os  # noqa: E402
 
 os.environ["KERAS_BACKEND"] = "tensorflow"
-import json
-import logging
-import shutil
-from dataclasses import asdict
+from keras.utils import set_random_seed  # noqa: E402
 
-import jax
-import tensorflow as tf
-from absl import app, flags
-from keras_core import distribution, mixed_precision
-from keras_core.config import disable_traceback_filtering, enable_interactive_logging
-from keras_core.utils import set_random_seed
-from ml_collections import ConfigDict
-from toolz import dicttoolz
+set_random_seed(33)
+import argparse  # noqa: E402
+import logging  # noqa: E402
+import keras  # noqa: E402
+import tensorflow as tf  # noqa: E402
+from keras import mixed_precision  # noqa
+import temporal_fusion_transformer as tft  # noqa: E402
+from temporal_fusion_transformer.src.datasets.utils import persist_dataset  # noqa: E402
 
-import temporal_fusion_transformer as tft
-from temporal_fusion_transformer.src.config import Config
-
+# tf.debugging.enable_check_numerics()
+# tf.debugging.experimental.enable_dump_debug_info("logs/", "FULL_HEALTH", op_regex='Rsqrt')
 # tf.config.run_functions_eagerly(True)
 # tf.data.experimental.enable_debug_mode()
-set_random_seed(33)
-jax.config.update("jax_dynamic_shapes", True)
-jax.config.update("jax_softmax_custom_jvp", True)
-# jax.config.update("jax_log_compiles", True)
-
-
-tft.setup_logging(log_level="INFO")
-FLAGS = flags.FLAGS
-flags.DEFINE_enum(
-    "task",
-    enum_values=["parquet", "dataset", "model", "model_distributed", "hyperparams", "inference"],
-    help="Task to run.",
-    default=None,
-    required=True,
-)
-flags.DEFINE_enum(
-    "experiment",
-    enum_values=["electricity", "favorita", "air_passengers"],
-    help="Name of the experiment_name.",
-    default=None,
-    required=True,
-)
-flags.DEFINE_string(
-    "data_dir", default="data", help="Directory into which dataset should be downloaded."
-)
-flags.DEFINE_integer("batch_size", default=8, help="Training batch size")
-flags.DEFINE_integer("epochs", default=1, help="Number of epochs to train.")
-flags.DEFINE_boolean("mixed_precision", default=False, help="Use mixed (b)float16 for computations")
-flags.DEFINE_boolean("verbose", default=True, help="Verbose mode for training")
-flags.DEFINE_integer("prng_seed", default=69, help="PRNG seed")
-
-# For TPU
-# mixed_precision.set_global_policy("mixed_bfloat16")
-# jax.config.update("jax_default_matmul_precision", "bfloat16")
-# For GPU
-# mixed_precision.set_global_policy("mixed_float16")
-# jax.config.update("jax_default_matmul_precision", "tensorfloat32")
-
+# tf.debugging.set_log_device_placement(True)
 
 log = logging.getLogger(__name__)
+# mixed_precision.set_global_policy("mixed_float16")
 
 
-def choose_experiment(name: str) -> tft.experiments.Experiment:
-    def default():
-        raise RuntimeError("this is unexpected")
+def train_model_task(data_dir: str, experiment: str, config: tft.Config):
+    dataset = tft.load_dataset_from_config(data_dir, config)
 
-    return {
-        "electricty": tft.experiments.Electricity,
-        # "favorita": tft.experiments.Favorita,
-        "air_passengers": tft.experiments.AirPassengers,
-    }.get(name, default)()
-
-
-# --------------------------------------------------------
-
-
-def parquet_task():
-    experiment_name = FLAGS.experiment
-    data_dir = FLAGS.data_dir
-    ex = choose_experiment(experiment_name)
-    ex.dataset_cls().convert_to_parquet(f"{data_dir}/{experiment_name}")
-
-
-def dataset_task():
-    data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
-    data_dir = f"{data_dir}/{experiment_name}"
-    ex = choose_experiment(experiment_name)
-    ex.dataset_cls().make_dataset(data_dir, save_dir=data_dir)
-
-
-# --------------------------------------------------------
-
-
-def model_task():
-    data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
-    data_dir = f"{data_dir}/{experiment_name}"
-
-    # shutil.rmtree(
-    #    "/Users/artemsereda/Documents/IdeaProjects/temporal_fusion_transformer/data/xla_logs/",
-    # )
-
-    ex = choose_experiment(experiment_name)
-    ex.train_model(
-        epochs=FLAGS.epochs,
-        batch_size=FLAGS.batch_size,
-        verbose="auto" if FLAGS.verbose else 1,
-        data_dir=data_dir,
-        jit_compile=False,
-        save_filename=f"models/{experiment_name}/weights.h5",
+    model = tft.train_model_from_config(
+        dataset=dataset,
+        config=config,
+        training_callbacks=[
+            keras.callbacks.TerminateOnNaN(),
+            # keras.callbacks.TensorBoard(write_graph=False),
+            keras.callbacks.EarlyStopping(
+                monitor="val_loss",
+                patience=5,
+                restore_best_weights=True,
+                verbose=1,
+                start_from_epoch=10,
+            ),
+        ],
     )
+    model.save_weights(f"data/{experiment}/model.weights.h5")
 
 
-def model_distributed_task():
-    data_dir, experiment_name = FLAGS.data_dir, FLAGS.experiment
-    data_dir = f"{data_dir}/{experiment_name}"
+def create_dataset_task(data_dir: str, experiment: str, config: tft.Config):
+    dataset: tft.MultiHorizonTimeSeriesDataset = {
+        "electricity": tft.datasets.ElectricityDataset,
+        "favorita": tft.datasets.FavoritaDataset,
+        "air_passengers": tft.datasets.AirPassengersDataset,
+    }[experiment](config)
 
-    mesh = distribution.DataParallel()
-    distribution.set_distribution(mesh)
+    dataset.convert_to_parquet(data_dir)
 
-    ex = choose_experiment(experiment_name)
-    ex.train_model(
-        epochs=FLAGS.epochs,
-        batch_size=FLAGS.batch_size,
-        verbose="auto" if FLAGS.verbose else 1,
-        data_dir=data_dir,
+    train_ds, val_ds, test_df, preprocessor = dataset.make_dataset(data_dir)
+    persist_dataset(
+        train_ds,
+        val_ds,
+        test_df,
+        test_split_save_format=config.test_split_save_format,
+        compression=config.compression,
+        save_dir=data_dir,
     )
-
-
-def main(_):
-    log.info("-" * 50)
-    log.info(f"TF devices = {tf.config.get_visible_devices()}")
-    log.info(f"JAX devices = {jax.devices()}")
-
-    def map_fn(v):
-        if isinstance(v, (ConfigDict, Config)):
-            if isinstance(v, ConfigDict):
-                v = v.to_dict()
-            if isinstance(v, Config):
-                v = asdict(v)
-            return dicttoolz.valmap(map_fn, v)
-        else:
-            return v
-
-    absl_flags = dicttoolz.valmap(map_fn, flags.FLAGS.flag_values_dict())
-
-    log.info(f"ABSL flags: {json.dumps(absl_flags, sort_keys=True, indent=4)}")
-    log.info("-" * 50)
-
-    return {
-        "model": model_task,
-        "parquet": parquet_task,
-        "dataset": dataset_task,
-        "model_distributed": model_distributed_task,
-    }[FLAGS.task]()
+    preprocessor.save(data_dir)
 
 
 if __name__ == "__main__":
-    app.run(main)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("task", choices=["dataset", "model", "hyperparams"])
+    parser.add_argument("dataset", choices=["electricity", "favorita", "air_passengers"])
+
+    parser.add_argument("--data-dir", default="data")
+    # parser.add_argument(
+    #    "--mixed-precision", type=bool, default=False, action=argparse.BooleanOptionalAction
+    # )
+
+    args = parser.parse_args()
+
+    log.info(f"TF devices = {tf.config.get_visible_devices()}")
+    kwargs = {
+        "data_dir": f"{args.data_dir}/{args.dataset}",
+        "experiment": args.dataset,
+        "config": tft.Config.read_from_file(
+            f"temporal_fusion_transformer/configs/{args.dataset}.toml"
+        ),
+    }
+
+    match args.task:
+        case "dataset":
+            create_dataset_task(**kwargs)
+        case "model":
+            train_model_task(**kwargs)

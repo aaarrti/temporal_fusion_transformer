@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from jax import Array
-from keras_core import mixed_precision, ops
-from keras_core.src.losses import LossFunctionWrapper
+from keras import mixed_precision, ops
+from keras.src.losses import LossFunctionWrapper
 
 newaxis = None
 
@@ -15,7 +15,24 @@ class QuantileLoss(LossFunctionWrapper):
         super().__init__(**kwargs, fn=quantile_loss, tau=quantiles)
 
 
-def quantile_loss(y_true: Array, y_pred: Array, tau: float) -> Array:
+class PinballLoss(LossFunctionWrapper):
+    def __init__(self, tau: float, **kwargs):
+        super().__init__(**kwargs, fn=pinball_loss, tau=tau)
+
+
+def pinball_loss(y_true: Array, y_pred: Array, tau: float) -> Array:
+    tau = ops.cast(tau, y_pred.dtype)
+    y_true = ops.cast(y_true, y_pred.dtype)
+
+    prediction_underflow = y_true - y_pred
+    q_loss = tau * ops.maximum(prediction_underflow, 0.0) + (1.0 - tau) * ops.maximum(
+        -prediction_underflow, 0.0
+    )
+
+    return ops.sum(q_loss, axis=(-1, -2))
+
+
+def quantile_loss(y_true: Array, y_pred: Array, tau: Array) -> Array:
     """
 
     Computes the pinball loss between `y_true` and `y_pred`.
@@ -42,17 +59,12 @@ def quantile_loss(y_true: Array, y_pred: Array, tau: float) -> Array:
         Loss value.
     """
 
-    y_true = ops.repeat(ops.cast(y_true, y_pred.dtype)[..., newaxis], ops.shape(tau)[0], axis=-1)
-    tau = ops.broadcast_to(tau, y_pred.shape)
+    tau = ops.cast(tau, y_pred.dtype)
+    y_true = ops.cast(y_true, y_pred.dtype)
 
-    prediction_underflow = y_true - y_pred
+    prediction_underflow = ops.expand_dims(y_true, axis=2) - y_pred
 
-    over_estimation_error = tau * ops.maximum(prediction_underflow, 0.0)
-    under_estimation_error = (1 - tau) * ops.maximum(-prediction_underflow, 0.0)
-
-    # Sum over outputs
-    error = ops.sum(over_estimation_error + under_estimation_error, axis=-2)
-    # Average over time steps
-    quantile_error = ops.mean(error, axis=-2)
-    # Sum over quantiles.
-    return ops.sum(quantile_error, axis=-1)
+    q_loss = tau * ops.maximum(prediction_underflow, 0.0) + (1.0 - tau) * ops.maximum(
+        -prediction_underflow, 0.0
+    )
+    return ops.sum(q_loss, axis=(-1, -2, -3))
