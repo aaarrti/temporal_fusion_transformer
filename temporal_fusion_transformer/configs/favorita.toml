@@ -46,6 +46,7 @@ input_known_categorical_idx = [
     15, # local holiday
     16, # on promotion
     17, # open
+    18, # perishable
 ]
 validation_boundary=2015-12-01
 num_attention_heads=12
@@ -59,15 +60,18 @@ clipnorm=0
 use_ema=false
 weight_decay=0
 batch_size=256
-compression='GZIP'
+compression="GZIP"
 drop_remainder=true
 shuffle_buffer_size=1024
 quantiles = [0.1, 0.5, 0.9]
 epochs=1
-test_split_save_format='parquet'
-test_boundary={}
-split_overlap={}
-
+test_split_save_format="parquet"
+test_boundary="None"
+split_overlap="None"
+kernel_regularizer = "None"
+bias_regularizer = "None"
+activity_regularizer = "None"
+recurrent_regularizer = "L1"
 
 
 

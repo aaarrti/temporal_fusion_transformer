@@ -3,12 +3,10 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-import pickle
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from tempfile import TemporaryDirectory
 
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
@@ -49,7 +47,9 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
 
         """
         self.config = config
-        self.preprocessor = ElectricityPreprocessor()
+        self.preprocessor = ElectricityPreprocessor(
+            defaultdict(StandardScaler), defaultdict(StandardScaler), defaultdict(LabelEncoder)
+        )
 
     def convert_to_parquet(
         self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
@@ -111,11 +111,14 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
         plt.axvline(x=split_spec.train_end, color="red", linestyle="dashed", label="train end")
 
         plt.axvline(
-            x=split_spec.val_start, color="blue", linestyle="dashed", label="validation start"
+            x=split_spec.validation_start,
+            color="blue",
+            linestyle="dashed",
+            label="validation start",
         )
 
         plt.axvline(
-            x=split_spec.val_end, color="orange", linestyle="dashed", label="validation end"
+            x=split_spec.validation_end, color="orange", linestyle="dashed", label="validation end"
         )
 
         plt.axvline(x=split_spec.test_start, color="green", linestyle="dashed", label="test start")
@@ -133,25 +136,6 @@ class ElectricityDataset(MultiHorizonTimeSeriesDataset):
 
 
 class ElectricityPreprocessor(PreprocessorBase):
-    def __init__(
-        self,
-        real: dict[str, StandardScaler] | None = None,
-        target: dict[str, StandardScaler] | None = None,
-        categorical: dict[str, LabelEncoder] | None = None,
-    ):
-        if real is None:
-            real = defaultdict(StandardScaler)
-
-        if target is None:
-            target = defaultdict(StandardScaler)
-
-        if categorical is None:
-            categorical = defaultdict(LabelEncoder)
-
-        self.real = real
-        self.categorical = categorical
-        self.target = target
-
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         def categorical_mapper(encoder: LabelEncoder) -> pl.Series:
             def map_fn(s: pl.Series) -> pl.Series:
@@ -208,37 +192,6 @@ class ElectricityPreprocessor(PreprocessorBase):
     def inverse_transform(self, df: pl.DataFrame) -> pl.DataFrame:
         pass
 
-    def save(self, dirname: str):
-        real = dict(**self.real)
-        target = dict(**self.target)
-        categorical = dict(**self.categorical)
-
-        joblib.dump(
-            real,
-            f"{dirname}/preprocessor.real.joblib",
-            compress=3,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-        joblib.dump(
-            target,
-            f"{dirname}/preprocessor.target.joblib",
-            compress=3,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-        joblib.dump(
-            categorical,
-            f"{dirname}/preprocessor.categorical.joblib",
-            compress=3,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-
-    @staticmethod
-    def load(dirname: str) -> ElectricityPreprocessor:
-        real = joblib.load(f"{dirname}/preprocessor.real.joblib")
-        target = joblib.load(f"{dirname}/preprocessor.target.joblib")
-        categorical = joblib.load(f"{dirname}/preprocessor.categorical.joblib")
-        return ElectricityPreprocessor(real=real, target=target, categorical=categorical)
-
     def fit(self, df: pl.DataFrame):
         for i, sub_df in df.groupby("id"):
             self.target[i].fit(df[_TARGETS].to_numpy(order="c"))
@@ -291,9 +244,9 @@ def split_data(
     """
 
     train_df = df.filter(pl.col("timestamp") < split_spec.train_end)
-    validation_df: pl.DataFrame = df.filter(pl.col("timestamp") >= split_spec.val_start).filter(
-        pl.col("timestamp") < split_spec.val_end
-    )
+    validation_df: pl.DataFrame = df.filter(
+        pl.col("timestamp") >= split_spec.validation_start
+    ).filter(pl.col("timestamp") < split_spec.validation_end)
     test_df = df.filter(pl.col("timestamp") >= split_spec.test_start)
     return (
         train_df.drop("timestamp").shrink_to_fit(in_place=True).rechunk(),
@@ -326,7 +279,7 @@ def compute_split_spec(config: Config) -> SplitSpec:
 
     return SplitSpec(
         train_end=validation_boundary,
-        val_end=test_boundary,
-        val_start=val_df_start,
+        validation_end=test_boundary,
+        validation_start=val_df_start,
         test_start=test_df_start,
     )

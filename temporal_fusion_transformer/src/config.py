@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 
 import tomli
 
-RegularizerT = Optional[Literal["L1", "L2", "L1_L2", "ortogonal_regularizer"]]
+RegularizerT = Optional[Literal["L1", "L2", "L1_L2"]]
 
 
 @dataclass(frozen=True, repr=False)
@@ -31,7 +31,6 @@ class Config:
     num_decoder_blocks:
     hidden_layer_size:
     dropout_rate:
-    unroll:
     learning_rate:
         Initial value for (cosine) learning rate schedule.
     decay_steps:
@@ -45,6 +44,7 @@ class Config:
     weight_decay:
     """
 
+    # fixed params
     encoder_steps: int
     total_time_steps: int
     num_outputs: int
@@ -54,32 +54,34 @@ class Config:
     input_known_real_idx: Sequence[int]
     input_known_categorical_idx: Sequence[int]
     input_static_idx: Sequence[int]
+    num_outputs: int
+    # hyperparams
     num_attention_heads: int
     num_decoder_blocks: int
     hidden_layer_size: int
     dropout_rate: int
     learning_rate: float
-    decay_steps: float
-    decay_alpha: float
-    clipnorm: float
+    decay_steps: float | None
+    decay_alpha: float | None
+    clipnorm: float | None
     use_ema: bool
-    weight_decay: float
+    weight_decay: float | None
     batch_size: int
+    # dataset config
     compression: Literal["GZIP"] | None
     drop_remainder: bool
     shuffle_buffer_size: int
-    quantiles: Sequence[float]
-    num_outputs: int
-    epochs: int
     test_split_save_format: Literal["csv", "parquet"]
     validation_boundary: Any
     test_boundary: Any
     split_overlap: int
+    # training config
+    epochs: int
+    quantiles: Sequence[float]
     kernel_regularizer: RegularizerT
     bias_regularizer: RegularizerT
     activity_regularizer: RegularizerT
     recurrent_regularizer: RegularizerT
-    embeddings_regularizer: RegularizerT
 
     def __str__(self) -> str:
         return json.dumps(dataclasses.asdict(self), indent=4, sort_keys=True, default=str)

@@ -4,19 +4,17 @@ import gc
 import logging
 import os
 import pathlib
-import pickle
 from collections import defaultdict
 from datetime import datetime, timedelta
 from glob import glob
 from importlib import util
 from pathlib import Path
-from typing import Tuple
 
-import joblib
 import polars as pl
 import tensorflow as tf
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.utils.validation import _is_fitted  # noqa
 from tqdm.auto import tqdm
 
 from temporal_fusion_transformer.src.config import Config
@@ -68,6 +66,7 @@ _CATEGORICAL_INPUTS = [
     "local_hol",
     "onpromotion",
     "open",
+    "perishable",
 ]
 _TARGETS = ["log_sales"]
 _ID_COLUMN = "traj_id"
@@ -76,7 +75,9 @@ _ID_COLUMN = "traj_id"
 class FavoritaDataset(MultiHorizonTimeSeriesDataset):
     def __init__(self, config: Config):
         self.config = config
-        self.preprocessor = FavoritaPreprocessor()
+        self.preprocessor = FavoritaPreprocessor(
+            defaultdict(StandardScaler), defaultdict(StandardScaler), defaultdict(LabelEncoder)
+        )
 
     def make_dataset(
         self, data_dir: str, save_dir: str | None = None
@@ -85,10 +86,15 @@ class FavoritaDataset(MultiHorizonTimeSeriesDataset):
 
         report_columns_mismatch(df, [_ID_COLUMN] + _TARGETS + _REAL_INPUTS + _CATEGORICAL_INPUTS)
 
-        self.preprocessor.fit(df)
+        reloaded_preprocessor = maybe_reload_preprocessor(data_dir)
+
+        if reloaded_preprocessor is None:
+            self.preprocessor.fit(df)
+            self.preprocessor.save(data_dir)
+        else:
+            self.preprocessor = reloaded_preprocessor
 
         df = self.preprocessor.transform(df)
-
         training_df, validation_df, test_df = split_data(df, self.config)
 
         training_ds = self.make_timeseries(training_df)
@@ -150,26 +156,7 @@ class FavoritaDataset(MultiHorizonTimeSeriesDataset):
 
 
 class FavoritaPreprocessor(PreprocessorBase):
-    def __init__(
-        self,
-        real: dict[str, StandardScaler] | None = None,
-        target: dict[str, StandardScaler] | None = None,
-        categorical: dict[str, LabelEncoder] | None = None,
-    ):
-        if real is None:
-            real = defaultdict(StandardScaler)
-
-        if target is None:
-            target = defaultdict(StandardScaler)
-
-        if categorical is None:
-            categorical = defaultdict(LabelEncoder)
-
-        self.real = real
-        self.categorical = categorical
-        self.target = target
-
-    def fit(self, df: pl.DataFrame) -> None:
+    def fit(self, df: pl.DataFrame):
         # In contrast for favorita we don't group before training StandardScaler
         for i in _TARGETS:
             self.target[i].fit(df[i].to_numpy().reshape(-1, 1))
@@ -204,36 +191,13 @@ class FavoritaPreprocessor(PreprocessorBase):
     def inverse_transform(self, df: pl.DataFrame) -> pl.DataFrame:
         pass
 
-    def save(self, dirname: str):
-        real = dict(**self.real)
-        target = dict(**self.target)
-        categorical = dict(**self.categorical)
-
-        joblib.dump(
-            real,
-            f"{dirname}/preprocessor.real.joblib",
-            compress=3,
-            protocol=pickle.HIGHEST_PROTOCOL,
+    @property
+    def is_fitted(self) -> bool:
+        return (
+            all([_is_fitted(v) for v in self.real.values()])
+            and all([_is_fitted(v) for v in self.target.values()])
+            and all([_is_fitted(v) for v in self.categorical.values()])
         )
-        joblib.dump(
-            target,
-            f"{dirname}/preprocessor.target.joblib",
-            compress=3,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-        joblib.dump(
-            categorical,
-            f"{dirname}/preprocessor.categorical.joblib",
-            compress=3,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-
-    @staticmethod
-    def load(dirname: str) -> FavoritaPreprocessor:
-        real = joblib.load(f"{dirname}/preprocessor.real.joblib")
-        target = joblib.load(f"{dirname}/preprocessor.target.joblib")
-        categorical = joblib.load(f"{dirname}/preprocessor.categorical.joblib")
-        return FavoritaPreprocessor(real=real, target=target, categorical=categorical)
 
 
 if util.find_spec("polars"):
@@ -421,3 +385,14 @@ def restore_timestamp(df: pl.DataFrame) -> pl.DataFrame:
 
     ts = [datetime(year=y, month=m, day=d).date() for d, m, y in zip(days, month, year)]
     return df.with_columns(pl.lit(ts).alias("date"))
+
+
+def maybe_reload_preprocessor(data_dir: str) -> FavoritaPreprocessor | None:
+    filenames = [
+        f"{data_dir}/preprocessor.categorical.joblib",
+        f"{data_dir}/preprocessor.real.joblib",
+        f"{data_dir}/preprocessor.target.joblib",
+    ]
+
+    if all([pathlib.Path(i).is_file() for i in filenames]):
+        return FavoritaPreprocessor.load(data_dir)

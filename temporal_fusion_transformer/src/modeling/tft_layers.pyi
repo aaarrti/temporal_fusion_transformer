@@ -35,8 +35,6 @@ class TransformerBlock(layers.Layer):
     ): ...
     def __call__(self, inputs: tf.Tensor) -> tf.Tensor: ...
 
-# -------------------------------------------------------------------------------------------------------------
-
 class Linear(layers.Layer):
     """
     Args:
@@ -74,6 +72,8 @@ class GatedLinearUnit(layers.Layer):
     Returns:
       Tuple of tensors for: (GLU output, gate)
     """
+
+    dropout_rate: float | None
 
     def __init__(
         self,
@@ -138,9 +138,9 @@ class ContextInput(TypedDict):
 
 class GatedResidualNetworkWithContext(GatedResidualNetwork):
     skip: layers.Layer
-    hidden: layers.Layer
-    elu: layers.Layer
-    hidden_2: layers.Layer
+    pre_activation: layers.Layer
+    activation: layers.Layer
+    post_activation: layers.Layer
     glu: layers.Layer
     add_and_norm: layers.Layer
 

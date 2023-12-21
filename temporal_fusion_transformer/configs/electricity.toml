@@ -1,5 +1,5 @@
-total_time_steps = 168  # 7 * 24
-encoder_steps = 192   # 8 * 24
+encoder_steps = 168  # 7 * 24
+total_time_steps = 192   # 8 * 24
 num_outputs = 1
 static_categories_sizes = [
     370 # id
@@ -36,14 +36,18 @@ decay_alpha = 0.0
 clipnorm = 0.0
 use_ema = false
 weight_decay = 0.0
-compression = 'GZIP'
+compression = "GZIP"
 drop_remainder = true
 shuffle_buffer_size = 1024
-test_split_save_format = 'parquet'
+test_split_save_format = "parquet"
 validation_boundary = 2014-08-08
 test_boundary = 2014-09-01
 # days
 split_overlap = 7
+kernel_regularizer = "None"
+bias_regularizer = "None"
+activity_regularizer = "None"
+recurrent_regularizer = "None"
 
 
 
