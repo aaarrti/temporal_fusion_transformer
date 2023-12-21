@@ -8,6 +8,7 @@ import tensorflow as tf
 class InputEmbedding(layers.Layer):
     def __init__(
         self,
+        *,
         static_categories_sizes: Sequence[int],
         known_categories_sizes: Sequence[int],
         input_observed_idx: Sequence[int],
@@ -15,6 +16,7 @@ class InputEmbedding(layers.Layer):
         input_known_real_idx: Sequence[int],
         input_known_categorical_idx: Sequence[int],
         hidden_layer_size: int,
+        embeddings_regularizer=None,
         **kwargs,
     ): ...
     def __call__(self, inputs: tf.Tensor) -> tf.Tensor: ...
@@ -22,6 +24,7 @@ class InputEmbedding(layers.Layer):
 class TransformerBlock(layers.Layer):
     def __init__(
         self,
+        *,
         num_attention_heads: int,
         hidden_layer_size: int,
         dropout_rate: float,
@@ -46,6 +49,7 @@ class Linear(layers.Layer):
     def __init__(
         self,
         size: int,
+        *,
         activation: str | None = None,
         use_time_distributed: bool = False,
         use_bias: bool = True,
@@ -116,6 +120,7 @@ class GatedResidualNetwork(layers.Layer):
 
     def __init__(
         self,
+        *,
         hidden_layer_size: int,
         output_size: int | None = None,
         dropout_rate: float | None = None,
@@ -156,6 +161,7 @@ class StaticVariableSelectionNetwork(layers.Layer):
 
     def __init__(
         self,
+        *,
         num_static: int,
         hidden_layer_size: int,
         dropout_rate: float,
@@ -182,6 +188,7 @@ class VariableSelectionNetwork(layers.Layer):
 
     def __init__(
         self,
+        *,
         dropout_rate: float,
         hidden_layer_size: int,
         num_inputs: int,

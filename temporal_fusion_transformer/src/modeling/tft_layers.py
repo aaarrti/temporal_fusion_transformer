@@ -19,6 +19,7 @@ class ContextInput(TypedDict):
 class InputEmbedding(layers.Layer):
     def __init__(
         self,
+        *,
         static_categories_sizes: Sequence[int],
         known_categories_sizes: Sequence[int],
         input_observed_idx: Sequence[int],
@@ -26,27 +27,40 @@ class InputEmbedding(layers.Layer):
         input_known_real_idx: Sequence[int],
         input_known_categorical_idx: Sequence[int],
         hidden_layer_size: int,
+        embeddings_regularizer=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
         self.static_embeddings = [
-            layers.Embedding(size, hidden_layer_size) for size in static_categories_sizes
+            layers.Embedding(size, hidden_layer_size, embeddings_regularizer=embeddings_regularizer)
+            for size in static_categories_sizes
         ]
 
         self.known_categorical_inputs_embeddings = [
-            layers.Embedding(size, hidden_layer_size) for size in known_categories_sizes
+            layers.Embedding(size, hidden_layer_size, embeddings_regularizer=embeddings_regularizer)
+            for size in known_categories_sizes
         ]
 
         self.input_static_idx = input_static_idx
         self.input_known_categorical_idx = input_known_categorical_idx
 
         self.known_real_projection = [
-            Linear(hidden_layer_size, use_time_distributed=True) for _ in input_known_real_idx
+            Linear(
+                hidden_layer_size,
+                use_time_distributed=True,
+                kernel_regularizer=embeddings_regularizer,
+            )
+            for _ in input_known_real_idx
         ]
 
         self.observed_projection = [
-            Linear(hidden_layer_size, use_time_distributed=True) for _ in input_observed_idx
+            Linear(
+                hidden_layer_size,
+                use_time_distributed=True,
+                kernel_regularizer=embeddings_regularizer,
+            )
+            for _ in input_observed_idx
         ]
 
         self.input_known_real_idx = list(input_known_real_idx)
@@ -97,6 +111,7 @@ class InputEmbedding(layers.Layer):
 class TransformerBlock(layers.Layer):
     def __init__(
         self,
+        *,
         num_attention_heads: int,
         hidden_layer_size: int,
         dropout_rate: float,
@@ -160,6 +175,7 @@ class Linear(layers.Layer):
     def __init__(
         self,
         size: int,
+        *,
         activation: str | None = None,
         use_time_distributed: bool = False,
         use_bias: bool = True,
@@ -190,6 +206,7 @@ class Linear(layers.Layer):
 class GatedLinearUnit(layers.Layer):
     def __init__(
         self,
+        *,
         hidden_layer_size: int,
         dropout_rate: float | None = None,
         use_time_distributed: bool = True,
@@ -242,6 +259,7 @@ class AddAndNorm(layers.Layer):
 class GatedResidualNetwork(layers.Layer):
     def __init__(
         self,
+        *,
         hidden_layer_size: int,
         output_size: int | None = None,
         dropout_rate: float | None = None,
@@ -284,7 +302,7 @@ class GatedResidualNetwork(layers.Layer):
             activity_regularizer=activity_regularizer,
         )
         self.glu = GatedLinearUnit(
-            output_size,
+            hidden_layer_size=output_size,
             dropout_rate=dropout_rate,
             use_time_distributed=use_time_distributed,
             activation=None,
@@ -308,6 +326,7 @@ class GatedResidualNetwork(layers.Layer):
 class GatedResidualNetworkWithContext(GatedResidualNetwork):
     def __init__(
         self,
+        *,
         hidden_layer_size: int,
         output_size: int | None = None,
         dropout_rate: float | None = None,
@@ -318,7 +337,14 @@ class GatedResidualNetworkWithContext(GatedResidualNetwork):
         **kwargs,
     ):
         super().__init__(
-            hidden_layer_size, output_size, dropout_rate, use_time_distributed, **kwargs
+            hidden_layer_size=hidden_layer_size,
+            output_size=output_size,
+            dropout_rate=dropout_rate,
+            use_time_distributed=use_time_distributed,
+            activity_regularizer=activity_regularizer,
+            bias_regularizer=bias_regularizer,
+            kernel_regularizer=kernel_regularizer,
+            **kwargs,
         )
         self.context_linear = Linear(
             hidden_layer_size,
@@ -352,6 +378,7 @@ class GatedResidualNetworkWithContext(GatedResidualNetwork):
 class StaticVariableSelectionNetwork(layers.Layer):
     def __init__(
         self,
+        *,
         num_static: int,
         hidden_layer_size: int,
         dropout_rate: float,
@@ -410,6 +437,7 @@ class StaticVariableSelectionNetwork(layers.Layer):
 class VariableSelectionNetwork(layers.Layer):
     def __init__(
         self,
+        *,
         dropout_rate: float,
         hidden_layer_size: int,
         num_inputs: int,

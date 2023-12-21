@@ -4,9 +4,11 @@ import dataclasses
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import tomli
+
+RegularizerT = Optional[Literal["L1", "L2", "L1_L2", "ortogonal_regularizer"]]
 
 
 @dataclass(frozen=True, repr=False)
@@ -56,7 +58,6 @@ class Config:
     num_decoder_blocks: int
     hidden_layer_size: int
     dropout_rate: int
-    unroll: bool
     learning_rate: float
     decay_steps: float
     decay_alpha: float
@@ -74,10 +75,11 @@ class Config:
     validation_boundary: Any
     test_boundary: Any
     split_overlap: int
-    kernel_regularizer: Literal["l1", "l2", "l1_l2"] | None
-    bias_regularizer: Literal["l1", "l2", "l1_l2"] | None
-    activity_regularizer: Literal["l1", "l2", "l1_l2"] | None
-    recurrent_regularizer: Literal["l1", "l2", "l1_l2"] | None
+    kernel_regularizer: RegularizerT
+    bias_regularizer: RegularizerT
+    activity_regularizer: RegularizerT
+    recurrent_regularizer: RegularizerT
+    embeddings_regularizer: RegularizerT
 
     def __str__(self) -> str:
         return json.dumps(dataclasses.asdict(self), indent=4, sort_keys=True, default=str)

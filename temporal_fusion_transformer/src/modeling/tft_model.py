@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, TypedDict, Literal
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 import keras
 import numpy as np
 from keras import layers, ops
 
-from temporal_fusion_transformer.src.config import Config
+from temporal_fusion_transformer.src.config import Config, RegularizerT
 from temporal_fusion_transformer.src.modeling.tft_layers import (
     AddAndNorm,
     GatedLinearUnit,
@@ -49,17 +49,15 @@ class TemporalFusionTransformer(keras.Model):
         num_decoder_blocks: int,
         num_quantiles: int,
         num_outputs: int,
-        unroll: bool,
         total_time_steps: int,
-        kernel_regularizer: Literal["l1", "l2", "l1_l2"] | None = None,
-        bias_regularizer: Literal["l1", "l2", "l1_l2"] | None = None,
-        activity_regularizer: Literal["l1", "l2", "l1_l2"] | None = None,
-        recurrent_regularizer: Literal["l1", "l2", "l1_l2"] | None = None,
+        kernel_regularizer: RegularizerT,
+        bias_regularizer: RegularizerT,
+        activity_regularizer: RegularizerT,
+        recurrent_regularizer: RegularizerT,
+        embeddings_regularizer: RegularizerT,
         **kwargs,
     ):
         super().__init__(**kwargs)
-
-        self.unroll = unroll
         self.encoder_steps = encoder_steps
         self.total_time_steps = total_time_steps
         self.num_decoder_blocks = num_decoder_blocks
@@ -79,6 +77,7 @@ class TemporalFusionTransformer(keras.Model):
             input_known_real_idx=input_known_real_idx,
             input_known_categorical_idx=input_known_categorical_idx,
             hidden_layer_size=hidden_layer_size,
+            embeddings_regularizer=embeddings_regularizer,
         )
 
         self.static_combine_and_mask = StaticVariableSelectionNetwork(
@@ -137,7 +136,7 @@ class TemporalFusionTransformer(keras.Model):
             return_sequences=True,
             return_state=True,
             # We need unroll to prevent None shape
-            unroll=unroll,
+            unroll=True,
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
@@ -158,7 +157,7 @@ class TemporalFusionTransformer(keras.Model):
             return_sequences=True,
             return_state=False,
             # We need unroll to prevent None shape
-            unroll=unroll,
+            unroll=True,
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
@@ -247,19 +246,11 @@ class TemporalFusionTransformer(keras.Model):
             historical_features, initial_state=[static_context_state_h, static_context_state_c]
         )
 
-        if not self.unroll:
-            # eval shape to prevent None
-            history_lstm = ops.reshape(history_lstm, historical_features.shape)
-
         future_features, future_flags, _ = self.future_variable_selections(
             {"input": future_inputs, "context": static_context_variable_selection},
         )
 
         future_lstm = self.future_lstm(future_features, initial_state=[state_h, state_c])
-
-        if not self.unroll:
-            #  eval shape to prevent None
-            future_lstm = ops.reshape(future_lstm, future_features.shape)
 
         lstm_layer = ops.concatenate([history_lstm, future_lstm], axis=1)
         input_embeddings = ops.concatenate([historical_features, future_features], axis=1)
@@ -309,13 +300,13 @@ class TemporalFusionTransformer(keras.Model):
             num_attention_heads=config.num_attention_heads,
             num_decoder_blocks=config.num_decoder_blocks,
             num_outputs=config.num_outputs,
-            unroll=config.unroll,
             num_quantiles=len(config.quantiles),
             total_time_steps=config.total_time_steps,
             activity_regularizer=config.activity_regularizer,
             kernel_regularizer=config.kernel_regularizer,
             recurrent_regularizer=config.recurrent_regularizer,
             bias_regularizer=config.bias_regularizer,
+            embeddings_regularizer=config.embeddings_regularizer,
         )
 
     @staticmethod

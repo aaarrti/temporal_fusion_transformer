@@ -25,8 +25,8 @@ from temporal_fusion_transformer.src.datasets.base import (
     PreprocessorBase,
 )
 from temporal_fusion_transformer.src.datasets.utils import (
-    time_series_dataset_from_dataframe,
     report_columns_mismatch,
+    time_series_dataset_from_dataframe,
 )
 
 log = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ class FavoritaDataset(MultiHorizonTimeSeriesDataset):
 
     def make_dataset(
         self, data_dir: str, save_dir: str | None = None
-    ) -> None | Tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, FavoritaPreprocessor]:
+    ) -> None | tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, FavoritaPreprocessor]:
         df = read_parquet(data_dir)
 
         report_columns_mismatch(df, [_ID_COLUMN] + _TARGETS + _REAL_INPUTS + _CATEGORICAL_INPUTS)
@@ -253,7 +253,7 @@ if util.find_spec("polars"):
 def split_data(
     df: pl.DataFrame,
     config: Config,
-) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     lf = df.lazy()
 
     validation_boundary, test_boundary = compute_split_spec(config)

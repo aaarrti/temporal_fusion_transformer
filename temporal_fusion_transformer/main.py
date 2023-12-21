@@ -14,9 +14,11 @@ from keras.utils import set_random_seed  # noqa: E402
 set_random_seed(33)
 import argparse  # noqa: E402
 import logging  # noqa: E402
+
 import keras  # noqa: E402
 import tensorflow as tf  # noqa: E402
 from keras import mixed_precision  # noqa
+
 import temporal_fusion_transformer as tft  # noqa: E402
 from temporal_fusion_transformer.src.datasets.utils import persist_dataset  # noqa: E402
 

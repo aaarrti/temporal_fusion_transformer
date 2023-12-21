@@ -52,7 +52,6 @@ num_attention_heads=12
 num_decoder_blocks=1
 hidden_layer_size=64
 dropout_rate=0.1
-unroll=false
 learning_rate=1e-3
 decay_steps=0
 decay_alpha=0

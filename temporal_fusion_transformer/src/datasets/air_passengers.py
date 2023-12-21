@@ -194,12 +194,17 @@ class AirPassengersInference:
     ):
         if history_df is not None:
             history_ts, history_y = extract_time_steps_and_targets(history_df)
-            plt.plot(history_ts, history_y, label="historical data", marker="o", markersize=4)
+            plt.plot(
+                history_ts,
+                history_y,
+                label="historical data",
+                marker="o",
+                markersize=4,
+                color="darkblue",
+            )
 
         ts, y = extract_time_steps_and_targets(df)
         plt.plot(ts, y, label="ground truth", marker="o", markersize=4)
-
-        # q_predictions = []
 
         for i, q in enumerate(self.config.quantiles):
             label = f"q({int(q*100)}%) prediction"
@@ -211,18 +216,6 @@ class AirPassengersInference:
             plt.plot(
                 ts[self.config.encoder_steps :], q_prediction, label=label, marker="o", markersize=4
             )
-
-        # median = q_predictions[1]
-        # percentile_10 = q_predictions[0]
-        # percentile_90 = q_predictions[2]
-        # Estimate mean and standard deviation assuming normal distribution
-        # z_score = 1.96  # Z-score for a 95% confidence level
-
-        # mean_estimate = median + (percentile_90 - percentile_10) / (2 * z_score)
-
-        # plt.plot(
-        #    ts[self.config.encoder_steps:], mean_estimate, label="mean_estimate", marker="o", markersize=4
-        # )
 
         plt.legend()
         plt.xticks(rotation=90)

@@ -9,10 +9,10 @@ from datetime import date, datetime, timedelta
 from tempfile import TemporaryDirectory
 
 import joblib
+import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 import tensorflow as tf
-import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from temporal_fusion_transformer.src.config import Config
@@ -22,8 +22,8 @@ from temporal_fusion_transformer.src.datasets.base import (
     SplitSpec,
 )
 from temporal_fusion_transformer.src.datasets.utils import (
-    time_series_dataset_from_dataframe,
     report_columns_mismatch,
+    time_series_dataset_from_dataframe,
 )
 
 _ID_COLUMN = "id"
