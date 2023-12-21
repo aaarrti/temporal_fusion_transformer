@@ -13,10 +13,7 @@ maintainers = [
 classifiers = [
     "Development Status :: 3 - Alpha",
 ]
-dependencies = [
-    "keras_core>=0.1.7",
-    "toolz",
-]
+dependencies = []
 [project.optional-dependencies]
 experiments = [
     "tensorflow>=2.14.0",

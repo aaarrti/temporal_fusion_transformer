@@ -1,29 +1,53 @@
 import numpy as np
 
+from temporal_fusion_transformer.src.config import Config
 from temporal_fusion_transformer.src.modeling.tft_model import TemporalFusionTransformer
+from temporal_fusion_transformer.src.utils import count_inputs
+
+# import tensorflow as tf
+# tf.config.run_functions_eagerly(True)
 
 
-def test_dummy_model():
-    model = TemporalFusionTransformer(
-        input_observed_idx=[],
-        input_static_idx=[0],
-        input_known_real_idx=[3],
-        input_known_categorical_idx=[1, 2],
-        static_categories_sizes=[2],
-        known_categories_sizes=[2, 2],
-        hidden_layer_size=5,
-        dropout_rate=0.1,
-        encoder_steps=20,
-        total_time_steps=30,
-        num_attention_heads=1,
-        num_decoder_blocks=5,
-        num_quantiles=3,
-        num_outputs=1,
-        unroll=False,
+def test_air_passengers_model():
+    config = Config.read_from_file("temporal_fusion_transformer/configs/air_passengers.toml")
+    model = TemporalFusionTransformer.from_dataclass_config(config)
+    x = np.ones(
+        shape=(config.batch_size, config.total_time_steps, count_inputs(config)), dtype=float
+    )
+    y = model.predict(x)
+    assert y.shape == (
+        config.batch_size,
+        config.total_time_steps - config.encoder_steps,
+        config.num_outputs,
+        len(config.quantiles),
     )
 
-    x = np.ones(shape=[8, 30, 4], dtype=np.float32)
-    y = model(x)
 
-    assert y.dtype == np.float32
-    assert y.shape == (8, 10, 1, 3)
+def test_electricity_model():
+    config = Config.read_from_file("temporal_fusion_transformer/configs/electricity.toml")
+    model = TemporalFusionTransformer.from_dataclass_config(config)
+    x = np.ones(
+        shape=(config.batch_size, config.total_time_steps, count_inputs(config)), dtype=float
+    )
+    y = model.predict(x)
+    assert y.shape == (
+        config.batch_size,
+        config.total_time_steps - config.encoder_steps,
+        config.num_outputs,
+        len(config.quantiles),
+    )
+
+
+def test_cari_model():
+    config = Config.read_from_file("tests/configs/cari.toml")
+    model = TemporalFusionTransformer.from_dataclass_config(config)
+    x = np.ones(
+        shape=(config.batch_size, config.total_time_steps, count_inputs(config)), dtype=float
+    )
+    y = model.predict(x)
+    assert y.shape == (
+        config.batch_size,
+        config.total_time_steps - config.encoder_steps,
+        config.num_outputs,
+        len(config.quantiles),
+    )

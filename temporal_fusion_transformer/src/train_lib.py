@@ -5,6 +5,7 @@ import inspect
 import logging
 from typing import TYPE_CHECKING, Literal
 
+import keras
 import numpy as np
 import tensorflow as tf
 from keras import callbacks, optimizers
@@ -19,14 +20,14 @@ from temporal_fusion_transformer.src.utils import count_inputs
 log = logging.getLogger(__name__)
 
 
-class TerminateOnNan(callbacks.TerminateOnNaN):
+class TerminateOnNaN(callbacks.TerminateOnNaN):
     def __init__(self):
         super().__init__()
         self.weights = None
 
     def on_batch_end(self, batch, logs=None):
         super().on_batch_end(batch, logs)
-        if self.model.stop_traininga and self.weights is not None:
+        if self.model.stop_training and self.weights is not None:
             log.warning("Restoring weight from previous epoch.")
             self.model.weights = self.weights
 
@@ -38,9 +39,8 @@ def train_model_from_config(
     *,
     dataset: tuple[tf.data.Dataset, tf.data.Dataset],
     config: Config,
-    training_callbacks="auto",
-    verbose="auto",
-):
+    callbacks=None,
+) -> keras.Model:
     model = TemporalFusionTransformer.from_dataclass_config(config)
 
     num_train_steps = int(dataset[0].cardinality())
@@ -48,50 +48,20 @@ def train_model_from_config(
 
     model.compile(
         loss=QuantileLoss(quantiles),
-        # loss={
-        #    f"q_{i+1}": PinballLoss(tau=q)
-        #    for i, q in enumerate(quantiles)
-        # },
         optimizer=make_optimizer(config, num_train_steps),
-        # metrics=make_quantile_rmse_metrics(quantiles, config.num_outputs, metric_names=[]),
         jit_compile=False,
     )
 
     x = dataset[0].as_numpy_iterator().next()[0]
     verify_declared_number_of_features_matches(config, x)
 
-    if training_callbacks == "auto":
-        training_callbacks = default_callbacks()
-
     model.fit(
         dataset[0],
         validation_data=dataset[1],
         epochs=config.epochs,
-        callbacks=training_callbacks,
-        verbose=1,
+        callbacks=callbacks,
     )
     return model
-
-
-def default_callbacks():
-    return [
-        callbacks.TerminateOnNaN(),
-        callbacks.EarlyStopping(
-            min_delta=0.01, patience=1, start_from_epoch=1, restore_best_weights=True, verbose=1
-        ),
-        callbacks.TensorBoard(
-            write_graph=False,
-            log_dir="tensorboard",
-            update_freq=100,
-        ),
-        callbacks.ModelCheckpoint(
-            filepath="checkpoints",
-            save_freq=1000,
-            save_best_only=True,
-            save_weights_only=True,
-            verbose=1,
-        ),
-    ]
 
 
 def make_optimizer(config: Config, num_train_steps: int):
@@ -108,15 +78,7 @@ def make_optimizer(config: Config, num_train_steps: int):
     - num_train_steps
 
     """
-    clipnorm = config.clipnorm
-    weight_decay = config.weight_decay
-
-    if clipnorm == 0:
-        clipnorm = None
-    if weight_decay == 0:
-        weight_decay = None
-
-    if config.decay_steps != 0:
+    if config.decay_steps is not None:
         lr = optimizers.schedules.CosineDecay(
             initial_learning_rate=config.learning_rate,
             decay_steps=int(config.decay_steps * num_train_steps),
@@ -128,9 +90,8 @@ def make_optimizer(config: Config, num_train_steps: int):
     return optimizers.Adam(
         learning_rate=lr,
         use_ema=config.use_ema,
-        clipnorm=clipnorm,
-        weight_decay=weight_decay,
-        # jit_compile=True
+        clipnorm=config.clipnorm,
+        weight_decay=config.weight_decay,
     )
 
 

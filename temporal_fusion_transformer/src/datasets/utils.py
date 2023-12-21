@@ -28,7 +28,6 @@ def time_series_dataset_from_dataframe(
     targets: list[str],
     total_time_steps: int,
     id_column: str,
-    preprocessor: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
 ) -> tf.data.Dataset:
     """
 
@@ -54,8 +53,7 @@ def time_series_dataset_from_dataframe(
 
     """
 
-    if preprocessor is not None:
-        df = preprocessor(df)
+    report_columns_mismatch(df, targets + inputs + [id_column])
 
     # for some reason, keras would generate targets of shape [1, n] and inputs [time_steps, n],
     # but we need time-steps for y_batch also, we need is [time_steps, m]. We don't need `sequence_stride`,
@@ -90,19 +88,21 @@ def time_series_dataset_from_dataframe(
         num_errors = 0
         num_ok = 0
         for _, df_i in tqdm(
-            df.groupby(id_column), total=num_groups, desc="Converting to time-series dataset"
+            df.groupby(id_column, maintain_order=True),
+            total=num_groups,
+            desc="Converting to time-series dataset",
         ):
             try:
                 time_series_i = make_time_series_fn(df_i)
                 num_ok += 1
                 yield time_series_i
             except ValueError as e:
-                log.error(e)
+                # log.error(e)
                 num_errors += 1
         log.info(f"{num_errors = }, {num_ok = }")
 
     def concat_datasets(a: tf.data.Dataset, b: tf.data.Dataset) -> tf.data.Dataset:
-        return a.concatenate(b).cache()
+        return a.concatenate(b)
 
     return functoolz.reduce(concat_datasets, generator())
 

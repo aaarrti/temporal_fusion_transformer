@@ -54,7 +54,6 @@ class TemporalFusionTransformer(keras.Model):
         bias_regularizer: RegularizerT,
         activity_regularizer: RegularizerT,
         recurrent_regularizer: RegularizerT,
-        embeddings_regularizer: RegularizerT,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -77,7 +76,7 @@ class TemporalFusionTransformer(keras.Model):
             input_known_real_idx=input_known_real_idx,
             input_known_categorical_idx=input_known_categorical_idx,
             hidden_layer_size=hidden_layer_size,
-            embeddings_regularizer=embeddings_regularizer,
+            name="embedding",
         )
 
         self.static_combine_and_mask = StaticVariableSelectionNetwork(
@@ -87,6 +86,7 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="static_combine_and_mask",
         )
 
         self.static_context_variable_selection = GatedResidualNetwork(
@@ -96,6 +96,7 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="static_context_variable_selection",
         )
         self.static_context_enrichment = GatedResidualNetwork(
             hidden_layer_size=hidden_layer_size,
@@ -104,6 +105,7 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="static_context_enrichment",
         )
         self.static_context_state_h = GatedResidualNetwork(
             hidden_layer_size=hidden_layer_size,
@@ -112,6 +114,7 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="static_context_state_h",
         )
         self.static_context_state_c = GatedResidualNetwork(
             hidden_layer_size=hidden_layer_size,
@@ -120,6 +123,7 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="static_context_state_c",
         )
 
         self.historical_variable_selection = VariableSelectionNetwork(
@@ -129,6 +133,7 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="historical_variable_selection",
         )
 
         self.historical_lstm = layers.LSTM(
@@ -141,6 +146,7 @@ class TemporalFusionTransformer(keras.Model):
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
             recurrent_regularizer=recurrent_regularizer,
+            name="historical_lstm",
         )
 
         self.future_variable_selections = VariableSelectionNetwork(
@@ -150,6 +156,7 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="future_variable_selections",
         )
 
         self.future_lstm = layers.LSTM(
@@ -162,6 +169,7 @@ class TemporalFusionTransformer(keras.Model):
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
             recurrent_regularizer=recurrent_regularizer,
+            name="future_lstm",
         )
 
         self.lstm_gate = GatedLinearUnit(
@@ -171,9 +179,10 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="lstm_gate",
         )
 
-        self.lstm_add_norm = AddAndNorm()
+        self.lstm_add_norm = AddAndNorm(name="lstm_add_norm")
 
         self.enriched_grn = GatedResidualNetworkWithContext(
             hidden_layer_size=hidden_layer_size,
@@ -182,6 +191,7 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="enriched_grn",
         )
 
         self.transformer_blocks = [
@@ -192,16 +202,20 @@ class TemporalFusionTransformer(keras.Model):
                 kernel_regularizer=kernel_regularizer,
                 activity_regularizer=activity_regularizer,
                 bias_regularizer=bias_regularizer,
+                name=f"transformer_{i}",
             )
-            for _ in range(num_decoder_blocks)
+            for i in range(num_decoder_blocks)
         ]
-        self.transformer_add_norm = [AddAndNorm() for _ in range(num_decoder_blocks)]
+        self.transformer_add_norm = [
+            AddAndNorm(name=f"transformer_add_norm_{i}") for i in range(num_decoder_blocks)
+        ]
         self.output_projection = Linear(
             num_outputs * num_quantiles,
             use_time_distributed=True,
             kernel_regularizer=kernel_regularizer,
             activity_regularizer=activity_regularizer,
             bias_regularizer=bias_regularizer,
+            name="output_projection",
         )
 
     def call(self, inputs, training=False):
@@ -214,14 +228,15 @@ class TemporalFusionTransformer(keras.Model):
                 [known_combined_layer[:, :encoder_steps, :], obs_inputs[:, :encoder_steps, :]],
                 axis=-1,
             )
+            future_inputs = ops.concatenate(
+                [known_combined_layer[:, encoder_steps:, :], obs_inputs[:, encoder_steps:, :]],
+                axis=-1,
+            )
         else:
             historical_inputs = known_combined_layer[:, :encoder_steps, :]
-
-        # Isolate only known future inputs.
-        future_inputs = known_combined_layer[:, encoder_steps:, :]
+            future_inputs = known_combined_layer[:, encoder_steps:, :]
 
         static_encoder, static_weights = self.static_combine_and_mask(static_inputs)
-
         static_context_variable_selection, _ = self.static_context_variable_selection(
             static_encoder
         )
@@ -306,7 +321,6 @@ class TemporalFusionTransformer(keras.Model):
             kernel_regularizer=config.kernel_regularizer,
             recurrent_regularizer=config.recurrent_regularizer,
             bias_regularizer=config.bias_regularizer,
-            embeddings_regularizer=config.embeddings_regularizer,
         )
 
     @staticmethod
@@ -321,27 +335,3 @@ class TemporalFusionTransformer(keras.Model):
         if weights_path is not None:
             model.load_weights(weights_path)
         return model
-
-    def compile(
-        self,
-        optimizer="adam",
-        loss=None,
-        loss_weights=None,
-        metrics=None,
-        weighted_metrics=None,
-        run_eagerly=False,
-        steps_per_execution=1,
-        jit_compile=False,
-        auto_scale_loss=True,
-    ):
-        # just to overwrite the default for `jit_compile` and optimizer
-        super().compile(
-            optimizer,
-            loss,
-            loss_weights,
-            metrics,
-            weighted_metrics,
-            steps_per_execution,
-            jit_compile=jit_compile,
-            auto_scale_loss=auto_scale_loss,
-        )

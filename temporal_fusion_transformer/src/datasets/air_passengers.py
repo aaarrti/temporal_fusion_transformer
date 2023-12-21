@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import pickle
 from datetime import datetime, timedelta
 
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 import tensorflow as tf
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from temporal_fusion_transformer.src.config import Config
 from temporal_fusion_transformer.src.datasets.base import (
@@ -33,7 +31,9 @@ class AirPassengersDataset(MultiHorizonTimeSeriesDataset):
         Dataset contains data for years 1949 - 1960
         """
         self.config = config
-        self.preprocessor = AirPassengerPreprocessor()
+        self.preprocessor = AirPassengerPreprocessor(
+            {"year": StandardScaler()}, {"passengers": StandardScaler()}, {"month": LabelEncoder()}
+        )
 
     @staticmethod
     def read_df(data_dir: str) -> pl.DataFrame:
@@ -55,8 +55,8 @@ class AirPassengersDataset(MultiHorizonTimeSeriesDataset):
         split_spec = compute_split_spec(self.config, df)
 
         train_df = df.filter(pl.col("Month").le(split_spec.train_end))
-        validation_df = df.filter(pl.col("Month").ge(split_spec.val_start)).filter(
-            pl.col("Month").le(split_spec.val_end)
+        validation_df = df.filter(pl.col("Month").ge(split_spec.validation_start)).filter(
+            pl.col("Month").le(split_spec.validation_end)
         )
         test_df = df.filter(pl.col("Month").ge(split_spec.test_start))
 
@@ -114,71 +114,52 @@ class AirPassengersDataset(MultiHorizonTimeSeriesDataset):
 
 
 class AirPassengerPreprocessor(PreprocessorBase):
-    def __init__(
-        self, year: StandardScaler | None = None, passengers: StandardScaler | None = None
-    ):
-        if year is None:
-            year = StandardScaler()
-
-        if passengers is None:
-            passengers = StandardScaler()
-
-        self.year = year
-        self.passengers = passengers
-
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
         def map_passengers(ps: pl.Series):
-            return pl.Series(self.passengers.transform(ps.to_numpy().reshape(-1, 1)).reshape(-1))
+            return pl.Series(
+                self.target["passengers"].transform(ps.to_numpy().reshape(-1, 1)).reshape(-1)
+            )
 
         def map_year(y: pl.Series):
-            return pl.Series(self.year.transform(y.to_numpy().reshape(-1, 1)).reshape(-1))
+            return pl.Series(self.real["year"].transform(y.to_numpy().reshape(-1, 1)).reshape(-1))
+
+        def map_month(y: pl.Series):
+            return pl.Series(self.categorical["month"].transform(y.to_numpy()))
 
         return df.with_columns(
             pl.col("passengers").map_batches(map_passengers, return_dtype=pl.Float64),
             pl.col("year").map_batches(map_year, return_dtype=pl.Float64),
+            pl.col("month").map_batches(map_month),
         )
 
     def inverse_transform(self, df: pl.DataFrame) -> pl.DataFrame:
         def map_passengers(ps: pl.Series):
             return pl.Series(
-                self.passengers.inverse_transform(ps.to_numpy().reshape(-1, 1)).reshape(-1)
+                self.target["passengers"]
+                .inverse_transform(ps.to_numpy().reshape(-1, 1))
+                .reshape(-1)
             )
 
         def map_year(y: pl.Series):
-            return pl.Series(self.year.inverse_transform(y.to_numpy().reshape(-1, 1)).reshape(-1))
+            return pl.Series(
+                self.real["year"].inverse_transform(y.to_numpy().reshape(-1, 1)).reshape(-1)
+            )
+
+        def map_month(y: pl.Series):
+            return pl.Series(
+                self.categorical["month"].inverse_transform(y.to_numpy().astype("int")).tolist()
+            )
 
         return df.with_columns(
             pl.col("passengers").map_batches(map_passengers, return_dtype=pl.Float32),
             pl.col("year").map_batches(map_year, return_dtype=pl.Float32),
+            pl.col("month").map_batches(map_month, return_dtype=pl.Int64),
         )
 
     def fit(self, df: pl.DataFrame):
-        self.year.fit(df.select("year").to_numpy(order="c"))
-        self.passengers.fit(df.select("passengers").to_numpy(order="c"))
-
-    def save(self, dirname: str):
-        joblib.dump(
-            self.year, f"{dirname}/preprocessor.year.joblib", protocol=pickle.HIGHEST_PROTOCOL
-        )
-        joblib.dump(
-            self.passengers,
-            f"{dirname}/preprocessor.passengers.joblib",
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-
-    @staticmethod
-    def load(dirname: str) -> AirPassengerPreprocessor:
-        year = joblib.load(f"{dirname}/preprocessor.year.joblib")
-        passengers = joblib.load(f"{dirname}/preprocessor.passengers.joblib")
-        return AirPassengerPreprocessor(year, passengers)
-
-    def __str__(self) -> str:
-        return f"AirPassengerPreprocessor(year={str(self.year)}, passengers={str(self.passengers)})"
-
-    def __repr__(self) -> str:
-        return (
-            f"AirPassengerPreprocessor(year={repr(self.year)}, passengers={repr(self.passengers)})"
-        )
+        self.real["year"].fit(df.select("year").to_numpy(order="c"))
+        self.target["passengers"].fit(df.select("passengers").to_numpy(order="c"))
+        self.categorical["month"].fit(df["month"].to_numpy())
 
 
 class AirPassengersInference:
@@ -211,8 +192,6 @@ class AirPassengersInference:
             q_prediction = target_scaler.inverse_transform(
                 time_series_to_array(y_pred[..., i])
             ).reshape(-1)
-
-            # q_predictions.append(q_prediction)
             plt.plot(
                 ts[self.config.encoder_steps :], q_prediction, label=label, marker="o", markersize=4
             )
@@ -252,7 +231,10 @@ def compute_split_spec(config: Config, df: pl.DataFrame) -> SplitSpec:
         df["Month"].max() - timedelta(days=31 * config.total_time_steps) - (split_overlap * 2)
     )
     return SplitSpec(
-        train_end=train_df_end, val_end=val_df_end, val_start=val_df_start, test_start=test_df_start
+        train_end=train_df_end,
+        validation_end=val_df_end,
+        validation_start=val_df_start,
+        test_start=test_df_start,
     )
 
 

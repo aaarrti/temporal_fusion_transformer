@@ -165,7 +165,6 @@ data
 checkpoints
 tensorboard
 .tox
-.dvc
 terraform.tfstate
 terraform.tfstate.backup
 .terraform.lock.hcl
@@ -179,5 +178,5 @@ scripts/favorita.sql
 models
 *.msgpack
 notebooks/.virtual_documents
-thrirdparty
+thrirdparty/google-research/tft/outputs
 logs
