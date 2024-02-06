@@ -39,6 +39,6 @@ test_boundary = 1960
 # 3 months
 split_overlap = 3
 kernel_regularizer = "L2"
-bias_regularizer = "L2"
+bias_regularizer = "None"
 activity_regularizer = "None"
 recurrent_regularizer = "None"

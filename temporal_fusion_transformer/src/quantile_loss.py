@@ -4,35 +4,41 @@ from collections.abc import Sequence
 
 from jax import Array
 from keras import mixed_precision, ops
-from keras.src.losses import LossFunctionWrapper
+from keras.src.losses import LossFunctionWrapper, mean_absolute_percentage_error
+from keras.src.metrics import MeanMetricWrapper
 
-newaxis = None
+from temporal_fusion_transformer.src.ops import named_scope
 
 
-class QuantileLoss(LossFunctionWrapper):
-    def __init__(self, quantiles: Sequence[float], **kwargs):
+class QuantilePinballLoss(LossFunctionWrapper):
+    def __init__(self, quantiles: Sequence[float], name: str = "qp_loss", **kwargs):
         quantiles = ops.cast(quantiles, mixed_precision.dtype_policy().compute_dtype)
-        super().__init__(**kwargs, fn=quantile_loss, tau=quantiles)
+        super().__init__(name=name, **kwargs, fn=quantile_pinball_loss, tau=quantiles)
 
 
-class PinballLoss(LossFunctionWrapper):
-    def __init__(self, tau: float, **kwargs):
-        super().__init__(**kwargs, fn=pinball_loss, tau=tau)
+class QuantileMAPE(MeanMetricWrapper):
+    def __init__(self, quantiles: Sequence[float], name: str = "q_mape", **kwargs):
+        quantiles = ops.cast(quantiles, mixed_precision.dtype_policy().compute_dtype)
+        super().__init__(name=name, **kwargs, fn=quantile_mape, tau=quantiles)
 
 
-def pinball_loss(y_true: Array, y_pred: Array, tau: float) -> Array:
-    tau = ops.cast(tau, y_pred.dtype)
-    y_true = ops.cast(y_true, y_pred.dtype)
+def quantile_mape(y_true: Array, y_pred: Array, tau: Array) -> Array:
+    with named_scope("q_mape"):
+        tau = ops.cast(tau, y_pred.dtype)
+        y_true = ops.cast(y_true, y_pred.dtype)
+        y_pred = ops.transpose(y_pred, [3, 0, 1, 2])
 
-    prediction_underflow = y_true - y_pred
-    q_loss = tau * ops.maximum(prediction_underflow, 0.0) + (1.0 - tau) * ops.maximum(
-        -prediction_underflow, 0.0
-    )
+        err = ops.vectorized_map(lambda x: mean_absolute_percentage_error(y_true, x), y_pred)
 
-    return ops.sum(q_loss, axis=(-1, -2))
+        return ops.mean(
+            # weighted mean over quantiles
+            ops.mean(ops.transpose(err, [1, 2, 0]) * tau, axis=-1),
+            # harmonic means over timestamps (same as datapoints)
+            axis=-1,
+        )
 
 
-def quantile_loss(y_true: Array, y_pred: Array, tau: Array) -> Array:
+def quantile_pinball_loss(y_true: Array, y_pred: Array, tau: Array) -> Array:
     """
 
     Computes the pinball loss between `y_true` and `y_pred`.
@@ -67,4 +73,4 @@ def quantile_loss(y_true: Array, y_pred: Array, tau: Array) -> Array:
     q_loss = tau * ops.maximum(prediction_underflow, 0.0) + (1.0 - tau) * ops.maximum(
         -prediction_underflow, 0.0
     )
-    return ops.sum(q_loss, axis=(-1, -2, -3))
+    return ops.mean(q_loss, axis=(-1, -2, -3))

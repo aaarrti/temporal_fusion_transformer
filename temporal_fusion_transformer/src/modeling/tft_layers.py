@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, ContextManager
+import logging
 
-from keras import layers, ops
-
-from temporal_fusion_transformer.src.modeling.tft_ops import named_scope
-
-newaxis = None
+from keras import layers, ops, backend
+from temporal_fusion_transformer.src.ops import named_scope
 
 if TYPE_CHECKING:
     import tensorflow as tf
+
+
+log = logging.getLogger(__name__)
 
 
 class ContextInput(TypedDict):
@@ -81,7 +82,7 @@ class InputEmbedding(layers.Layer):
         ]
 
         known_real_inputs_embeddings = [
-            layer(inputs[..., i, newaxis])
+            layer(inputs[..., i, None])
             for i, layer in zip(self.input_known_real_idx, self.known_real_projection)
         ]
 
@@ -96,7 +97,7 @@ class InputEmbedding(layers.Layer):
         if len(self.input_observed_idx) != 0:
             observed_embeddings = ops.stack(
                 [
-                    layer(inputs[..., i, newaxis])
+                    layer(inputs[..., i, None])
                     for i, layer in zip(self.input_observed_idx, self.observed_projection)
                 ],
                 axis=-1,

@@ -14,7 +14,7 @@ from toolz import dicttoolz
 
 from temporal_fusion_transformer.src.config import Config
 from temporal_fusion_transformer.src.modeling.tft_model import TemporalFusionTransformer
-from temporal_fusion_transformer.src.quantile_loss import PinballLoss, QuantileLoss
+from temporal_fusion_transformer.src.quantile_loss import PinballLoss, QuantilePinballLoss
 from temporal_fusion_transformer.src.utils import count_inputs
 
 log = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ def train_model_from_config(
     quantiles = config.quantiles
 
     model.compile(
-        loss=QuantileLoss(quantiles),
+        loss=QuantilePinballLoss(quantiles),
         optimizer=make_optimizer(config, num_train_steps),
         jit_compile=False,
     )

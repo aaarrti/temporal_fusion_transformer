@@ -43,7 +43,6 @@ def time_series_dataset_from_dataframe(
     targets
     total_time_steps
     id_column
-    preprocessor
 
     Returns
     -------

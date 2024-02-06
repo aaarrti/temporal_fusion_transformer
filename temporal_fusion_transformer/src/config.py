@@ -47,41 +47,37 @@ class Config:
     # fixed params
     encoder_steps: int
     total_time_steps: int
-    num_outputs: int
     known_categories_sizes: Sequence[int]
     static_categories_sizes: Sequence[int]
     input_observed_idx: Sequence[int]
     input_known_real_idx: Sequence[int]
     input_known_categorical_idx: Sequence[int]
     input_static_idx: Sequence[int]
-    num_outputs: int
-    # hyperparams
     num_attention_heads: int
     num_decoder_blocks: int
     hidden_layer_size: int
-    dropout_rate: int
     learning_rate: float
-    decay_steps: float | None
-    decay_alpha: float | None
-    clipnorm: float | None
-    use_ema: bool
-    weight_decay: float | None
-    batch_size: int
-    # dataset config
-    compression: Literal["GZIP"] | None
-    drop_remainder: bool
-    shuffle_buffer_size: int
-    test_split_save_format: Literal["csv", "parquet"]
-    validation_boundary: Any
-    test_boundary: Any
-    split_overlap: int
-    # training config
-    epochs: int
-    quantiles: Sequence[float]
-    kernel_regularizer: RegularizerT
-    bias_regularizer: RegularizerT
-    activity_regularizer: RegularizerT
-    recurrent_regularizer: RegularizerT
+    batch_size: int = 64
+    epochs: int = 10
+    validation_boundary: Any = None
+    test_boundary: Any = None
+    split_overlap: int = None
+    test_split_save_format: Literal["csv", "parquet"] = "parquet"
+    dropout_rate: int = 0.1
+    compression: Literal["GZIP"] | None = "GZIP"
+    drop_remainder: bool = True
+    shuffle_buffer_size: int = 1024
+    num_outputs: int = 1
+    decay_steps: float | None = None
+    decay_alpha: float | None = None
+    clipnorm: float | None = None
+    use_ema: bool = False
+    weight_decay: float | None = None
+    quantiles: Sequence[float] = (0.1, 0.5, 0.9)
+    kernel_regularizer: RegularizerT = None
+    bias_regularizer: RegularizerT = None
+    activity_regularizer: RegularizerT = None
+    recurrent_regularizer: RegularizerT = None
 
     def __str__(self) -> str:
         return json.dumps(dataclasses.asdict(self), indent=4, sort_keys=True, default=str)

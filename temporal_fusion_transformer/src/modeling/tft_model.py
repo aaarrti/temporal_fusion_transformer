@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import keras
 import numpy as np
@@ -19,9 +19,7 @@ from temporal_fusion_transformer.src.modeling.tft_layers import (
     TransformerBlock,
     VariableSelectionNetwork,
 )
-from temporal_fusion_transformer.src.utils import count_inputs
 
-newaxis = None
 
 if TYPE_CHECKING:
     import tensorflow as tf
@@ -328,10 +326,21 @@ class TemporalFusionTransformer(keras.Model):
         config: Config, weights_path: str | None = None
     ) -> TemporalFusionTransformer:
         model = TemporalFusionTransformer.from_dataclass_config(config)
-        num_inputs = count_inputs(config)
+        num_inputs = len(
+            {
+                *config.input_static_idx,
+                *config.input_observed_idx,
+                *config.input_known_real_idx,
+                *config.input_known_categorical_idx,
+            }
+        )
 
         x = np.ones(shape=(1, config.total_time_steps, num_inputs), dtype=np.float32)
         model.predict(x, verbose=False)
         if weights_path is not None:
             model.load_weights(weights_path)
         return model
+
+    def compile_from_dataclass_config(self):
+        # TODO
+        pass
