@@ -25,19 +25,12 @@ class AirPassengerPreprocessor(PreprocessorBase):
             return pl.Series(self.categorical["month"].transform(y.to_numpy()))
 
         return df.with_columns(
-            pl.col("passengers").map_batches(map_passengers, return_dtype=pl.Float64),
-            pl.col("year").map_batches(map_year, return_dtype=pl.Float64),
+            pl.col("passengers").map_batches(map_passengers),
+            pl.col("year").map_batches(map_year),
             pl.col("month").map_batches(map_month),
         )
 
     def inverse_transform(self, df: pl.DataFrame) -> pl.DataFrame:
-        def map_passengers(ps: pl.Series):
-            return pl.Series(
-                self.target["passengers"]
-                .inverse_transform(ps.to_numpy().reshape(-1, 1))
-                .reshape(-1)
-            )
-
         def map_year(y: pl.Series):
             return pl.Series(
                 self.real["year"].inverse_transform(y.to_numpy().reshape(-1, 1)).reshape(-1)
@@ -49,9 +42,14 @@ class AirPassengerPreprocessor(PreprocessorBase):
             )
 
         return df.with_columns(
-            pl.col("passengers").map_batches(map_passengers, return_dtype=pl.Float32),
-            pl.col("year").map_batches(map_year, return_dtype=pl.Float32),
-            pl.col("month").map_batches(map_month, return_dtype=pl.Int64),
+            pl.col("passengers").map_batches(self.inverse_transform_passengers),
+            pl.col("year").map_batches(map_year),
+            pl.col("month").map_batches(map_month),
+        )
+
+    def inverse_transform_passengers(self, ps: pl.Series):
+        return pl.Series(
+            self.target["passengers"].inverse_transform(ps.to_numpy().reshape(-1, 1)).reshape(-1)
         )
 
     def fit(self, df: pl.DataFrame):

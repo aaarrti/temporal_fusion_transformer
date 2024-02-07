@@ -52,6 +52,7 @@ class TemporalFusionTransformer(keras.Model):
         bias_regularizer: RegularizerT,
         activity_regularizer: RegularizerT,
         recurrent_regularizer: RegularizerT,
+        # unroll_lstm: bool,
         **kwargs,
     ):
         super().__init__(**kwargs)
