@@ -1,120 +1,199 @@
 from __future__ import annotations
 
-import functools
-import inspect
 import logging
-from collections import OrderedDict
-from collections.abc import Callable, Iterable, Sequence
-from datetime import datetime
-from importlib import util
-from types import FunctionType, MethodType
-from typing import Any, Literal, TypeVar
-
-import tomli
-import toolz
-
-from temporal_fusion_transformer.src.config import Config
+from datetime import date, datetime
+from typing import Callable
+from collections.abc import Iterator
+from functools import partial
+import holoviews
+import jax
+import jax.numpy as jnp
+import numpy as np
+import polars as pl
+from bokeh.models import DatetimeTickFormatter
+from flax import struct
+from tqdm.auto import tqdm
 
 log = logging.getLogger(__name__)
-T = TypeVar("T", bound=type)
-R = TypeVar("R")
-R2 = TypeVar("R2")
-C = TypeVar("C", bound=Callable)
 
 
-def enumerate_v2(it: Iterable[R], start: int = 0) -> Iterable[tuple[int, R]]:
-    return enumerate(it, start=start)
+@struct.dataclass
+class FeatureImportance:
+    historical_flags: jax.Array
+    future_flags: jax.Array
 
 
-def zip_v2(it1: Iterable[R], it2: Iterable[R2]) -> Iterable[tuple[R, R2]]:
-    return zip(it1, it2)
+def time_series_to_array(ts: np.ndarray) -> np.ndarray:
+    """
+
+    Parameters
+    ----------
+    ts:
+        3D time series.
+
+    Returns
+    -------
+
+    arr:
+        2D array, without repeated instances.
+
+    """
+    if np.ndim(ts) != 3:
+        raise ValueError("ts must be 3d array")
+
+    first_ts = ts[0, :-1]
+    rest = [i[-1] for i in ts]
+    return np.concatenate([first_ts, rest], axis=0)
 
 
-def dict_map(d: dict[str, R], map_fn: Callable[[R], R2]) -> dict[str, R2]:
-    new_dict = {}
+def timeseries_from_array(
+    x: np.ndarray | jnp.ndarray,
+    total_time_steps: int,
+    arr_factory: Callable[[np.ndarray], np.ndarray] = partial(np.asarray, dtype=jnp.float32),
+) -> np.ndarray:
+    """
+    Converts raw dataframe from a 2-D tabular format to a batched 3-D array to feed into Keras model.
 
-    for k, v in d.items():
-        if isinstance(v, dict):
-            v = dict_map(v, map_fn)
-        else:
-            v = map_fn(v)
-        new_dict[k] = v
+    Parameters
+    -------
 
-    return new_dict
+    x:
+        2D array.
+    total_time_steps:
 
-
-@toolz.curry
-def log_before(
-    func: C,
-    logger: Callable[[str], None] = log.debug,
-    ignore_argnums: Sequence[int] = (),
-    ignore_argnames: Sequence[str] = (),
-) -> C:
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        func_args = inspect.signature(func).bind(*args, **kwargs).arguments
-        func_args_str = format_callable_args(func_args, ignore_argnums, ignore_argnames)
-        func_name_str = format_callable_name(func)
-        logger(f"Entered {func_name_str} with args ( {func_args_str} )")
-        return func(*args, **kwargs)
-
-    return wrapper
+    arr_factory:
 
 
-@toolz.curry
-def log_after(func: C, logger: Callable[[str], None] = log.debug) -> C:
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        retval = func(*args, **kwargs)
-        func_name_str = format_callable_name(func)
-        logger(f"Exited {func_name_str}(...) with value: {repr(retval)}")
-        return retval
 
-    return wrapper
+    Returns
+    -------
 
+    arr:
+        Batched Numpy array with shape=(?, self.time_steps, self.input_size)
 
-def format_callable_name(func: Callable) -> str:
-    if hasattr(func, "__wrapped__"):
-        return format_callable_name(func.__wrapped__)
+    """
+    x = arr_factory(x)
+    time_steps = len(x)
+    if time_steps < total_time_steps:
+        raise ValueError("time_steps < total_time_steps")
 
-    if isinstance(func, functools.partial):
-        return f"partial({format_callable_name(func.func)})"
-
-    if inspect.isfunction(func):
-        _func: FunctionType = func
-        return f"{_func.__module__}.{_func.__qualname__}"
-
-    elif inspect.ismethod(func):
-        _method: MethodType = func
-        return f"{_method.__module__}.{_method.__class__}.{_method.__qualname__}"
-
-    else:
-        log.error(f"Don't know how to format name of ${func}")
-        return repr(func)
+    return np.stack(
+        [
+            x[i : time_steps - (total_time_steps - 1) + i, :]
+            for i in range(total_time_steps)
+        ], axis=1)
 
 
-def format_callable_args(
-    arguments: OrderedDict[str, Any],
-    ignore_argnums: Sequence[int] = (),
-    ignore_argnames: Sequence[str] = (),
-) -> str:
-    filtered_args = {}
-
-    for i, (k, v) in enumerate(arguments.items()):
-        if i not in ignore_argnums and k not in ignore_argnames:
-            filtered_args[k] = v
-
-    return ", ".join(map("{0[0]} = {0[1]!r}".format, filtered_args.items()))
+def unpack_xy(
+    arr: np.ndarray, encoder_steps: int, n_targets: int = 1
+) -> tuple[np.ndarray, np.ndarray]:
+    x_id = arr.shape[-1] - n_targets
+    x = arr[..., :x_id]
+    y = arr[:, encoder_steps:, x_id:]
+    return x, y
 
 
-def make_timestamp_tag() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M")
-
-
-def count_inputs(config: Config) -> int:
+def split_dataframe(dataframe: pl.DataFrame, test_boundary: datetime | date) -> tuple[pl.DataFrame, pl.DataFrame]:
     return (
-        len(config.input_observed_idx)
-        + len(config.input_static_idx)
-        + len(config.input_known_real_idx)
-        + len(config.input_known_categorical_idx)
+        dataframe.filter(pl.col("ts") < test_boundary),
+        dataframe.filter(pl.col("ts") >= test_boundary)
+    )
+
+
+def plot_split(
+    dataframe: pl.DataFrame,
+    validation_boundary: date | datetime,
+    **kwargs,
+) -> holoviews.Layout:
+    """
+    Parameters
+    ----------
+    dataframe:
+        Must have columns `y` and `ts`
+    validation_boundary
+    kwargs
+
+    Returns
+    -------
+
+    """
+    xformatter = DatetimeTickFormatter(months="%b %Y")
+    train_dataframe, validation_dataframe = split_dataframe(dataframe, validation_boundary)
+    train_dataframe = train_dataframe.with_columns(split=pl.lit("training"))
+    validation_dataframe = validation_dataframe.with_columns(split=pl.lit("validation"))
+    dataframe = pl.concat([train_dataframe, validation_dataframe])
+    kw = dict(y="y", x="ts", xformatter=xformatter, by="split", legend=True, grid=True, **kwargs)
+    return dataframe.plot.line(**kw) * dataframe.plot.scatter(**kw)
+
+
+def plot_predictions_vs_real(dataframe: pl.DataFrame, **kwargs) -> holoviews.Layout:
+    """
+
+    Parameters
+    ----------
+    dataframe: Dataframe with columns:
+     - ts
+     - y
+     - yhat
+     - yhat_low
+     - yhat_up
+
+    Returns
+    -------
+    """
+
+    xformatter = DatetimeTickFormatter(months="%b %Y")
+
+    kwargs = dict(x="ts", autorange="x", grid=True, legend=True, xformatter=xformatter, **kwargs)
+
+    area = dataframe.plot.area(y="yhat_up", y2="yhat_low", **kwargs)
+
+    p1 = dataframe.plot.line(y="y", color="gray", **kwargs)
+    s1 = dataframe.plot.scatter(y="y", color="gray", **kwargs)
+
+    p2 = dataframe.plot.line(y="yhat", color="blue", **kwargs).opts(color="blue")
+    s2 = dataframe.plot.scatter(y="yhat", color="blue", **kwargs).opts(color="blue")
+
+    return (area * (p1 * s1)) * (p2 * s2)
+
+
+def plot_feature_importance(
+    ts: list[date],
+    explanations: FeatureImportance,
+    feature_names: list[str],
+) -> holoviews.Layout:
+    """
+    Parameters
+    ----------
+    ts
+    explanations:
+        Must contain flattened 2D sequences, not time series!!!
+    feature_names
+
+    Returns
+    -------
+
+    """
+    xformatter = DatetimeTickFormatter(months="%b %Y")
+
+    data = {
+        f"{name}_importance": np.concatenate(
+            [explanations.historical_flags[..., i], explanations.future_flags[..., i]]
+        )
+        for i, name in enumerate(feature_names)
+    }
+
+    explanations_df = pl.DataFrame(
+        {
+            "ts": ts,
+            **data,
+        }
+    )
+
+    return explanations_df.plot.area(
+        x="ts",
+        y=list(data.keys()),
+        xformatter=xformatter,
+        legend=True,
+        grid=True,
     )

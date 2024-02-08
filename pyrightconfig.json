@@ -1,0 +1,7 @@
+{
+  "venvPath": "/Users/artemsereda/miniconda3/envs/",
+  "venv": "py310",
+  "reportImportCycles": "error",
+  "reportUnusedImport":true,
+  "typeCheckingMode": "basic"
+}

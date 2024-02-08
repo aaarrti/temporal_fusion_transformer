@@ -1,0 +1,10 @@
+flax
+jax[cpu]
+optax
+clu
+chex
+polars
+bokeh
+holoviews
+hvplot
+scikit-learn

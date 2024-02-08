@@ -2,30 +2,12 @@ from __future__ import annotations
 
 import gc
 import logging
-import os
-import pathlib
-from collections import defaultdict
-from datetime import datetime, timedelta
-from glob import glob
+from datetime import datetime
 from importlib import util
 from pathlib import Path
 
 import polars as pl
-import tensorflow as tf
-from matplotlib import pyplot as plt
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.validation import _is_fitted  # noqa
-from tqdm.auto import tqdm
-
-from temporal_fusion_transformer.src.config import Config
-from temporal_fusion_transformer.src.datasets.base import (
-    MultiHorizonTimeSeriesDataset,
-    PreprocessorBase,
-)
-from temporal_fusion_transformer.src.datasets.utils import (
-    report_columns_mismatch,
-    time_series_dataset_from_dataframe,
-)
 
 log = logging.getLogger(__name__)
 # date is in interval [2013-1-1, 2017-8-15]
@@ -72,90 +54,7 @@ _TARGETS = ["log_sales"]
 _ID_COLUMN = "traj_id"
 
 
-class FavoritaDataset(MultiHorizonTimeSeriesDataset):
-    def __init__(self, config: Config):
-        self.config = config
-        self.preprocessor = FavoritaPreprocessor(
-            defaultdict(StandardScaler), defaultdict(StandardScaler), defaultdict(LabelEncoder)
-        )
-
-    def make_dataset(
-        self, data_dir: str, save_dir: str | None = None
-    ) -> None | tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, FavoritaPreprocessor]:
-        df = read_parquet(data_dir)
-
-        report_columns_mismatch(df, [_ID_COLUMN] + _TARGETS + _REAL_INPUTS + _CATEGORICAL_INPUTS)
-
-        reloaded_preprocessor = maybe_reload_preprocessor(data_dir)
-
-        if reloaded_preprocessor is None:
-            self.preprocessor.fit(df)
-            self.preprocessor.save(data_dir)
-        else:
-            self.preprocessor = reloaded_preprocessor
-
-        df = self.preprocessor.transform(df)
-        training_df, validation_df, test_df = split_data(df, self.config)
-
-        training_ds = self.make_timeseries(training_df)
-        validation_ds = self.make_timeseries(validation_df)
-
-        return training_ds, validation_ds, test_df, self.preprocessor
-
-    def make_timeseries(self, df: pl.DataFrame):
-        return time_series_dataset_from_dataframe(
-            df,
-            inputs=_CATEGORICAL_INPUTS + _REAL_INPUTS,
-            targets=_TARGETS,
-            id_column="traj_id",
-            total_time_steps=self.config.total_time_steps,
-        )
-
-    def convert_to_parquet(
-        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
-    ):
-        if all([pathlib.Path(f"{download_dir}/{i}").is_file() for i in _REQUIRED_FILES]):
-            log.debug(f"Found {_REQUIRED_FILES} locally, will re-use them")
-            return
-
-        if output_dir is None:
-            output_dir = download_dir
-
-        files = glob(f"{download_dir}/*.csv")
-        for file in tqdm(files, desc="Converting to parquet"):
-            file: str
-            target_file = file.replace(download_dir, output_dir).replace("csv", "parquet")
-            pl.scan_csv(file, try_parse_dates=True).sink_parquet(target_file)
-            if delete_processed:
-                os.remove(file)
-
-    def plot_dataset_splits(self, data_dir: str, entity: str):
-        df = (
-            pl.scan_parquet(f"{data_dir}/train.parquet")
-            .filter(pl.col("traj_id") == entity)
-            .collect()
-        )
-
-        df = restore_timestamp(df)
-
-        validation_boundary, test_boundary = compute_split_spec(self.config)
-
-        plt.axvline(
-            x=validation_boundary, color="green", linestyle="dashed", label="validation boundary"
-        )
-        plt.axvline(x=test_boundary, color="red", linestyle="dashed", label="test boundary")
-
-        x = df["timestamp"]
-        y = df["log_sales"]
-
-        plt.plot(x, y, color="gray", label="log_sales")
-        plt.title(entity)
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-
-
-class FavoritaPreprocessor(PreprocessorBase):
+class FavoritaPreprocessor:
     def fit(self, df: pl.DataFrame):
         # In contrast for favorita we don't group before training StandardScaler
         for i in _TARGETS:
@@ -369,30 +268,3 @@ def downcast_dataframe(df: pl.DataFrame | pl.LazyFrame, streaming: bool = False)
 
     df = df.shrink_to_fit(in_place=True).rechunk()
     return df.lazy()
-
-
-def compute_split_spec(config: Config) -> tuple[datetime, datetime]:
-    validation_boundary: datetime = config.validation_boundary
-    forecast_horizon = config.total_time_steps - config.encoder_steps
-    test_boundary = validation_boundary + timedelta(days=forecast_horizon)
-    return validation_boundary, test_boundary
-
-
-def restore_timestamp(df: pl.DataFrame) -> pl.DataFrame:
-    days = df["day_of_month"]
-    month = df["month"]
-    year = df["year"]
-
-    ts = [datetime(year=y, month=m, day=d).date() for d, m, y in zip(days, month, year)]
-    return df.with_columns(pl.lit(ts).alias("date"))
-
-
-def maybe_reload_preprocessor(data_dir: str) -> FavoritaPreprocessor | None:
-    filenames = [
-        f"{data_dir}/preprocessor.categorical.joblib",
-        f"{data_dir}/preprocessor.real.joblib",
-        f"{data_dir}/preprocessor.target.joblib",
-    ]
-
-    if all([pathlib.Path(i).is_file() for i in filenames]):
-        return FavoritaPreprocessor.load(data_dir)

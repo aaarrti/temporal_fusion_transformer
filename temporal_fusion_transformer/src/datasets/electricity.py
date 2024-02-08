@@ -1,285 +1,148 @@
 from __future__ import annotations
 
 import logging
-import os
-import pathlib
 from collections import defaultdict
-from datetime import date, datetime, timedelta
-from tempfile import TemporaryDirectory
+from typing import Callable
 
-import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-import tensorflow as tf
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-from temporal_fusion_transformer.src.config import Config
-from temporal_fusion_transformer.src.datasets.base import (
-    MultiHorizonTimeSeriesDataset,
-    PreprocessorBase,
-    SplitSpec,
-)
-from temporal_fusion_transformer.src.datasets.utils import (
-    report_columns_mismatch,
-    time_series_dataset_from_dataframe,
-)
+from temporal_fusion_transformer.src.datasets.preprocessor import PreprocessorBase
 
-_ID_COLUMN = "id"
-_REAL_INPUTS = ["year"]
 _CATEGORICAL_INPUTS = ["month", "day", "hour", "day_of_week"]
-#  Filter to match range used by other academic papers
-_CUTTOFF_DAYS = (1096, 1346)
-_INPUTS = _REAL_INPUTS + _CATEGORICAL_INPUTS + [_ID_COLUMN]
-_TARGETS = ["power_usage"]
+
 log = logging.getLogger(__name__)
 
 
-class ElectricityDataset(MultiHorizonTimeSeriesDataset):
-    def __init__(self, config: Config):
+class Preprocessor(PreprocessorBase):
+    
+    def __init__(self, state: dict[str, dict[str, ...]] | None = None):
+        if state is None:
+            state = {
+                "year": defaultdict(StandardScaler),
+                "target": defaultdict(StandardScaler),
+                "categorical": defaultdict(LabelEncoder)
+            }
+        super().__init__(state)
+        
+    @property
+    def year(self) -> dict[str, StandardScaler]:
         """
-        References
-        ----------
-
-        - https://archive.ics.uci.edu/dataset/321/electricityloaddiagrams20112014
-
-        Parameters
-        ----------
+        
+        Returns
+        -------
+        
+        year: dict[id, StandardScaler]
 
         """
-        self.config = config
-        self.preprocessor = ElectricityPreprocessor(
-            defaultdict(StandardScaler), defaultdict(StandardScaler), defaultdict(LabelEncoder)
+        return self.state['year']
+    
+    @property
+    def target(self) -> dict[str, StandardScaler]:
+        """
+        
+        Returns
+        -------
+        
+        target: dict[id, StandardScaler]
+
+        """
+        return self.state['target']
+    
+    @property
+    def categorical(self) -> dict[str, LabelEncoder]:
+        """
+        
+        Returns
+        -------
+        
+        categorical: dict[feature, LabelEncoder]
+
+        """
+        return self.state['categorical']
+    
+    def group_mapper(self, group_df: pl.DataFrame) -> pl.DataFrame:
+        group_id = group_df["id"][0]
+        
+        new_df = group_df.with_columns(
+            pl.col('year').map_batches(
+                _make_real_mapper(self.year[group_id])
+            ),
+            pl.col('y').map_batches(
+                _make_real_mapper(self.target[group_id])
+            )
         )
-
-    def convert_to_parquet(
-        self, download_dir: str, output_dir: str | None = None, delete_processed: bool = True
-    ):
-        if output_dir is None:
-            output_dir = download_dir
-
-        if pathlib.Path(f"{output_dir}/LD2011_2014.parquet").is_file():
-            log.info("Found LD2011_2014.parquet, will re-use it.")
-            return
-
-        with open(f"{download_dir}/LD2011_2014.txt") as file:
-            txt_content = file.read()
-
-        csv_content = txt_content.replace(",", ".").replace(";", ",")
-
-        with TemporaryDirectory() as tmpdir:
-            with open(f"{tmpdir}/LD2011_2014.csv", "w+") as file:
-                file.write(csv_content)
-
-            pl.scan_csv(
-                f"{tmpdir}/LD2011_2014.csv", infer_schema_length=999999, try_parse_dates=True
-            ).rename({"": "timestamp"}).sink_parquet(f"{output_dir}/LD2011_2014.parquet")
-
-        if delete_processed:
-            os.remove(f"{download_dir}/LD2011_2014.txt")
-
-    def make_dataset(
-        self,
-        data_dir: str,
-    ) -> tuple[tf.data.Dataset, tf.data.Dataset, pl.DataFrame, ElectricityPreprocessor]:
-        df = read_parquet(data_dir)
-
-        report_columns_mismatch(df, [_ID_COLUMN] + _INPUTS + _TARGETS)
-
-        self.preprocessor.fit(df)
-
-        split_spec = compute_split_spec(self.config)
-
-        training_df, validation_df, test_df = split_data(df, split_spec)
-        training_time_series = self.make_time_series(training_df)
-        validation_time_series = self.make_time_series(validation_df)
-
-        return training_time_series, validation_time_series, test_df, self.preprocessor
-
-    def make_time_series(self, df: pl.DataFrame):
-        return time_series_dataset_from_dataframe(
-            df,
-            inputs=_INPUTS,
-            targets=_TARGETS,
-            id_column=_ID_COLUMN,
-            total_time_steps=self.config.total_time_steps,
-            preprocessor=self.preprocessor.transform,
-        )
-
-    def plot_dataset_splits(self, data_dir: str, entity: str):
-        split_spec = compute_split_spec(self.config)
-
-        plt.axvline(x=split_spec.train_end, color="red", linestyle="dashed", label="train end")
-
-        plt.axvline(
-            x=split_spec.validation_start,
-            color="blue",
-            linestyle="dashed",
-            label="validation start",
-        )
-
-        plt.axvline(
-            x=split_spec.validation_end, color="orange", linestyle="dashed", label="validation end"
-        )
-
-        plt.axvline(x=split_spec.test_start, color="green", linestyle="dashed", label="test start")
-
-        df = read_parquet(data_dir).filter(pl.col("id") == entity)
-
-        x = df["timestamp"]
-        y = df["power_usage"]
-
-        plt.plot(x, y, color="gray")
-        plt.title(entity)
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-
-
-class ElectricityPreprocessor(PreprocessorBase):
+        
+        return new_df
+    
     def transform(self, df: pl.DataFrame) -> pl.DataFrame:
-        def categorical_mapper(encoder: LabelEncoder) -> pl.Series:
-            def map_fn(s: pl.Series) -> pl.Series:
-                return pl.Series(encoder.transform(s.to_numpy()))
-
-            return map_fn
-
-        def float_mapper(target: np.ndarray):
-            def map_fn(s: pl.Series) -> pl.Series:
-                return pl.Series(target).cast(pl.Float32)
-
-            return map_fn
-
-        def group_mapper(group_df: pl.DataFrame) -> pl.DataFrame:
-            df_id = group_df["id"][0]
-
-            x_real = group_df[_REAL_INPUTS].to_numpy(order="c")
-
-            x_real = self.real[df_id].transform(x_real)
-
-            group_df = group_df.with_columns(
-                [
-                    pl.col(j).map_batches(float_mapper(i), pl.Float32)
-                    for i, j in zip(x_real.T, _REAL_INPUTS)
-                ]
-            )
-
-            x_target = group_df[_TARGETS].to_numpy(order="c")
-            x_target = self.target[df_id].transform(x_target)
-            group_df = group_df.with_columns(
-                [
-                    pl.col(j).map_batches(float_mapper(i), pl.Float32)
-                    for i, j in zip(x_target.T, _TARGETS)
-                ]
-            )
-            return group_df
-
         df = (
             df.group_by("id")
-            .map_groups(group_mapper)
+            .map_groups(self.group_mapper)
             .with_columns(
                 [
-                    pl.col(i).map_batches(
-                        categorical_mapper(self.categorical[i]), return_dtype=pl.Int64
-                    )
-                    for i in [_ID_COLUMN] + _CATEGORICAL_INPUTS
+                    pl.col(i).map_batches(_make_categorical_mapper(self.categorical[i]))
+                    for i in ('id', "month", "day", "hour", "day_of_week")
                 ]
             )
             .shrink_to_fit(in_place=True)
             .rechunk()
+            .select(
+                'id',
+                "ts",
+                "year",
+                "month",
+                "day",
+                "day_of_week",
+                "hour",
+                "y",
+            )
         )
         return df
-
-    def inverse_transform(self, df: pl.DataFrame) -> pl.DataFrame:
-        pass
-
+    
     def fit(self, df: pl.DataFrame):
-        for i, sub_df in df.groupby("id"):
-            self.target[i].fit(df[_TARGETS].to_numpy(order="c"))
-            self.real[i].fit(df[_REAL_INPUTS].to_numpy(order="c"))
-
-        for i in [_ID_COLUMN] + _CATEGORICAL_INPUTS:
+        for i, sub_df in df.group_by(["id"]):
+            i = i[0]
+            self.target[i].fit(df.select('y').to_numpy(order="c"))
+            self.year[i].fit(df.select('year').to_numpy(order="c"))
+        
+        for i in ('id', "month", "day", "hour", "day_of_week"):
             self.categorical[i].fit(df[i].to_numpy())
-
-
-def read_parquet(data_dir: str) -> pl.DataFrame:
-    lf = pl.scan_parquet(f"{data_dir}/LD2011_2014.parquet").collect().pipe(cutoff_df).lazy()
-
-    timeseries_ids = lf.columns[1:]
-
-    # down sample to 1h https://pola-rs.github.io/polars-book/user-guide/transformations/time-series/rolling/
-    lf = (
-        lf.sort("timestamp")
-        .groupby_dynamic("timestamp", every="1h")
-        .agg([pl.col(i).mean() for i in timeseries_ids])
-    )
-    lf_list = []
-
-    for label in timeseries_ids:
-        sub_lf = lf.select("timestamp", label)
-
-        sub_lf = sub_lf.rename({label: "power_usage"}).with_columns(
-            [
-                pl.col("power_usage").cast(pl.Float32),
-                pl.col("timestamp").dt.year().alias("year").cast(pl.UInt16),
-                pl.col("timestamp").dt.month().alias("month").cast(pl.UInt8),
-                pl.col("timestamp").dt.hour().alias("hour").cast(pl.UInt8),
-                pl.col("timestamp").dt.day().alias("day").cast(pl.UInt8),
-                pl.col("timestamp").dt.weekday().alias("day_of_week").cast(pl.UInt8),
-            ],
-            id=pl.lit(label),
+        
+        self.state = {
+            "target": dict(**self.target),
+            "year": dict(**self.year),
+            "categorical": dict(**self.categorical)
+        }
+    
+    @staticmethod
+    def to_array(dataframe: pl.DataFrame) -> np.ndarray:
+        return (
+            dataframe.select(
+                'id',
+                "year",
+                "month",
+                "day",
+                "day_of_week",
+                "hour",
+                "y",
+            ).to_numpy(order='c')
         )
-        lf_list.append(sub_lf)
+        
+    
 
-    df = pl.concat(pl.collect_all(lf_list)).shrink_to_fit(in_place=True).rechunk()
-    log.debug(f"{df.null_count() = }")
-    return df
-
-
-def split_data(
-    df: pl.DataFrame,
-    split_spec: SplitSpec,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """
-    This dataset was recorded in interval [2011-01-01, 2015-01-01].
-    """
-
-    train_df = df.filter(pl.col("timestamp") < split_spec.train_end)
-    validation_df: pl.DataFrame = df.filter(
-        pl.col("timestamp") >= split_spec.validation_start
-    ).filter(pl.col("timestamp") < split_spec.validation_end)
-    test_df = df.filter(pl.col("timestamp") >= split_spec.test_start)
-    return (
-        train_df.drop("timestamp").shrink_to_fit(in_place=True).rechunk(),
-        validation_df.drop("timestamp").shrink_to_fit(in_place=True).rechunk(),
-        test_df.drop("timestamp").shrink_to_fit(in_place=True).rechunk(),
-    )
+def _make_categorical_mapper(encoder: LabelEncoder) -> Callable[[pl.Series], pl.Series]:
+    def map_fn(s: pl.Series):
+        return pl.Series(encoder.transform(s.to_numpy()))
+    
+    return map_fn
 
 
-def cutoff_df(df: pl.DataFrame) -> pl.DataFrame:
-    log.debug(f"Before cutoff {len(df) = }")
-    start_date: datetime = df["timestamp"].min()
-    cutoff_left = start_date + timedelta(days=_CUTTOFF_DAYS[0])
-    cutoff_right = start_date + timedelta(days=_CUTTOFF_DAYS[1])
-    df = (
-        df.lazy()
-        .filter(pl.col("timestamp") >= cutoff_left)
-        .filter(pl.col("timestamp") <= cutoff_right)
-        .collect()
-    )
-    log.debug(f"After cutoff {len(df) = }")
-    return df
-
-
-def compute_split_spec(config: Config) -> SplitSpec:
-    validation_boundary: date = config.validation_boundary
-    test_boundary: date = config.test_boundary
-
-    val_df_start = validation_boundary - timedelta(days=config.split_overlap)
-    test_df_start = test_boundary - timedelta(days=config.split_overlap)
-
-    return SplitSpec(
-        train_end=validation_boundary,
-        validation_end=test_boundary,
-        validation_start=val_df_start,
-        test_start=test_df_start,
-    )
+def _make_real_mapper(scaler: StandardScaler) -> Callable[[pl.Series], pl.Series]:
+    def map_fn(s: pl.Series):
+        arr = np.asarray(s).reshape((-1, 1))
+        arr = scaler.transform(arr).reshape(-1)
+        return pl.Series(arr)
+    
+    return map_fn
