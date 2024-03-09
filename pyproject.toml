@@ -1,0 +1,33 @@
+[project]
+name = "temporal_fusion_transformer"
+version = "0.0.1dev1"
+description = "JAX re-write of Temporal Fusion Transformer"
+readme = "Readme.md"
+requires-python = ">=3.8"
+authors = [
+    { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" },
+]
+maintainers = [
+    { name = "Artem Sereda", email = "artem.sereda.tub@gmail.com" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+]
+dependencies = []
+
+[project.urls]
+"Homepage" = "https://github.com/aaarrti/temporal_fusion_transformer"
+
+
+[build-system]
+requires = ["flit-core >= 3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+
+[tool.ruff]
+line-length = 100

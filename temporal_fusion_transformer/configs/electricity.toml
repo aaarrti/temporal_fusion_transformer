@@ -1,0 +1,54 @@
+encoder_steps = 168  # 7 * 24
+total_time_steps = 192   # 8 * 24
+num_outputs = 1
+static_categories_sizes = [
+    370 # id
+]
+known_categories_sizes = [
+    12, # month
+    31, # day
+    24, # hour
+    7, # day of week
+]
+input_static_idx = [
+    0   # id
+]
+input_known_categorical_idx = [
+    1, # month
+    2, # day
+    3, # hour
+    4, # day of week
+]
+input_known_real_idx = [
+    0  # year
+]
+input_observed_idx = []
+num_attention_heads = 4
+num_decoder_blocks = 1
+hidden_layer_size = 160
+dropout_rate = 0.1
+quantiles = [0.1, 0.5, 0.9]
+batch_size = 64
+epochs = 20
+learning_rate = 1e-3
+decay_steps = "None"
+decay_alpha = "None"
+clipnorm = "None"
+use_ema = false
+weight_decay = "None"
+compression = "GZIP"
+drop_remainder = true
+shuffle_buffer_size = 1024
+test_split_save_format = "parquet"
+validation_boundary = 2014-08-08
+test_boundary = 2014-09-01
+# days
+split_overlap = 7
+kernel_regularizer = "None"
+bias_regularizer = "None"
+activity_regularizer = "None"
+recurrent_regularizer = "None"
+
+
+
+

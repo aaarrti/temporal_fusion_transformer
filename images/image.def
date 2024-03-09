@@ -1,0 +1,16 @@
+Bootstrap: docker
+From: nvcr.io/nvdlfwea/jax/jax:23.07-py3
+
+%post -c /bin/bash
+    /usr/bin/python -m pip install --upgrade pip
+    /usr/bin/python -m pip install \
+        keras_core==0.1.7 ml-collections==0.1.1 clu==0.0.9 tensorflow==2.14.0 \
+        slack_sdk==3.21.3 nvidia-ml-py keras-tuner==1.4.5 toolz
+
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+
+%runscript
+    #!/bin/bash
+    /usr/bin/python -m pip install . --no-deps
+    exec "$@"
