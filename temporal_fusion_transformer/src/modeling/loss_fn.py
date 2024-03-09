@@ -10,7 +10,10 @@ _epsilon = jnp.asarray(1e-6)
 
 @partial(jax.jit, static_argnums=[2, 3], static_argnames=["tau", "dtype"])
 def quantile_pinball_loss(
-    y_true: jax.Array, y_pred: jax.Array, tau: tuple[float, ...] = (0.1, 0.5, 0.9), dtype: DTypeLike = jnp.float32
+    y_true: jax.Array,
+    y_pred: jax.Array,
+    tau: tuple[float, ...] = (0.1, 0.5, 0.9),
+    dtype: DTypeLike = jnp.float32,
 ) -> jax.Array:
     """
 
@@ -34,7 +37,7 @@ def quantile_pinball_loss(
         Quantiles to use for loss calculations with shape (q,), each (between 0 & 1)
         must be a tuple in order for __hash__ to work
     dtype
-    
+
     Returns
     -------
     loss:
@@ -53,9 +56,7 @@ def quantile_pinball_loss(
 
 
 # @partial(jax.jit, inline=True, static_argnums=[2], static_argnames=["tau"])
-def pinball_loss(
-    y_true: jax.Array, y_pred: jax.Array, tau: float
-) -> jax.Array:
+def pinball_loss(y_true: jax.Array, y_pred: jax.Array, tau: float) -> jax.Array:
     """
 
     Computes the pinball loss between `y_true` and `y_pred`.
@@ -75,7 +76,7 @@ def pinball_loss(
     y_pred:
         3D float (batch time n)
     tau:
-    
+
     Returns
     -------
     loss:

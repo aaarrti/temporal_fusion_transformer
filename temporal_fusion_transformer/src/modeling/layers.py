@@ -264,7 +264,6 @@ class InputEmbedding(nn.Module):
 
 
 class StaticCovariatesEncoder(nn.Module):
-
     """
     Create a static context out of static input embeddings.
     Static context is a (enrichment) vector, which must be added to other time varying inputs during

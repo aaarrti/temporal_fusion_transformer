@@ -9,7 +9,7 @@ from sklearn.preprocessing import FunctionTransformer
 
 
 class PreprocessorBase(ABC):
-    
+
     def __init__(self, state: dict[str, ...]):
         self.state = state
 
@@ -34,7 +34,7 @@ class PreprocessorBase(ABC):
         return cls(state)
 
     def __repr__(self) -> str:
-        return repr({k: repr(v) for k,v in self.state.items()})
+        return repr({k: repr(v) for k, v in self.state.items()})
 
 
 def MonthNormalizer():

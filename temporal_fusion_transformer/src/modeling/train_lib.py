@@ -39,8 +39,7 @@ class ApplyFn(Protocol):
         training: bool = False,
         capture_intermediates: bool | Callable[[nn.Module, str], bool] = False,
         **kwargs,
-    ) -> TftOutputs:
-        ...
+    ) -> TftOutputs: ...
 
 
 @struct.dataclass

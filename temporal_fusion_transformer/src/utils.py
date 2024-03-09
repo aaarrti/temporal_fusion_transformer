@@ -78,10 +78,8 @@ def timeseries_from_array(
         raise ValueError("time_steps < total_time_steps")
 
     return np.stack(
-        [
-            x[i : time_steps - (total_time_steps - 1) + i, :]
-            for i in range(total_time_steps)
-        ], axis=1)
+        [x[i : time_steps - (total_time_steps - 1) + i, :] for i in range(total_time_steps)], axis=1
+    )
 
 
 def unpack_xy(
@@ -93,10 +91,12 @@ def unpack_xy(
     return x, y
 
 
-def split_dataframe(dataframe: pl.DataFrame, test_boundary: datetime | date) -> tuple[pl.DataFrame, pl.DataFrame]:
+def split_dataframe(
+    dataframe: pl.DataFrame, test_boundary: datetime | date
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     return (
         dataframe.filter(pl.col("ts") < test_boundary),
-        dataframe.filter(pl.col("ts") >= test_boundary)
+        dataframe.filter(pl.col("ts") >= test_boundary),
     )
 
 
