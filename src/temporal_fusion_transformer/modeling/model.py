@@ -4,11 +4,10 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import struct
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 from temporal_fusion_transformer.modeling.layers import (
     EmbeddingStruct,
-    ComputeDtype,
     StaticCovariatesEncoder,
     VariableSelectionNetwork,
     GatedLinearUnit,
@@ -16,6 +15,9 @@ from temporal_fusion_transformer.modeling.layers import (
     DecoderBlock,
     TimeDistributed,
 )
+
+if TYPE_CHECKING:
+    from temporal_fusion_transformer.modeling.layers import ComputeDtype
 
 
 @struct.dataclass

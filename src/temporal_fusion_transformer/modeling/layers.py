@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import functools
-from typing import Sequence, Any, TypeAlias, Union, Literal
+from typing import Any, TypeAlias, Union, Literal, TYPE_CHECKING
+from collections.abc import Sequence
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import struct
-from jax.typing import DTypeLike
 
-ComputeDtype: TypeAlias = Union[
-    jnp.float32, jnp.float16, jnp.bfloat16, Literal["float32", "float16", "bfloat16"], Any
-]
+if TYPE_CHECKING:
+    from jax.typing import DTypeLike
+
+    ComputeDtype: TypeAlias = (
+        jnp.float32 | jnp.float16 | jnp.bfloat16 | Literal["float32", "float16", "bfloat16"]
+    )
 
 
 class TimeDistributed(nn.Module):
@@ -33,8 +36,7 @@ class TimeDistributed(nn.Module):
         # We use batch_size when available so that the 0th dimension is
         # set in the static shape of the reshaped output
         new_inner_shape = y.shape[1:]
-        y = jnp.reshape(y, [batch_size, input_length, *new_inner_shape])
-        return y
+        return jnp.reshape(y, [batch_size, input_length, *new_inner_shape])
 
 
 # -------------------------------------------------------------------------------------------------------------
