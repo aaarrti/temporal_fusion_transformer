@@ -12,5 +12,5 @@ nvidia-smi --query-gpu=compute_cap --format=csv
 
 cp images/electricity.sqfs /tmp
 apptainer run --nv --writable-tmpfs --env-file .env --bind=/tmp/electricity.sqfs:/data:image-src=/ images/image.sif \
-  /usr/bin/python temporal_fusion_transformer/main.py --task=model --experiment=electricity --batch_size=512 \
+  /usr/bin/python scipts_py/main.py --task=model --experiment=electricity --batch_size=512 \
   --data_dir=/data --verbose=false --epochs=1

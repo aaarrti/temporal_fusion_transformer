@@ -1,15 +1,10 @@
-# JAX reimplementation of Temporal Fusion Transformer
+## JAX reimplementation of Temporal Fusion Transformer
 
 ---
 
-## ❌Actually, I hated darts so much, that I picked it up back again.
+### ❌Actually, I hated darts so much, that I picked it up back again.
 
-- [ ] user defined embedding
-- [ ] update demo notebook
-- [ ] basic docs
-- [ ] clean up dataset examples
-- [ ] hatch + src layout
-- [ ] tests
+### 🚧 ... 🛠️
 
 ---
 
