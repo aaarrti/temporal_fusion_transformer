@@ -1,7 +1,7 @@
 import jax.random
 import numpy as np
 
-from temporal_fusion_transformer.src.datasets.utils import timeseries_from_array, unpack_xy
+from temporal_fusion_transformer.utils.utils import timeseries_from_array, unpack_xy
 import chex
 
 key = jax.random.PRNGKey(42)
@@ -9,7 +9,7 @@ key = jax.random.PRNGKey(42)
 
 def test_timeseries_from_array():
     x = jax.random.uniform(key, shape=(128, 5))
-    ts = timeseries_from_array(x, lags=12)
+    ts = timeseries_from_array(x, 12)
 
     assert ts.dtype == np.float32
     chex.assert_rank(ts, 3)

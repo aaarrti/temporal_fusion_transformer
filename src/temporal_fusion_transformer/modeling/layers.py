@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from typing import Sequence, Type, TypeVar, Any, TypeAlias, Union, Literal
+from typing import Sequence, Any, TypeAlias, Union, Literal
 
 import flax.linen as nn
 import jax
@@ -12,7 +12,6 @@ from jax.typing import DTypeLike
 ComputeDtype: TypeAlias = Union[
     jnp.float32, jnp.float16, jnp.bfloat16, Literal["float32", "float16", "bfloat16"], Any
 ]
-T = TypeVar("T", bound=Type[nn.Module])
 
 
 class TimeDistributed(nn.Module):
@@ -154,6 +153,10 @@ class GatedResidualNetwork(nn.Module):
 
 class InputEmbedding(nn.Module):
     """
+    This is an easy way to quickly construct embedding after you know how your data is represented in array.
+    Caveat, XLA needs to unroll/trace loops, so for bigger models you are probably better of with manually
+    hardcoding indexes and providing custom layer.
+
     This layer project all different inputs into the same latent space.
     Embedding is applied to categorical ones, and real-values ones are
     linearly mapped over `num_time_steps` axis.
@@ -182,9 +185,20 @@ class InputEmbedding(nn.Module):
     input_known_categorical_idx: Sequence[int]
     input_observed_idx: Sequence[int]
     latent_dim: int
-
-    num_unknown_inputs: int = 0
     dtype: ComputeDtype = jnp.float32
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if len(self.static_categories_sizes) != len(self.input_static_idx):
+            raise ValueError("len(self.static_categories_sizes) != len(self.input_static_idx)")
+
+        if len(self.known_categories_sizes) != len(self.input_known_categorical_idx):
+            raise ValueError(
+                "len(self.known_categories_sizes) != len(self.input_known_categorical_idx)"
+            )
+
+        if len(self.input_static_idx) == 0:
+            raise ValueError("Must provider at least one static input, e.g., id")
 
     @nn.compact
     def __call__(self, inputs: jax.Array) -> EmbeddingStruct:
@@ -425,9 +439,11 @@ class DecoderBlock(nn.Module):
     @nn.compact
     def __call__(self, inputs: jax.Array, training: bool) -> jax.Array:
         mask = make_causal_attention_mask(inputs, dtype=self.dtype)
-        x = nn.SelfAttention(num_heads=self.num_attention_heads, dtype=self.dtype, use_bias=False)(
-            inputs, mask, True
-        )
+        x = nn.MultiHeadDotProductAttention(
+            num_heads=self.num_attention_heads,
+            dtype=self.dtype,
+            use_bias=False,
+        )(inputs, mask=mask, deterministic=True)
         x, _ = GatedLinearUnit(
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,

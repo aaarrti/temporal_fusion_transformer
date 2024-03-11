@@ -1,16 +1,15 @@
 import jax.random
-import jax.numpy as jnp
+import pytest
 
-from temporal_fusion_transformer.src.modeling.loss_fn import quantile_pinball_loss, pinball_loss
-from temporal_fusion_transformer.src.modeling.model import TemporalFusionTransformer
-from temporal_fusion_transformer.src.modeling.layers import InputEmbedding, EmbeddingStruct
-
+from temporal_fusion_transformer.modeling.layers import InputEmbedding, EmbeddingStruct
+from temporal_fusion_transformer.modeling.model import TemporalFusionTransformer, TftOutputs
 
 key = jax.random.PRNGKey(42)
 
 
-def test_embedding():
-    layer = InputEmbedding(
+@pytest.fixture(scope="function")
+def embeding():
+    return InputEmbedding(
         input_static_idx=[0, 1],
         input_known_real_idx=[2],
         input_known_categorical_idx=[3, 4],
@@ -19,42 +18,28 @@ def test_embedding():
         static_categories_sizes=[72, 15],
         known_categories_sizes=[12, 101],
     )
-    x = jax.random.uniform(key, shape=(32, 3, 6))
-    y: EmbeddingStruct = layer.init_with_output(key, x)[0]
 
+
+def test_embedding(embeding):
+    x = jax.random.uniform(key, shape=(32, 3, 6))
+    y: EmbeddingStruct = embeding.init_with_output(key, x)[0]
     assert y.static.shape == (32, 2, 8)
     assert y.observed.shape == (32, 3, 8, 1)
     assert y.known.shape == (32, 3, 8, 3)
 
 
-def test_model():
+def test_model(embeding):
     model = TemporalFusionTransformer(
         total_time_steps=3,
         num_encoder_steps=2,
         num_decoder_blocks=1,
         num_attention_heads=4,
         latent_dim=8,
-        input_static_idx=[0, 1],
-        input_known_real_idx=[2],
-        input_known_categorical_idx=[3, 4],
-        input_observed_idx=[5],
-        static_categories_sizes=[72, 15],
-        known_categories_sizes=[12, 101],
+        embedding_layer=embeding,
+        num_non_static_inputs=4,
+        num_known_inputs=3,
+        num_static_inputs=2,
     )
     x = jax.random.uniform(key, shape=(32, 3, 6))
-    y = model.init_with_output(key, x)[0].logits
-    assert y.shape == (32, 1, 1, 3)
-
-
-def test_loss_fn():
-    y_true = jnp.ones((8, 2, 1), dtype=jnp.float32)
-    y_pred = jnp.ones((8, 2, 1), dtype=jnp.float32)
-    loss = pinball_loss(y_true, y_pred, 0.5)
-    assert loss.shape == (8,)
-
-
-def test_quantile_loss_fn():
-    y_true = jnp.ones((8, 2, 1), dtype=jnp.float32)
-    y_pred = jnp.ones((8, 2, 1, 3), dtype=jnp.float32)
-    loss = quantile_pinball_loss(y_true, y_pred)
-    assert loss.shape == (8,)
+    y: TftOutputs = model.init_with_output(key, x)[0]
+    assert y.logits.shape == (32, 1, 1, 3)

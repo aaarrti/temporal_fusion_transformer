@@ -3,7 +3,11 @@ from __future__ import annotations
 import jax
 from functools import partial
 import jax.numpy as jnp
-from jax.typing import DTypeLike
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from jax.typing import DTypeLike, ArrayLike
 
 _epsilon = jnp.asarray(1e-6)
 
@@ -57,7 +61,7 @@ def quantile_pinball_loss(
 
 
 @partial(jax.jit, inline=True, static_argnums=[2], static_argnames=["tau"])
-def pinball_loss(y_true: jax.Array, y_pred: jax.Array, tau: jax.Array) -> jax.Array:
+def pinball_loss(y_true: jax.Array, y_pred: jax.Array, tau: ArrayLike) -> jax.Array:
     """
 
     Computes the pinball loss between `y_true` and `y_pred`.

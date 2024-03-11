@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import logging
-from datetime import date, datetime
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from functools import partial
-import holoviews
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
-from bokeh.models import DatetimeTickFormatter
 
-log = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    import holoviews as hv
+
+    Array = np.ndarray | jax.Array
 
 
-def time_series_to_array(ts: np.ndarray) -> np.ndarray:
+def time_series_to_array(ts: Array) -> np.ndarray:
     """
 
     Parameters
@@ -37,12 +38,12 @@ def time_series_to_array(ts: np.ndarray) -> np.ndarray:
 
 
 def timeseries_from_array(
-    x: np.ndarray | jnp.ndarray,
+    x: Array,
     total_time_steps: int,
-    arr_factory: Callable[[np.ndarray], np.ndarray] = partial(np.asarray, dtype=jnp.float32),
+    arr_factory: Callable[[Array], np.ndarray] = partial(np.asarray, dtype=jnp.float32),
 ) -> np.ndarray:
     """
-    Converts raw dataframe from a 2-D tabular format to a batched 3-D array to feed into Keras model.
+    Converts raw dataframe from a 2-D tabular format to a batched 3-D array to feed into model.
 
     Parameters
     -------
@@ -72,51 +73,14 @@ def timeseries_from_array(
     )
 
 
-def unpack_xy(
-    arr: np.ndarray, encoder_steps: int, n_targets: int = 1
-) -> tuple[np.ndarray, np.ndarray]:
+def unpack_xy(arr: Array, encoder_steps: int, n_targets: int = 1) -> tuple[np.ndarray, np.ndarray]:
     x_id = arr.shape[-1] - n_targets
     x = arr[..., :x_id]
     y = arr[:, encoder_steps:, x_id:]
     return x, y
 
 
-def split_dataframe(
-    dataframe: pl.DataFrame, test_boundary: datetime | date
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    return (
-        dataframe.filter(pl.col("ts") < test_boundary),
-        dataframe.filter(pl.col("ts") >= test_boundary),
-    )
-
-
-def plot_split(
-    dataframe: pl.DataFrame,
-    validation_boundary: date | datetime,
-    **kwargs,
-) -> holoviews.Layout:
-    """
-    Parameters
-    ----------
-    dataframe:
-        Must have columns `y` and `ts`
-    validation_boundary
-    kwargs
-
-    Returns
-    -------
-
-    """
-    xformatter = DatetimeTickFormatter(months="%b %Y")
-    train_dataframe, validation_dataframe = split_dataframe(dataframe, validation_boundary)
-    train_dataframe = train_dataframe.with_columns(split=pl.lit("training"))
-    validation_dataframe = validation_dataframe.with_columns(split=pl.lit("validation"))
-    dataframe = pl.concat([train_dataframe, validation_dataframe])
-    kw = dict(y="y", x="ts", xformatter=xformatter, by="split", legend=True, grid=True, **kwargs)
-    return dataframe.plot.line(**kw) * dataframe.plot.scatter(**kw)
-
-
-def plot_predictions_vs_real(dataframe: pl.DataFrame, **kwargs) -> holoviews.Layout:
+def plot_predictions_vs_real(dataframe: pl.DataFrame, **kwargs) -> hv.Layout:
     """
 
     Parameters
@@ -131,6 +95,7 @@ def plot_predictions_vs_real(dataframe: pl.DataFrame, **kwargs) -> holoviews.Lay
     Returns
     -------
     """
+    from bokeh.models import DatetimeTickFormatter
 
     xformatter = DatetimeTickFormatter(months="%b %Y")
     kwargs = dict(x="ts", autorange="x", grid=True, legend=True, xformatter=xformatter, **kwargs)
@@ -144,7 +109,7 @@ def plot_predictions_vs_real(dataframe: pl.DataFrame, **kwargs) -> holoviews.Lay
 
 def plot_feature_importance(
     dataframe: pl.DataFrame, title: str, fill_alpha: float | None = 0.8, **kwargs
-) -> holoviews.Layout:
+) -> hv.Layout:
     """
     You probably would want to do min-max normalization of features beforehand.
 
@@ -157,6 +122,8 @@ def plot_feature_importance(
     Returns
     -------
     """
+    from bokeh.models import DatetimeTickFormatter
+
     xformatter = DatetimeTickFormatter(months="%b %Y")
     features = dataframe.drop("ts").columns
 

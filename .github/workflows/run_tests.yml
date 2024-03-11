@@ -20,6 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # hatch run fmt --check
+
       #- name: Setup python ${{ matrix.python-version }}
       #  uses: actions/setup-python@v4
       #  with:

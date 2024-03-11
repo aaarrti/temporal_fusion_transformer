@@ -1,27 +1,23 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Protocol, TypedDict, Any, Callable, Iterable, Mapping
-
+from typing import Protocol, TypedDict, Any, Callable, Iterable, Mapping, TYPE_CHECKING, Unpack
 import jax
 import jax.numpy as jnp
-import optax
 from flax import linen as nn
 from flax import struct
 from flax.training import train_state
-from sklearn.utils import gen_batches
-from typing_extensions import Unpack
 
-from temporal_fusion_transformer.src.modeling.loss_fn import quantile_pinball_loss
-from temporal_fusion_transformer.src.modeling.model import TftOutputs
+from temporal_fusion_transformer.train_lib.loss_fn import quantile_pinball_loss
+
+
+if TYPE_CHECKING:
+    from temporal_fusion_transformer.modeling.model import TftOutputs
+    import optax
 
 
 class ParamCollection(TypedDict):
     params: Mapping[str, Any]
-
-
-class RngCollection(TypedDict):
-    dropout: Mapping[str, jax.Array]
 
 
 class _TrainStateKwargs(TypedDict):
@@ -34,7 +30,7 @@ class ApplyFn(Protocol):
         params: ParamCollection,
         x: jax.Array,
         *args,
-        rngs: RngCollection | None = None,
+        rngs: Mapping[str, jax.Array] | None = None,
         training: bool = False,
         capture_intermediates: bool | Callable[[nn.Module, str], bool] = False,
         **kwargs,
@@ -86,13 +82,10 @@ def eval_step(tr_st: TrainState, x: jax.Array, y: jax.Array) -> jax.Array:
     """
     Returns
     -------
-    metrics:
-        tuple of: (loss, median MAPE). Both unit f32 jax array
+    metrics: loss
     """
-
     logits = tr_st.apply_fn({"params": tr_st.params}, x).logits
-    loss = quantile_pinball_loss(y, logits).mean()
-    return loss
+    return quantile_pinball_loss(y, logits).mean()
 
 
 def enumerate_batches(
@@ -110,7 +103,7 @@ def enumerate_batches(
     batch_size:
 
     prng_key:
-        if provider, will shuffle array along 1st axis
+        if provider, will shuffle array along 1st axis (you probably shouldn't though).
 
     """
 
@@ -123,3 +116,16 @@ def enumerate_batches(
         x_batch = jnp.asarray(x[batch.start : batch.stop])
         y_batch = jnp.asarray(y[batch.start : batch.stop])
         yield i, x_batch, y_batch
+
+
+def gen_batches(n: int, batch_size: int, *, min_batch_size: int = 0) -> Iterable[slice]:
+    # Copied from sklearn
+    start = 0
+    for _ in range(int(n // batch_size)):
+        end = start + batch_size
+        if end + min_batch_size > n:
+            continue
+        yield slice(start, end)
+        start = end
+    if start < n:
+        yield slice(start, n)

@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from typing import Sequence
-
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import struct
 from typing import Callable
 
-from temporal_fusion_transformer.src.modeling.layers import (
-    InputEmbedding,
+from temporal_fusion_transformer.modeling.layers import (
     EmbeddingStruct,
     ComputeDtype,
     StaticCovariatesEncoder,
@@ -35,10 +32,6 @@ class TemporalFusionTransformer(nn.Module):
     Attributes
     ----------
 
-    static_categories_sizes:
-        List with maximum value for each category of static inputs in order.
-    known_categories_sizes:
-        List with maximum value for each category of known categorical inputs in order.
     num_encoder_steps:
         Number of time steps, which will be considered as past.
     dropout_rate:
@@ -51,18 +44,18 @@ class TemporalFusionTransformer(nn.Module):
         Number of values to predict.
     num_quantiles:
         Number of quantiles, used to divide predicted distribution, typically you would use 3.
-    input_observed_idx:
-        Indices in 3rd axis in input tensor, which have observed inputs.
-    input_static_idx:
-        Indices in 3rd axis in input tensor, which have static inputs.
-    input_known_real_idx:
-        Indices in 3rd axis in input tensor, which have real-valued known inputs.
-    input_known_categorical_idx:
-        Indices in 3rd axis in input tensor, which have categorical known inputs.
     num_decoder_blocks:
         Number of decoder blocks to apply sequentially.
     total_time_steps:
         Size of the 3rd axis in the input.
+    embedding_layer:
+
+    num_non_static_inputs:
+
+    num_known_inputs:
+
+    num_static_inputs:
+
 
     References
     ----------
@@ -78,36 +71,16 @@ class TemporalFusionTransformer(nn.Module):
     # hyperparameters
     latent_dim: int
     num_attention_heads: int
-
-    input_observed_idx: Sequence[int]
-    static_categories_sizes: Sequence[int]
-    known_categories_sizes: Sequence[int]
-    input_static_idx: Sequence[int]
-    input_known_real_idx: Sequence[int]
-    input_known_categorical_idx: Sequence[int]
-
+    embedding_layer: Callable[[jax.Array], EmbeddingStruct]
+    num_non_static_inputs: int
+    num_known_inputs: int
+    num_static_inputs: int
     num_decoder_blocks: int = 1
     dropout_rate: float = 0.1
     num_quantiles: int = 3
     # cause by data
     num_outputs: int = 1
     dtype: ComputeDtype = jnp.float32
-
-    # TODO: provide user defined embeeding module to avoid compiling for loops
-    embedding_layer: Callable[[jax.Array], EmbeddingStruct] | None = None
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if len(self.static_categories_sizes) != len(self.input_static_idx):
-            raise ValueError("len(self.static_categories_sizes) != len(self.input_static_idx)")
-
-        if len(self.known_categories_sizes) != len(self.input_known_categorical_idx):
-            raise ValueError(
-                "len(self.known_categories_sizes) != len(self.input_known_categorical_idx)"
-            )
-
-        if len(self.input_static_idx) == 0:
-            raise ValueError("Must provider at least one static input, e.g., id")
 
     @nn.compact
     def __call__(self, inputs: jax.Array, training: bool = False) -> TftOutputs:
@@ -122,21 +95,12 @@ class TemporalFusionTransformer(nn.Module):
         -------
 
         """
-        embeddings = InputEmbedding(
-            static_categories_sizes=self.static_categories_sizes,
-            known_categories_sizes=self.known_categories_sizes,
-            input_static_idx=self.input_static_idx,
-            input_known_real_idx=self.input_known_real_idx,
-            input_known_categorical_idx=self.input_known_categorical_idx,
-            input_observed_idx=self.input_observed_idx,
-            latent_dim=self.latent_dim,
-            dtype=self.dtype,
-        )(inputs)
+        embeddings = self.embedding_layer(inputs)
 
         static_context = StaticCovariatesEncoder(
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,
-            num_static_inputs=len(self.input_static_idx),
+            num_static_inputs=self.num_static_inputs,
             dtype=self.dtype,
         )(embeddings.static, training=training)
 
@@ -151,9 +115,7 @@ class TemporalFusionTransformer(nn.Module):
         historical_features, historical_flags, _ = VariableSelectionNetwork(
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,
-            num_inputs=len(self.input_known_real_idx)
-            + len(self.input_known_categorical_idx)
-            + len(self.input_observed_idx),
+            num_inputs=self.num_non_static_inputs,
             num_time_steps=self.num_encoder_steps,
             dtype=self.dtype,
         )(historical_inputs, static_context.enrichment, training=training)
@@ -162,7 +124,7 @@ class TemporalFusionTransformer(nn.Module):
             latent_dim=self.latent_dim,
             dropout_rate=self.dropout_rate,
             num_time_steps=self.total_time_steps - self.num_encoder_steps,
-            num_inputs=len(self.input_known_real_idx) + len(self.input_known_categorical_idx),
+            num_inputs=self.num_known_inputs,
             dtype=self.dtype,
         )(future_inputs, static_context.enrichment, training=training)
         state_carry, history_lstm = nn.RNN(
