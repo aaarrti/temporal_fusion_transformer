@@ -6,9 +6,11 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax import struct
+from typing import Callable
 
 from temporal_fusion_transformer.src.modeling.layers import (
     InputEmbedding,
+    EmbeddingStruct,
     ComputeDtype,
     StaticCovariatesEncoder,
     VariableSelectionNetwork,
@@ -71,25 +73,28 @@ class TemporalFusionTransformer(nn.Module):
     """
 
     # caused by data
-    static_categories_sizes: Sequence[int]
-    known_categories_sizes: Sequence[int]
     num_encoder_steps: int
     total_time_steps: int
     # hyperparameters
     latent_dim: int
     num_attention_heads: int
+
     input_observed_idx: Sequence[int]
+    static_categories_sizes: Sequence[int]
+    known_categories_sizes: Sequence[int]
     input_static_idx: Sequence[int]
     input_known_real_idx: Sequence[int]
     input_known_categorical_idx: Sequence[int]
+
     num_decoder_blocks: int = 1
     dropout_rate: float = 0.1
     num_quantiles: int = 3
     # cause by data
     num_outputs: int = 1
     dtype: ComputeDtype = jnp.float32
-    lstm_unroll: int = 1
-    lstm_split_rngs: bool = True
+
+    # TODO: provide user defined embeeding module to avoid compiling for loops
+    embedding_layer: Callable[[jax.Array], EmbeddingStruct] | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -105,7 +110,7 @@ class TemporalFusionTransformer(nn.Module):
             raise ValueError("Must provider at least one static input, e.g., id")
 
     @nn.compact
-    def __call__(self, inputs: jax.Array, training: bool = False) -> jax.Array:
+    def __call__(self, inputs: jax.Array, training: bool = False) -> TftOutputs:
         """
 
         Parameters

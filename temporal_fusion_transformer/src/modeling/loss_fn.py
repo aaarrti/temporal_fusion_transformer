@@ -52,11 +52,12 @@ def quantile_pinball_loss(
             in_axes=[None, -1, 0],
             out_axes=-1,
         )(y_true, y_pred, jnp.asarray(tau, dtype))
-        return jnp.mean(q_losses, axis=-1)
+        # sum over quantiles
+        return jnp.sum(q_losses, axis=-1)
 
 
-# @partial(jax.jit, inline=True, static_argnums=[2], static_argnames=["tau"])
-def pinball_loss(y_true: jax.Array, y_pred: jax.Array, tau: float) -> jax.Array:
+@partial(jax.jit, inline=True, static_argnums=[2], static_argnames=["tau"])
+def pinball_loss(y_true: jax.Array, y_pred: jax.Array, tau: jax.Array) -> jax.Array:
     """
 
     Computes the pinball loss between `y_true` and `y_pred`.
@@ -88,9 +89,8 @@ def pinball_loss(y_true: jax.Array, y_pred: jax.Array, tau: float) -> jax.Array:
         error = y_true - y_pred
         under_estimation_error = tau * jnp.maximum(error, 0.0)
         over_estimation_error = (1 - tau) * jnp.maximum(-error, 0.0)
+        # average over batch
         return jnp.mean(
-            # sum over outputs
-            jnp.sum(over_estimation_error + under_estimation_error, axis=-1),
-            # average over time steps
-            axis=-1,
+            # sum over outputs + time steps
+            jnp.sum(over_estimation_error + under_estimation_error, axis=(-1, -2)),
         )

@@ -2,15 +2,7 @@
 
 ---
 
-## ❌
-
-Unfortunately, despite my preference for `jax` + `flax` I had to abandon this project
-in favour of (successful) existing and maintained `torch` implementations (*sigh).
-
-- [x] [gluonts](https://github.com/awslabs/gluonts)
-  ➡️ [TemporalFusionTransformerEstimator](https://github.com/awslabs/gluonts/blob/dev/src/gluonts/torch/model/tft/estimator.py)
-- [x] [darts](https://github.com/unit8co/darts)
-  ➡️ [TFT Examples](https://github.com/unit8co/darts/blob/master/examples/13-TFT-examples.ipynb)
+## ❌Actually, I hated darts so much, that I picked it up back again.
 
 ---
 

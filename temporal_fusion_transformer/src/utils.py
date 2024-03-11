@@ -3,24 +3,14 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 from typing import Callable
-from collections.abc import Iterator
 from functools import partial
 import holoviews
-import jax
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
 from bokeh.models import DatetimeTickFormatter
-from flax import struct
-from tqdm.auto import tqdm
 
 log = logging.getLogger(__name__)
-
-
-@struct.dataclass
-class FeatureImportance:
-    historical_flags: jax.Array
-    future_flags: jax.Array
 
 
 def time_series_to_array(ts: np.ndarray) -> np.ndarray:
@@ -143,57 +133,42 @@ def plot_predictions_vs_real(dataframe: pl.DataFrame, **kwargs) -> holoviews.Lay
     """
 
     xformatter = DatetimeTickFormatter(months="%b %Y")
-
     kwargs = dict(x="ts", autorange="x", grid=True, legend=True, xformatter=xformatter, **kwargs)
-
-    area = dataframe.plot.area(y="yhat_up", y2="yhat_low", **kwargs)
-
+    area = dataframe.plot.area(y="yhat_up", y2="yhat_low", fill_alpha=0.4, **kwargs)
     p1 = dataframe.plot.line(y="y", color="gray", **kwargs)
     s1 = dataframe.plot.scatter(y="y", color="gray", **kwargs)
-
     p2 = dataframe.plot.line(y="yhat", color="blue", **kwargs).opts(color="blue")
     s2 = dataframe.plot.scatter(y="yhat", color="blue", **kwargs).opts(color="blue")
-
     return (area * (p1 * s1)) * (p2 * s2)
 
 
 def plot_feature_importance(
-    ts: list[date],
-    explanations: FeatureImportance,
-    feature_names: list[str],
+    dataframe: pl.DataFrame, title: str, fill_alpha: float | None = 0.8, **kwargs
 ) -> holoviews.Layout:
     """
+    You probably would want to do min-max normalization of features beforehand.
+
     Parameters
     ----------
-    ts
-    explanations:
-        Must contain flattened 2D sequences, not time series!!!
-    feature_names
+    dataframe: must contain `ts` column and features to plot.
+    title
+    fill_alpha
 
     Returns
     -------
-
     """
     xformatter = DatetimeTickFormatter(months="%b %Y")
+    features = dataframe.drop("ts").columns
 
-    data = {
-        f"{name}_importance": np.concatenate(
-            [explanations.historical_flags[..., i], explanations.future_flags[..., i]]
-        )
-        for i, name in enumerate(feature_names)
-    }
-
-    explanations_df = pl.DataFrame(
-        {
-            "ts": ts,
-            **data,
-        }
-    )
-
-    return explanations_df.plot.area(
+    return dataframe.plot.area(
         x="ts",
-        y=list(data.keys()),
+        y=0,
+        y2=features,
         xformatter=xformatter,
         legend=True,
         grid=True,
+        fill_alpha=fill_alpha,
+        title=title,
+        stacked=False,
+        **kwargs,
     )

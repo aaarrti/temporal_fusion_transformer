@@ -1,32 +1,31 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from functools import partial
-from typing import Protocol, TypedDict, Any, no_type_check, Callable
-from typing_extensions import Unpack
-import optax
+from typing import Protocol, TypedDict, Any, Callable, Iterable, Mapping
 
 import jax
 import jax.numpy as jnp
+import optax
+from flax import linen as nn
 from flax import struct
 from flax.training import train_state
 from sklearn.utils import gen_batches
-from flax import linen as nn
+from typing_extensions import Unpack
 
 from temporal_fusion_transformer.src.modeling.loss_fn import quantile_pinball_loss
 from temporal_fusion_transformer.src.modeling.model import TftOutputs
 
 
 class ParamCollection(TypedDict):
-    params: dict[str, Any]
+    params: Mapping[str, Any]
 
 
 class RngCollection(TypedDict):
-    dropout: dict[str, jax.Array]
+    dropout: Mapping[str, jax.Array]
 
 
-class _Unit(TypedDict):
-    pass
+class _TrainStateKwargs(TypedDict):
+    prng_key: jax.Array
 
 
 class ApplyFn(Protocol):
@@ -48,17 +47,15 @@ class TrainState(train_state.TrainState):
     prng_key: jax.Array
 
     @classmethod
-    @no_type_check
     def create(
         cls,
         *,
         apply_fn: ApplyFn,
         params: dict[str, Any],
         tx: optax.GradientTransformation,
-        prng_key: jax.Array,
-        **kwargs: Unpack[_Unit],
+        **kwargs: Unpack[_TrainStateKwargs],
     ) -> TrainState:
-        return super().create(apply_fn=apply_fn, params=params, tx=tx, prng_key=prng_key, **kwargs)
+        return super().create(apply_fn=apply_fn, params=params, tx=tx, **kwargs)
 
 
 @partial(jax.jit, donate_argnums=[0])
