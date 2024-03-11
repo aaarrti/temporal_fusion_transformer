@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Protocol, TypedDict, Any, Callable, Iterable, Mapping, TYPE_CHECKING, Unpack
+from typing import Protocol, TypedDict, Any, Callable, Iterable, Mapping, TYPE_CHECKING
+from typing_extensions import Unpack
 import jax
 import jax.numpy as jnp
 from flax import linen as nn
